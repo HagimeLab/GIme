@@ -332,6 +332,21 @@ public class MainActivity extends Activity {
             updater.download(url);
         }
 
+        /** 页面传多个下载源时走这里；逐个试，第一个通的就是它。 */
+        @JavascriptInterface
+        public void downloadUpdateFrom(String urlsJson) {
+            java.util.List<String> list = new java.util.ArrayList<String>();
+            try {
+                JSONArray arr = new JSONArray(urlsJson);
+                for (int i = 0; i < arr.length(); i++) {
+                    String u = arr.optString(i, "");
+                    if (!u.isEmpty()) list.add(u);
+                }
+            } catch (Exception ignored) {
+            }
+            updater.download(list);
+        }
+
         /** 没给「安装未知应用」授权时，页面点「去设置」走这里。 */
         @JavascriptInterface
         public void openInstallPermission() {
@@ -344,6 +359,23 @@ public class MainActivity extends Activity {
                     } catch (Exception e) {
                         try { act.startActivity(new Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES)); }
                         catch (Exception ignored) { }
+                    }
+                }
+            });
+        }
+
+        /** 下载域名连不上时，页面让用户去发布页手动取安装包。 */
+        @JavascriptInterface
+        public void openUrl(final String url) {
+            if (url == null || url.isEmpty()) return;
+            runOnUiThread(new Runnable() {
+                @Override public void run() {
+                    try {
+                        Intent i = new Intent(Intent.ACTION_VIEW, Uri.parse(url));
+                        i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+                        startActivity(i);
+                    } catch (Exception e) {
+                        js("window.toast&&window.toast(\"这台机器上没有可用的浏览器\")");
                     }
                 }
             });

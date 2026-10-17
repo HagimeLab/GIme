@@ -1384,7 +1384,8 @@ window.onUpdateInfo = function (s) {
     return;
   }
   updInfo = d;
-  var canGet = !!d.url;
+  /* 新版本会带 urls 数组（多个下载源）；老数据只有单个 url 时也兼容 */
+  var canGet = !!(d.urls && d.urls.length) || !!d.url;
   updSheet(
     '<div class="upd-h"><div class="icon">↑</div><h2>发现新版本</h2>' +
       "<p>" + (canGet ? "更新后做题记录和题库都会保留" : "这个版本还没有上传安装包") + "</p></div>" +
@@ -1402,27 +1403,54 @@ window.onUpdateInfo = function (s) {
     startDownload(d);
   };
 };
-function startDownload(d) {
+/* 只画下载页，不发指令：原生层回 onUpdateDownloading 时要用它重画，
+   若这里也调 downloadUpdate，就会和回调互相触发成死循环。 */
+function renderDownload(d) {
   updSheet('<div class="icon">↓</div><div class="big" id="upPct">0%</div>' +
     "<h2>正在下载 v" + esc(d.latest) + "</h2>" +
     '<div class="track" style="margin:14px 0 8px"><i id="upBar"></i></div>' +
     "<p>下载完成后会自动弹出安装页，确认即可覆盖安装，进度和题库都不会丢</p>");
-  Android.downloadUpdate(d.url);
 }
+function startDownload(d) {
+  renderDownload(d);
+  /* 优先走多源：原生层会逐个试，第一个连得上的就开始下载。
+     jsDelivr 那几个入口在国内实测几十毫秒就返回，比 GitHub 资产地址可靠得多。 */
+  var list = (d.urls && d.urls.length) ? d.urls : (d.url ? [d.url] : []);
+  if (Android.downloadUpdateFrom) Android.downloadUpdateFrom(JSON.stringify(list));
+  else if (list.length) Android.downloadUpdate(list[0]);
+}
+/* 原生层会先花几秒探一下下载地址通不通，这期间别让界面看起来像卡住了 */
+window.onUpdateChecking = function () {
+  updSheet('<div class="icon">↓</div><h2>正在连接更新服务器…</h2>' +
+    '<p>如果网络屏蔽了下载地址，这里会直接告诉你，不会一直转圈</p>');
+};
+/* 探测通过、真正开始下载：把「连接中」换回下载页并重置进度，
+   否则标题会一直停在连接中、进度条也不会从 0 开始涨。 */
+window.onUpdateDownloading = function () {
+  if (updInfo) renderDownload(updInfo);
+};
 window.onUpdateProgress = function (p) {
   var b = document.getElementById("upBar"), t = document.getElementById("upPct");
   if (b) b.style.width = Math.max(0, Math.min(100, p)) + "%";
   if (t) t.textContent = Math.max(0, Math.min(100, p)) + "%";
 };
 window.onUpdateError = function (m) {
+  /* 下载走的是 GitHub 的 release 资产域名，国内网络经常连不上。
+     只给「重试」等于让用户在一个注定失败的按钮上反复点，
+     所以同时给一条能走通的路：打开发布页手动下载。 */
   updSheet('<div class="icon">!</div><h2>更新失败</h2><p>' + esc(m) + "</p>" +
     '<div class="upd-acts">' +
       '<button class="sec" id="upClose">关闭</button>' +
+      '<button class="sec" id="upPage">打开发布页</button>' +
       '<button class="pri" id="upRetry">重试</button>' +
     "</div>", "upd");
   document.getElementById("upClose").onclick = function () { closeTop(); };
+  document.getElementById("upPage").onclick = function () {
+    if (updInfo && updInfo.page) { closeTop(); Android.openUrl(updInfo.page); }
+    else toast("没有可打开的发布页");
+  };
   document.getElementById("upRetry").onclick = function () {
-    if (updInfo && updInfo.url) startDownload(updInfo);
+    if (updInfo && ((updInfo.urls && updInfo.urls.length) || updInfo.url)) startDownload(updInfo);
   };
 };
 window.onUpdateInstalled = function () { closeTop(); toast("请在安装页确认安装"); };
@@ -2028,6 +2056,8 @@ function importStage(k) {
   })[k] || "处理中…";
 }
 window.importStage = importStage;
+/* 原生层出错时要能给用户一句提示，得有个挂到 window 上的入口 */
+window.toast = toast;
 
 window.onImportText = function (name, text) {
   importName = name || "未命名题库";

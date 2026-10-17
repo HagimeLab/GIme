@@ -18,3 +18,9 @@ keystore.properties
 dist/
 *.apk
 *.aab
+
+# 例外：release/ 是给 CDN 直出的下载目录，安装包必须入库。
+# 原因：GitHub 的 Release 资产会 302 到 release-assets.githubusercontent.com，
+# 该域名在部分网络下不通；jsDelivr 可以直接从仓库按路径直出这个文件。
+!release/
+!release/*.apk

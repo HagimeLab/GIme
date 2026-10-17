@@ -31,8 +31,8 @@ android {
         applicationId = "com.fan.shuatiku"
         minSdk = 24
         targetSdk = 36
-        versionCode = 2
-        versionName = "1.0.1"
+        versionCode = 4
+        versionName = "1.0.3"
     }
 
     // BuildConfig.DEBUG 用来区分构建变体：Release 里必须关掉 WebView 调试，
@@ -58,3 +58,4 @@ android {
         targetCompatibility = JavaVersion.VERSION_17
     }
 }
+
