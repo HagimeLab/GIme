@@ -31,8 +31,14 @@ android {
         applicationId = "com.fan.shuatiku"
         minSdk = 24
         targetSdk = 36
-        versionCode = 1
-        versionName = "1.0.0"
+        versionCode = 2
+        versionName = "1.0.1"
+    }
+
+    // BuildConfig.DEBUG 用来区分构建变体：Release 里必须关掉 WebView 调试，
+    // 这件事只能靠编译期常量决定，不能靠运行时猜。AGP 8 起默认不生成 BuildConfig。
+    buildFeatures {
+        buildConfig = true
     }
 
     buildTypes {

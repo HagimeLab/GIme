@@ -12,3 +12,8 @@ signing/
 *.jks
 *.keystore
 keystore.properties
+
+# 交付产物：源码包与安装包都现做现发，不留在仓库里
+dist/
+*.apk
+*.aab

@@ -56,6 +56,10 @@ public class Updater {
                     String tag = rel.optString("tag_name", "");
                     String latest = tag.startsWith("v") ? tag.substring(1) : tag;
                     String notes = rel.optString("body", "");
+                    String published = rel.optString("published_at", "");
+                    // 2026-10-17T12:34:56Z → 2026-10-17；取不到就留空，界面自己隐藏这一行
+                    String date = published.length() >= 10 ? published.substring(0, 10) : "";
+                    org.json.JSONArray log = splitNotes(notes);
                     String apk = null;
                     org.json.JSONArray assets = rel.optJSONArray("assets");
                     if (assets != null) {
@@ -74,7 +78,9 @@ public class Updater {
                             .put("latest", latest)
                             .put("hasUpdate", Ver.isNewer(latest, current))
                             .put("url", apk == null ? "" : apk)
+                            .put("date", date)
                             .put("notes", notes.trim())
+                            .put("log", log)
                             .put("prerelease", rel.optBoolean("prerelease", false))
                             .toString();
                     sink.toJs("window.onUpdateInfo&&window.onUpdateInfo(" + quote(info) + ")");
@@ -93,6 +99,7 @@ public class Updater {
     public void download(final String url) {
         final Activity act = sink.activity();
         if (act == null || url == null || url.isEmpty()) return;
+        if (dmId > 0) return;      // 已经在下了，连点两次不该开两条下载
         if (Build.VERSION.SDK_INT >= 26 && !act.getPackageManager().canRequestPackageInstalls()) {
             // 没给「安装未知应用」授权，装了也装不上，先把人带到那个开关前
             sink.toJs("window.onUpdateNeedPermission&&window.onUpdateNeedPermission()");
@@ -208,6 +215,30 @@ public class Updater {
     }
 
     private static class NotFound extends Exception { }
+
+    /**
+     * 把 Release 正文切成逐条日志。GitHub 的 body 是 Markdown，
+     * 页面按纯文本渲染，所以这里先摘掉标题、列表符号和行内强调记号，
+     * 免得弹窗里出现一堆 "## " 和 "**"。
+     */
+    static org.json.JSONArray splitNotes(String body) {
+        org.json.JSONArray out = new org.json.JSONArray();
+        if (body == null || body.trim().isEmpty()) return out;
+        String[] lines = body.replace("\r\n", "\n").replace('\r', '\n').split("\n");
+        for (String raw : lines) {
+            String s = raw.trim();
+            if (s.isEmpty()) continue;
+            if (s.startsWith("```") || s.matches("^[-=*_]{3,}$")) continue;   // 分隔线
+            s = s.replaceFirst("^#{1,6}\\s*", "");                            // 标题井号
+            s = s.replaceFirst("^[-*+]\\s+", "");                             // 列表符号
+            s = s.replaceFirst("^\\d+[.)]\\s+", "");                          // 有序列表
+            s = s.replaceAll("\\*\\*|__|`", "");                              // 行内强调
+            s = s.replaceAll("\\[([^\\]]*)\\]\\([^)]*\\)", "$1");             // 链接只留文字
+            s = s.trim();
+            if (!s.isEmpty()) out.put(s);
+        }
+        return out;
+    }
 
     private static String fetch(String spec) throws Exception {
         HttpURLConnection c = (HttpURLConnection) new URL(spec).openConnection();
