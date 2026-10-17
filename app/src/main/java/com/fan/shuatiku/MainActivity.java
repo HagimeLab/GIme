@@ -4,6 +4,7 @@ import java.io.File;
 import java.io.FileInputStream;
 import java.io.FileOutputStream;
 import java.io.InputStream;
+import java.util.ArrayDeque;
 
 import org.json.JSONArray;
 import org.json.JSONObject;
@@ -36,6 +37,11 @@ public class MainActivity extends Activity {
     private File bankDir;
     private Updater updater;
 
+    /** 页面报告 ready 之前收到的导入请求排队等它，ready 后按序消费，每条只消费一次。 */
+    private final ArrayDeque<Uri> pendingImports = new ArrayDeque<Uri>();
+    private boolean pageReady;
+    private boolean importing;
+
     @Override
     protected void onCreate(Bundle saved) {
         super.onCreate(saved);
@@ -43,7 +49,11 @@ public class MainActivity extends Activity {
         if (!bankDir.isDirectory()) bankDir.mkdirs();
 
         web = new WebView(this);
-        try { WebView.setWebContentsDebuggingEnabled(true); } catch (Exception ignored) {}
+        // 只在 debug 构建里开调试口。Release 开着它等于把整个 WebView 连同
+        // localStorage 里的题库交出去——用 adb 连上就能读写。
+        if (BuildConfig.DEBUG) {
+            try { WebView.setWebContentsDebuggingEnabled(true); } catch (Exception ignored) {}
+        }
         WebSettings s = web.getSettings();
         s.setJavaScriptEnabled(true);
         s.setDomStorageEnabled(true);
@@ -58,7 +68,10 @@ public class MainActivity extends Activity {
         setContentView(web);
         edgeToEdge();
 
-        takeIn(getIntent());
+        /* 冷启动就带着文件时不能马上读：WebView 还没把 index.html 跑起来，
+           evaluateJavascript 会落在 document 上，onImportText 根本不存在，文件就丢了。
+           先入队，等页面 ready 再消费。 */
+        enqueueImport(intentOf(getIntent()));
     }
 
     /**
@@ -146,12 +159,42 @@ public class MainActivity extends Activity {
 
     /** 微信里「用其他应用打开 → 刷题」会把文件以 VIEW/SEND 递过来。 */
     private void takeIn(final Intent intent) {
-        if (intent == null) return;
+        Uri uri = intentOf(intent);
+        if (uri == null) return;
+        enqueueImport(uri);
+        /* 同一条 intent 只处理一次：旋转屏幕会重新走到这里，重复读会把同一个题库导两遍 */
+        intent.setAction(null);
+        setIntent(intent);
+    }
+
+    /** 从 VIEW/SEND 的 intent 里取出文件 URI；不是这两类就返回 null。 */
+    private static Uri intentOf(Intent intent) {
+        if (intent == null) return null;
         String act = intent.getAction();
-        if (!Intent.ACTION_VIEW.equals(act) && !Intent.ACTION_SEND.equals(act)) return;
+        if (!Intent.ACTION_VIEW.equals(act) && !Intent.ACTION_SEND.equals(act)) return null;
         Uri uri = intent.getData();
         if (uri == null) uri = intent.getParcelableExtra(Intent.EXTRA_STREAM);
+        return uri;
+    }
+
+    private void enqueueImport(final Uri uri) {
+        /* 从桌面图标启动时没有文件，intentOf 会返回 null；ArrayDeque 拒绝 null，
+           直接 add 会在 onCreate 里把 App 炸掉。 */
         if (uri == null) return;
+        runOnUiThread(new Runnable() {
+            @Override public void run() {
+                pendingImports.add(uri);
+                pumpImports();
+            }
+        });
+    }
+
+    /** 页面 ready 且没有正在跑的导入时才取下一条。 */
+    private void pumpImports() {
+        if (!pageReady || importing || pendingImports.isEmpty()) return;
+        final Uri uri = pendingImports.poll();
+        if (uri == null) return;
+        importing = true;
         startImport(uri);
     }
 
@@ -166,7 +209,7 @@ public class MainActivity extends Activity {
         } catch (Exception ignored) {
             // 有些提供器不给持久授权，本次读取仍然可用
         }
-        startImport(uri);
+        enqueueImport(uri);
     }
 
     private void startImport(final Uri uri) {
@@ -176,18 +219,48 @@ public class MainActivity extends Activity {
                 String name = displayName(uri);
                 try {
                     js("window.importStage&&window.importStage(\"read\")");
-                    InputStream in = getContentResolver().openInputStream(uri);
+                    InputStream in;
+                    try {
+                        in = getContentResolver().openInputStream(uri);
+                    } catch (SecurityException se) {
+                        /* 文件提供方把权限收回去了（常见于微信/网盘的临时授权过期）。
+                           原来会把 "com.fan.shuatiku has no access to content://..." 直接甩给用户，
+                           那是给开发者看的，不是给人看的。 */
+                        throw new Exception("没有读取这个文件的权限，请重新选择一次该文件");
+                    }
                     if (in == null) throw new Exception("打不开这个文件");
-                    js("window.importStage&&window.importStage(\"extract\")");
-                    String text = TextExtract.extract(MainActivity.this, in, name);
-                    in.close();
+                    String text;
+                    try {
+                        js("window.importStage&&window.importStage(\"extract\")");
+                        text = TextExtract.extract(MainActivity.this, in, name);
+                    } finally {
+                        in.close();
+                    }
                     if (text.trim().isEmpty()) throw new Exception("没读到文字内容");
                     js("window.onImportText&&window.onImportText(" + quote(name) + "," + quote(text) + ")");
                 } catch (final Exception e) {
-                    js("window.onImportError&&window.onImportError(" + quote(String.valueOf(e.getMessage())) + ")");
+                    js("window.onImportError&&window.onImportError(" + quote(readable(e)) + ")");
+                } finally {
+                    runOnUiThread(new Runnable() {
+                        @Override public void run() {
+                            importing = false;
+                            pumpImports();
+                        }
+                    });
                 }
             }
         }).start();
+    }
+
+    /** 把异常翻成用户能看懂的一句话；认得的类型才翻译，其余保留原文以免丢失线索。 */
+    private static String readable(Exception e) {
+        if (e instanceof TextExtract.Reject) return String.valueOf(e.getMessage());
+        if (e instanceof java.io.FileNotFoundException) return "找不到这个文件，可能已被移动或删除";
+        String msg = e.getMessage();
+        if (msg == null || msg.isEmpty() || msg.startsWith("java.") || msg.contains("content://")) {
+            return "读取文件失败，请重试或换一个文件";
+        }
+        return msg;
     }
 
     private String displayName(Uri uri) {
@@ -224,6 +297,17 @@ public class MainActivity extends Activity {
     }
 
     private class Bridge {
+
+        /** 页面把脚本跑完、事件函数都挂上之后调这里，之后才开始放行排队的导入。 */
+        @JavascriptInterface
+        public void pageReady() {
+            runOnUiThread(new Runnable() {
+                @Override public void run() {
+                    pageReady = true;
+                    pumpImports();
+                }
+            });
+        }
 
         /** 页面换肤时同步系统栏图标深浅和窗口底色。 */
         @JavascriptInterface
@@ -274,7 +358,7 @@ public class MainActivity extends Activity {
                     i.setType("*/*");
                     i.putExtra(Intent.EXTRA_MIME_TYPES, new String[]{
                             "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-                            "application/msword", "text/plain", "text/markdown", "application/octet-stream"});
+                            "text/plain", "text/markdown"});
                     try {
                         startActivityForResult(i, PICK);
                     } catch (Exception e) {
@@ -318,16 +402,25 @@ public class MainActivity extends Activity {
             File target = new File(bankDir, safe(id) + ".json");
             File tmp = new File(bankDir, safe(id) + ".json.tmp");
             try {
+                /* 先整份写进临时文件，落盘并校验长度之后才替换正式文件：
+                   中途失败（空间不足、进程被杀）时旧题库还在，不会变成半截 JSON。 */
+                byte[] bytes = json.getBytes("UTF-8");
                 FileOutputStream os = new FileOutputStream(tmp);
                 try {
-                    os.write(json.getBytes("UTF-8"));
+                    os.write(bytes);
+                    os.flush();
+                    os.getFD().sync();
                 } finally {
                     os.close();
                 }
+                if (tmp.length() != bytes.length) return false;
                 if (target.exists() && !target.delete()) return false;
-                return tmp.renameTo(target);
+                if (!tmp.renameTo(target)) return false;
+                return target.length() == bytes.length;
             } catch (Exception e) {
                 return false;
+            } finally {
+                if (tmp.exists() && !target.exists()) tmp.delete();
             }
         }
 

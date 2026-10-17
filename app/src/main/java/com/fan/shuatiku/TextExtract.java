@@ -25,12 +25,23 @@ import java.io.File;
  */
 public final class TextExtract {
 
+    /** 单个文件最多读这么多字节。题库再大也就几百 KB，20MB 已经是异常值。 */
+    static final long MAX_BYTES = 20L * 1024 * 1024;
+    /** docx 解压后的正文 XML 上限，防压缩炸弹。 */
+    static final int MAX_XML = 16 * 1024 * 1024;
+
+    /** 用户能看懂的拒绝理由；MainActivity 直接把它甩给页面。 */
+    static class Reject extends IOException {
+        Reject(String msg) { super(msg); }
+    }
+
     private TextExtract() {
     }
 
     public static String extract(Context ctx, InputStream in, String name) throws IOException {
         String lower = name == null ? "" : name.toLowerCase();
-        if (lower.endsWith(".docx")) {
+        String ext = extOf(lower);
+        if (".docx".equals(ext)) {
             File tmp = File.createTempFile("import-", ".docx", ctx.getCacheDir());
             try {
                 copy(in, tmp);
@@ -39,15 +50,30 @@ public final class TextExtract {
                 if (!tmp.delete()) tmp.deleteOnExit();
             }
         }
-        return plain(readAll(in));
+        if (".txt".equals(ext) || ".md".equals(ext)) return plain(readAll(in));
+        /* 老式 .doc 是 OLE 复合文档，不是 zip，本版本没有解析器；其余后缀一律拒绝，
+           免得拿二进制当 UTF-8 读出一堆乱码再报「没认出题目」。 */
+        if (".doc".equals(ext)) throw new Reject("不支持 .doc 旧格式，请用 Word 另存为 .docx 后再导入");
+        throw new Reject("只支持 .docx 和 txt / md，其他格式请先另存为 .docx");
+    }
+
+    /** 取小写后缀（含点），没有后缀返回空串。 */
+    private static String extOf(String lower) {
+        int dot = lower.lastIndexOf('.');
+        return dot < 0 ? "" : lower.substring(dot);
     }
 
     private static void copy(InputStream in, File out) throws IOException {
         java.io.FileOutputStream os = new java.io.FileOutputStream(out);
         try {
             byte[] buf = new byte[16384];
+            long total = 0;
             int n;
-            while ((n = in.read(buf)) > 0) os.write(buf, 0, n);
+            while ((n = in.read(buf)) > 0) {
+                total += n;
+                if (total > MAX_BYTES) throw new Reject("文件太大（超过 20MB），请拆分后再导入");
+                os.write(buf, 0, n);
+            }
         } finally {
             os.close();
         }
@@ -56,8 +82,13 @@ public final class TextExtract {
     private static byte[] readAll(InputStream in) throws IOException {
         ByteArrayOutputStream bos = new ByteArrayOutputStream();
         byte[] buf = new byte[16384];
+        long total = 0;
         int n;
-        while ((n = in.read(buf)) > 0) bos.write(buf, 0, n);
+        while ((n = in.read(buf)) > 0) {
+            total += n;
+            if (total > MAX_BYTES) throw new Reject("文件太大（超过 20MB），请拆分后再导入");
+            bos.write(buf, 0, n);
+        }
         return bos.toByteArray();
     }
 
@@ -81,16 +112,29 @@ public final class TextExtract {
     }
 
     static String docx(File file) throws IOException {
-        ZipFile zip = new ZipFile(file);
+        ZipFile zip;
+        try {
+            zip = new ZipFile(file);
+        } catch (IOException e) {
+            /* 不是 zip 就不是 docx（.doc 改名、下载中断、文件损坏都会走到这里）。
+               原样抛上去只会让用户看到 "zip END header not found"。 */
+            throw new Reject("这个文件不是有效的 Word 文档，可能已损坏或不是 .docx");
+        }
         try {
             Enumeration<? extends ZipEntry> es = zip.entries();
             while (es.hasMoreElements()) {
                 ZipEntry e = es.nextElement();
                 if (!"word/document.xml".equals(e.getName())) continue;
-                String xml = new String(readAll(zip.getInputStream(e)), StandardCharsets.UTF_8);
-                return documentText(xml);
+                if (e.getSize() > MAX_XML) throw new Reject("这个 docx 解压后过大，请拆分后再导入");
+                InputStream xmlIn = zip.getInputStream(e);
+                try {
+                    String xml = new String(readAll(xmlIn), StandardCharsets.UTF_8);
+                    return documentText(xml);
+                } finally {
+                    xmlIn.close();
+                }
             }
-            throw new IOException("这个 docx 里没有 word/document.xml");
+            throw new Reject("这个文件不是正常的 Word 文档（缺 word/document.xml）");
         } finally {
             zip.close();
         }
