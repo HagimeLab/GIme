@@ -57,9 +57,13 @@ GIme 是一款面向 Android
 
 ## 构建与检查
 
--   `build.cmd`：编译 Debug 与 Release APK（固定 JDK 21 与本机 Android SDK）。
--   `tools\check.cmd`：回归检查，包含页面逻辑、题库结构与版本比较。
--   `tools\make-source-zip.ps1`：生成源码交付包，并在生成后校验其中不含签名材料、本机配置或构建产物。
+-   `build.cmd`：编译 Debug 与 Release APK。本机的 JDK / SDK 路径写在 `build.local.cmd`（不入库），
+    换机器时新建这个文件即可。
+-   `tools\check.cmd`：回归检查，包含页面逻辑、题库结构、版本比较与题库文件的安全替换/崩溃恢复。
+-   `tools\make-source-zip.ps1`：生成源码交付包，并在生成后校验其中不含签名材料、本机配置、构建产物或口令。
+-   `tools\verify-release.ps1`：发布后核对 GitHub Release 附件与本地发布件是否一致。
+
+发布记录（产物指纹、签名证书、对应提交）见 `docs/v1.0.1-发布记录.md`。
 
 ## 使用体验
 
