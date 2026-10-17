@@ -19,16 +19,16 @@ public final class DownloadSources {
     static final String CDN_DIR = "release";
 
     /**
-     * CDN 读的引用。
+     * CDN 读的引用：固定用 main 分支。
      *
-     * 用**一个固定的 tag**：jsDelivr 对 `@main` 的同一路径强缓存 7 天，
-     * 换内容后客户端仍会读到旧文件；tag 在 jsDelivr 里是独立缓存键。
+     * 这里不用 tag，因为 tag 带来两个麻烦：每次发布要新建/移动 tag，
+     * 而 jsDelivr 对已存在的 tag 路径会命中旧缓存，反而更不可靠。
      *
-     * 注意：这个 tag 只在**首次**建立时有效。后续移动 tag 可能命中旧缓存，
-     * 所以安装包路径必须带版本号（见 forVersion），靠路径而非缓存键来保证拿到新包。
-     * 清单（latest.json）不走这里，改从 GitHub API 读，见 Updater.fetchManifest。
+     * 缓存问题在**路径**上解决，而不是在引用上：安装包路径带版本号
+     * （见 forVersion），每个版本都是全新 URL，自然没有旧缓存可命中。
+     * 清单路径虽然固定，但不从 CDN 读——见 Updater.fetchManifest，它走 GitHub API。
      */
-    static final String REF = "rel-v1.0.2";
+    static final String REF = "main";
 
     private DownloadSources() {
     }
