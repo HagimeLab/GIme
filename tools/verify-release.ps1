@@ -76,6 +76,24 @@ foreach ($a in $rel.assets) {
     if (-not $expect.ContainsKey($a.name)) { Write-Host "    note: unexpected asset '$($a.name)'" -ForegroundColor Yellow }
 }
 
+Write-Host "== release notes length =="
+# The release body IS the in-app update dialog text, so it must stay short.
+# Lines pointing at docs are metadata, not notes, so they are not counted.
+$notesLines = @()
+foreach ($line in ("" + $rel.body -split "`n")) {
+    $t = $line.Trim()
+    if ($t -eq "" -or $t -match 'docs/') { continue }
+    $notesLines += $t
+}
+$notes = (($notesLines -join "") -replace '\s', '')
+$len = $notes.Length
+Write-Host ("  notes: {0} chars in {1} line(s)" -f $len, $notesLines.Count)
+if ($len -lt 50 -or $len -gt 100) {
+    $fails += "release notes are $len chars, outside the 50-100 rule (fills the phone dialog)"
+} else {
+    Write-Host "    within 50-100" -ForegroundColor Green
+}
+
 Write-Host "== auditing source zip =="
 $z = [IO.Compression.ZipFile]::OpenRead($srcPath)
 try {
