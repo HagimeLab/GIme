@@ -349,6 +349,23 @@ public class MainActivity extends Activity {
             });
         }
 
+        /** 下载域名连不上时，页面让用户去发布页手动取安装包。 */
+        @JavascriptInterface
+        public void openUrl(final String url) {
+            if (url == null || url.isEmpty()) return;
+            runOnUiThread(new Runnable() {
+                @Override public void run() {
+                    try {
+                        Intent i = new Intent(Intent.ACTION_VIEW, Uri.parse(url));
+                        i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+                        startActivity(i);
+                    } catch (Exception e) {
+                        js("window.toast&&window.toast(\"这台机器上没有可用的浏览器\")");
+                    }
+                }
+            });
+        }
+
         @JavascriptInterface
         public void pickFile() {
             runOnUiThread(new Runnable() {

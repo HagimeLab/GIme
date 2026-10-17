@@ -41,6 +41,14 @@ public class Updater {
     private long dmId = -1;
     private DownloadManager dm;
     private BroadcastReceiver receiver;
+    /** 下载多久没有任何字节增长就判定卡死。20s 与系统的连接超时同量级。 */
+    private static final long STALL_MS = 25000;
+    /** DownloadManager.STATUS_WAITING_TO_RETRY，框架里是 @hide 常量。 */
+    private static final int STATUS_WAITING_TO_RETRY = 194;
+    /** 排查下载状态时打开，会逐次打印 poll 读到的 status/reason。 */
+    private static final boolean DEBUG_STATUS = false;
+    private long lastBytes = -1;
+    private long lastProgressAt = 0;
 
     public Updater(Sink sink) {
         this.sink = sink;
@@ -78,6 +86,9 @@ public class Updater {
                             .put("latest", latest)
                             .put("hasUpdate", Ver.isNewer(latest, current))
                             .put("url", apk == null ? "" : apk)
+                            /* 下载域名在部分网络下不可达，给一条能走通的兜底：
+                               发布页地址由 tag 推出来，不写死在页面里 */
+                            .put("page", "https://github.com/" + REPO + "/releases/tag/v" + latest)
                             .put("date", date)
                             .put("notes", notes.trim())
                             .put("log", log)
@@ -112,6 +123,55 @@ public class Updater {
             }
             return;
         }
+        /* 先把「连不连得上」问清楚，再决定要不要交给 DownloadManager。
+           国内网络对 GitHub 的下载域名常常直接不通，而系统的下载器会重试到天荒地老，
+           用户只会看到一个不动的 0%。这里 6 秒内给结论：能连就走系统下载，
+           连不上就直接告诉用户，并留一条「打开发布页」的活路。 */
+        sink.toJs("window.onUpdateChecking&&window.onUpdateChecking()");
+        new Thread(new Runnable() {
+            @Override public void run() {
+                String why = probe(url);
+                if (why == null) {
+                    act.runOnUiThread(new Runnable() {
+                        @Override public void run() { enqueueDownload(act, url); }
+                    });
+                } else {
+                    sink.toJs("window.onUpdateError&&window.onUpdateError(" + quote(why) + ")");
+                }
+            }
+        }).start();
+    }
+
+    /**
+     * 探测下载地址是否可达。返回 null 表示可以下，否则返回给用户看的原因。
+     *
+     * 关键点：**不跟随重定向**。GitHub 的下载地址会 302 到 release-assets 域名，
+     * 跟随下去就等于把真正的下载连接建起来了，探测本身会卡住几十秒——
+     * 那就失去了"先快速判断"的意义。这里只看第一跳能不能连上。
+     */
+    static String probe(String url) {
+        HttpURLConnection c = null;
+        try {
+            c = (HttpURLConnection) new URL(url).openConnection();
+            c.setConnectTimeout(6000);
+            c.setReadTimeout(6000);
+            c.setInstanceFollowRedirects(false);
+            c.setRequestMethod("HEAD");
+            c.setRequestProperty("User-Agent", "GIme-Android");
+            int code = c.getResponseCode();
+            /* 2xx 直接能下；3xx 说明第一跳通了（真正的下载由系统下载器跟随重定向）；4xx/5xx 是真错 */
+            if (code >= 200 && code < 400) return null;
+            return "更新服务器返回 HTTP " + code + "，请稍后重试或点「打开发布页」手动下载";
+        } catch (Exception e) {
+            Log.w(TAG, "probe failed", e);
+            return "连不上更新服务器（网络可能屏蔽了下载地址）。可以点「打开发布页」手动下载安装包";
+        } finally {
+            if (c != null) c.disconnect();
+        }
+    }
+
+    /** 真正把任务交给系统下载器。 */
+    private void enqueueDownload(final Activity act, final String url) {
         act.runOnUiThread(new Runnable() {
             @Override public void run() {
                 try {
@@ -137,6 +197,8 @@ public class Updater {
     private void watch() {
         final Activity act = sink.activity();
         if (receiver != null) return;
+        lastBytes = -1;
+        lastProgressAt = System.currentTimeMillis();
         receiver = new BroadcastReceiver() {
             @Override public void onReceive(Context c, Intent i) {
                 poll(act);
@@ -153,6 +215,14 @@ public class Updater {
         }).start();
     }
 
+    /**
+     * 下载器状态 → 界面该做什么。实现在 DownloadOutcome 里，
+     * 那边不依赖 Android，桌面测试可以直接钉住这条规则。
+     */
+    static String outcomeOf(int status) {
+        return DownloadOutcome.of(status);
+    }
+
     /** @return false 表示下载已结束（成功已拉起安装，或失败）。 */
     private boolean poll(final Activity act) {
         if (dm == null || dmId <= 0) return false;
@@ -161,19 +231,52 @@ public class Updater {
             cu = dm.query(new DownloadManager.Query().setFilterById(dmId));
             if (cu == null || !cu.moveToFirst()) return true;
             int status = cu.getInt(cu.getColumnIndex(DownloadManager.COLUMN_STATUS));
-            if (status == DownloadManager.STATUS_RUNNING || status == DownloadManager.STATUS_PENDING) {
+            if (DEBUG_STATUS) {
+                int rs = -1;
+                try { rs = cu.getInt(cu.getColumnIndex(DownloadManager.COLUMN_REASON)); } catch (Exception ignored) { }
+                Log.d(TAG, "poll status=" + status + " reason=" + rs);
+            }
+
+            /* 判定规则集中在 outcomeOf()，测试直接钉住那个函数；
+               这里只按结论执行，避免两处各写一份判断而慢慢走样。 */
+            String outcome = outcomeOf(status);
+
+            /* WAITING_TO_RETRY 是「连不上、过一会儿再试」。原来它落进末尾的 return true
+               被当成「还在下」，界面就永远停在 0%——用户看到的正是「点了更新一直转圈」。
+               DownloadManager.STATUS_WAITING_TO_RETRY 是 @hide 常量，只能写字面量 194。 */
+            if ("error".equals(outcome)) {
+                int reason = -1;
+                try { reason = cu.getInt(cu.getColumnIndex(DownloadManager.COLUMN_REASON)); } catch (Exception ignored) { }
+                fail(status == STATUS_WAITING_TO_RETRY
+                        ? "连不上更新服务器，下载已停止。请检查网络后重试，或点「打开发布页」手动下载安装包"
+                        : status == DownloadManager.STATUS_PAUSED
+                        ? "下载已暂停，请到通知栏恢复，或重新点一次更新"
+                        : "下载中断，请检查网络后重试，或点「打开发布页」手动下载安装包");
+                Log.w(TAG, "download ended with status=" + status + " reason=" + reason);
+                return false;
+            }
+
+            if ("progress".equals(outcome)) {
                 long got = cu.getLong(cu.getColumnIndex(DownloadManager.COLUMN_BYTES_DOWNLOADED_SO_FAR));
                 long tot = cu.getLong(cu.getColumnIndex(DownloadManager.COLUMN_TOTAL_SIZE_BYTES));
                 final int pct = tot > 0 ? (int) (got * 100 / tot) : 0;
+                if (got != lastBytes) {
+                    lastBytes = got;
+                    lastProgressAt = System.currentTimeMillis();
+                } else if (System.currentTimeMillis() - lastProgressAt > STALL_MS) {
+                    /* 状态还是 RUNNING 但一个字节都不再涨：连接被卡死。
+                       不设这条闸，用户会盯着一个不动的百分比等到没耐心为止。 */
+                    fail("下载长时间没有进展，已停止。请换个网络后重试，" +
+                         "或点「打开发布页」手动下载安装包");
+                    Log.w(TAG, "download stalled at " + got + "/" + tot);
+                    return false;
+                }
                 sink.toJs("window.onUpdateProgress&&window.onUpdateProgress(" + pct + ")");
                 return true;
             }
-            if (status == DownloadManager.STATUS_FAILED) {
-                sink.toJs("window.onUpdateError&&window.onUpdateError(" + quote("下载中断，请稍后重试") + ")");
-                done();
-                return false;
+            if ("install".equals(outcome)) {
             }
-            if (status == DownloadManager.STATUS_SUCCESSFUL) {
+            if ("install".equals(outcome)) {
                 final Uri local = dm.getUriForDownloadedFile(dmId);
                 done();
                 act.runOnUiThread(new Runnable() {
@@ -188,6 +291,16 @@ public class Updater {
         } finally {
             if (cu != null) cu.close();
         }
+    }
+
+    /** 上报失败并彻底收尾：移除系统里的那条下载，免得它在后台一直重试。 */
+    private void fail(String msg) {
+        final long id = dmId;
+        done();
+        if (dm != null && id > 0) {
+            try { dm.remove(id); } catch (Exception ignored) { }
+        }
+        sink.toJs("window.onUpdateError&&window.onUpdateError(" + quote(msg) + ")");
     }
 
     private void done() {
