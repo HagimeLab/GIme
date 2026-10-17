@@ -26,6 +26,7 @@ public class BankStoreTest {
         testTmpLeftoverRemoved();
         testCleanup();
         testSafeId();
+        crashRecovery();
 
         System.out.println();
         if (fail > 0) {
@@ -33,6 +34,82 @@ public class BankStoreTest {
             System.exit(1);
         }
         System.out.println("全部通过：" + pass + " 项");
+    }
+
+    /**
+     * 崩溃恢复边界：save() 的替换是「旧→.bak、新→正式、删 .bak」三步，
+     * 进程可能死在任意一步。这里逐个阶段伪造现场，再跑一次启动清理，
+     * 要求「下次启动一定能拿到一个完整可用的题库」。
+     */
+    private static void crashRecovery() throws Exception {
+        System.out.println();
+        System.out.println("-- 崩溃恢复 --");
+
+        // 阶段 1：临时文件写了一半就死了。正式文件还是旧的，应保留旧版并清掉 .tmp
+        File d1 = sub("crash1");
+        write(d1, "c1.json", "{\"v\":\"old\"}");
+        write(d1, "c1.json.tmp", "{\"v\":\"ha");
+        BankStore.cleanup(d1);
+        check("[崩溃1] 写 tmp 时死：旧题库保留", read(d1, "c1.json"), "{\"v\":\"old\"}");
+        check("[崩溃1] 写 tmp 时死：半截 tmp 被清", new File(d1, "c1.json.tmp").exists(), false);
+
+        // 阶段 2：旧文件已挪成 .bak、新文件还没顶上就死了。
+        // 这是最危险的窗口——正式文件不存在，唯一完整副本是 .bak。
+        File d2 = sub("crash2");
+        write(d2, "c2.json.bak", "{\"v\":\"old\"}");
+        BankStore.cleanup(d2);
+        check("[崩溃2] 挪走旧文件后死：.bak 被还原成正式文件", read(d2, "c2.json"), "{\"v\":\"old\"}");
+        check("[崩溃2] 还原后不留 .bak", new File(d2, "c2.json.bak").exists(), false);
+
+        // 阶段 3：新文件已顶上、.bak 还没删就死了。新内容为准，.bak 是多余旧版
+        File d3 = sub("crash3");
+        write(d3, "c3.json", "{\"v\":\"new\"}");
+        write(d3, "c3.json.bak", "{\"v\":\"old\"}");
+        BankStore.cleanup(d3);
+        check("[崩溃3] 替换完成后死：新内容保留", read(d3, "c3.json"), "{\"v\":\"new\"}");
+        check("[崩溃3] 替换完成后死：多余 .bak 被清", new File(d3, "c3.json.bak").exists(), false);
+
+        // 阶段 4：三个文件同时残留（最脏的现场）。正式文件在，就该以它为准
+        File d4 = sub("crash4");
+        write(d4, "c4.json", "{\"v\":\"new\"}");
+        write(d4, "c4.json.bak", "{\"v\":\"old\"}");
+        write(d4, "c4.json.tmp", "{\"v\":\"hal");
+        BankStore.cleanup(d4);
+        check("[崩溃4] 三个残留并存：正式文件胜出", read(d4, "c4.json"), "{\"v\":\"new\"}");
+        check("[崩溃4] 三个残留并存：tmp/bak 都清掉",
+              new File(d4, "c4.json.tmp").exists() || new File(d4, "c4.json.bak").exists(), false);
+
+        // 阶段 5：真跑一次 save，然后在「挪走旧文件之后」强行中断（mover 直接摆烂）
+        File d5 = sub("crash5");
+        write(d5, "c5.json", "{\"v\":\"old\"}");
+        byte[] data = "{\"v\":\"new\"}".getBytes(StandardCharsets.UTF_8);
+        BankStore.save(d5, "c5", data, (from, to) -> {
+            // 只让 target→bak 成功，tmp→target 当作进程被杀（不执行、返回 false）
+            if (to.getName().endsWith(".bak")) return from.renameTo(to);
+            return false;
+        });
+        // save 内部会尝试回滚；回滚失败时 .bak 就是唯一副本，清理必须把它救回来
+        BankStore.cleanup(d5);
+        String got = read(d5, "c5.json");
+        check("[崩溃5] 替换中断后仍能读到完整题库",
+              got.equals("{\"v\":\"old\"}") || got.equals("{\"v\":\"new\"}"), true);
+        check("[崩溃5] 恢复后内容是完整 JSON", got.startsWith("{") && got.endsWith("}"), true);
+    }
+
+    private static File sub(String name) throws Exception {
+        File d = new File(dir, name);
+        d.mkdirs();
+        return d;
+    }
+
+    private static void write(File d, String name, String content) throws Exception {
+        Files.write(new File(d, name).toPath(), content.getBytes(StandardCharsets.UTF_8));
+    }
+
+    private static String read(File d, String name) throws Exception {
+        File f = new File(d, name);
+        if (!f.exists()) return "<缺失>";
+        return new String(Files.readAllBytes(f.toPath()), StandardCharsets.UTF_8);
     }
 
     /** 首次保存：没有旧文件也要能落盘。 */
@@ -95,9 +172,12 @@ public class BankStoreTest {
 
     /** 孤儿的 .bak（对应正式文件已不在）要保留，别把唯一副本删了。 */
     private static void testCleanup() throws Exception {
+        // 孤儿 .bak（正式文件不在）意味着上次死在「挪走旧文件」和「新文件顶上」之间，
+        // 唯一完整副本就是这个 .bak，必须还原成正式文件而不是删掉。
         write("orphan.json.bak", "{\"v\":\"only\"}");
         BankStore.cleanup(dir);
-        check("孤儿 .bak 不被误删", new File(dir, "orphan.json.bak").exists(), true);
+        check("孤儿 .bak 被还原成正式文件", read("orphan.json"), "{\"v\":\"only\"}");
+        check("还原后 .bak 不再存在", new File(dir, "orphan.json.bak").exists(), false);
         write("done.json", "{}");
         write("done.json.bak", "{}");
         BankStore.cleanup(dir);
