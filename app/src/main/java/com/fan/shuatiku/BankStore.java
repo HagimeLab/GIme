@@ -75,17 +75,35 @@ public final class BankStore {
         }
     }
 
-    /** 启动时清掉上次被打断留下的临时/备份文件，别让它们一直占着地方。 */
+    /**
+     * 启动时的崩溃恢复。save() 的替换是「旧文件挪成 .bak → 新文件顶上 → 删 .bak」，
+     * 进程可能死在中间任何一步，所以这里按落盘状态决定谁说了算：
+     *
+     *   .json 在、.bak 也在  → 替换已完成，.bak 是上一版，删掉
+     *   .json 不在、.bak 在  → 死在「挪走旧文件」和「新文件顶上」之间：
+     *                          .bak 是唯一完整副本，必须还原成 .json，
+     *                          否则 loadBanks() 只认 *.json，题库会凭空消失
+     *   .tmp                 → 写了一半的临时文件，永远不作数，直接删
+     */
     static void cleanup(File dir) {
         File[] files = dir.listFiles();
         if (files == null) return;
+
+        // 先还原孤儿 .bak：这是唯一会丢数据的阶段，必须排在删 .tmp 之前
         for (File f : files) {
             String n = f.getName();
-            if (!n.endsWith(".tmp") && !n.endsWith(".bak")) continue;
-            // .bak 里是上一版内容，对应的正式文件还在就说明替换已经完成，可以丢
-            String base = n.substring(0, n.length() - 4);
-            if (n.endsWith(".bak") && !new File(dir, base).exists()) continue;
-            f.delete();
+            if (!n.endsWith(".bak")) continue;
+            File target = new File(dir, n.substring(0, n.length() - 4));
+            if (target.exists()) {
+                f.delete();               // 替换已落定，旧版可以丢
+            } else {
+                f.renameTo(target);       // 把唯一完整副本放回正式位置
+            }
+        }
+
+        // 再清临时文件：它们要么是没写完的半成品，要么已经被 rename 走了
+        for (File f : files) {
+            if (f.getName().endsWith(".tmp")) f.delete();
         }
     }
 
