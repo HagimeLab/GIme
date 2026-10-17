@@ -1,0 +1,14 @@
+# 构建产物与机器相关配置，不入库
+.gradle/
+build/
+local.properties
+*.iml
+.idea/
+.DS_Store
+app/build/
+
+# 发布签名密钥与口令：一旦入库就等于公开私钥，绝不提交
+signing/
+*.jks
+*.keystore
+keystore.properties
