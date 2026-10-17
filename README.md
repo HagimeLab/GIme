@@ -4,15 +4,19 @@
 
 ## 装到手机
 
-APK 在 `app\build\outputs\apk\debug\app-debug.apk`（约 1 MB）。
+**直接下载**（不用装编译环境）：
 
-方式一（数据线）：
+- Release 页：https://github.com/HagimeLab/GIme/releases/tag/v1.0.0
+- APK 直链：https://github.com/HagimeLab/GIme/releases/download/v1.0.0/GIme-v1.0.0.apk
+- 大小 940,853 字节，SHA-256 `85e2b3fc299daf406dcb06a2ba07e3eac05b415c11d5b60177bf69672e77eb1c`
+
+下到手机点开安装即可，需要允许「安装未知来源应用」。最低 Android 7.0（API 24）。装好后 App 内「我的 → 检查更新」就能直接升级到后续版本。
+
+自己编译的话，产物在 `app\build\outputs\apk\release\app-release.apk`（debug 包在同级 `debug\` 目录）。数据线安装：
 
 ```
 C:\Users\fan\Tools\platform-tools\adb.exe install -r "D:\desktop\刷题apk\app\build\outputs\apk\debug\app-debug.apk"
 ```
-
-方式二（不连电脑）：把 `app-debug.apk` 发到手机上点开安装，需要允许「安装未知来源应用」。
 
 ## 题库构成
 
