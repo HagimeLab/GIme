@@ -1119,7 +1119,7 @@ function renderMe() {
       ? row("restore", "恢复隐藏题库", Object.keys(set.hidden).length + " 个内置题库被隐藏", false) : "") +
     row("font", "字号", "当前 " + set.fscale + "%，点击循环切换", false) +
     row("search", "搜索题目", "按题干 / 解析关键词", false) +
-    row("update", "检查更新", "当前 v" + APP_VER + " · 从 GitHub 拉新版本", false) +
+    row("update", "检查更新", "当前 v" + APP_VER + " 版本", false) +
     row("clear", "清空进度", "做题记录、错题、收藏全部删除", false);
 }
 function row(k, title, sub, sw, on) {
@@ -1303,21 +1303,21 @@ function updSheet(html) {
 window.onUpdateInfo = function (s) {
   var d;
   try { d = JSON.parse(s); } catch (e) { d = { ok: false, error: "更新信息读不懂" }; }
-  if (!d.ok) { glass({ title: "检查失败", desc: d.error || "未知错误", ok: ["知道了"] }); return; }
+  if (!d.ok) { glass({ title: "检查失败", desc: d.error || "未知错误", no: null, ok: ["知道了"] }); return; }
   if (!d.hasUpdate) {
-    glass({ icon: "✓", big: d.current, title: "已是最新版本",
-            desc: "当前 v" + d.current + "　仓库最新 v" + d.latest, ok: ["好"] });
+    glass({ icon: "✓", title: "目前已经为最新版本", desc: "当前版本 v" + d.current,
+            no: null, ok: ["确定"] });
     return;
   }
   if (!d.url) {
-    glass({ title: "v" + d.latest + " 没有安装包", desc: "该 Release 里没有 .apk 资产", ok: ["知道了"] });
+    glass({ title: "v" + d.latest + " 没有安装包", desc: "该 Release 里没有 .apk 资产", no: null, ok: ["知道了"] });
     return;
   }
   updInfo = d;
   var notes = (d.notes || "").replace(/\s*\n+\s*/g, "  ").trim();
-  glass({ icon: "↑", big: d.latest, title: "发现新版本 v" + d.latest,
-          desc: notes || "下载完成后会自动弹出安装页",
-          no: ["以后再说"], ok: ["下载更新", function () {
+  glass({ icon: "↑", title: "v" + d.latest + " 已经发布，是否进行更新？",
+          desc: notes || "更新后做题记录和题库都会保留",
+          no: ["暂时不更新"], ok: ["更新", function () {
             updSheet('<div class="icon">↓</div><div class="big" id="upPct">0%</div>' +
               "<h2>正在下载 v" + esc(d.latest) + "</h2>" +
               '<div class="track" style="margin:14px 0 8px"><i id="upBar"></i></div>' +
@@ -1562,15 +1562,17 @@ function jump(i) { S.idx = i; closeTop(); render(); }
 
 function glass(o) {
   var g = document.getElementById("glass");
+  /* no 显式传 null 就是纯提示，不该多一个语义重复的「取消」 */
+  var one = o.no === null;
   g.innerHTML = (o.icon ? '<div class="icon">' + o.icon + "</div>" : "") +
     (o.big != null ? '<div class="big">' + o.big + "</div>" : "") +
     "<h2>" + esc(o.title) + "</h2><p>" + esc(o.desc || "") + "</p>" +
     '<div class="btns">' +
-      '<button class="sec" id="gNo">' + esc(o.no ? o.no[0] : "取消") + "</button>" +
+      (one ? "" : '<button class="sec" id="gNo">' + esc(o.no ? o.no[0] : "取消") + "</button>") +
       '<button class="pri" id="gOk">' + esc(o.ok[0]) + "</button></div>";
   openLayer(g);
   document.getElementById("gOk").onclick = function () { closeTop(); o.ok[1] && o.ok[1](); };
-  document.getElementById("gNo").onclick = function () { closeTop(); o.no && o.no[1] && o.no[1](); };
+  if (!one) document.getElementById("gNo").onclick = function () { closeTop(); o.no && o.no[1] && o.no[1](); };
 }
 
 var toastTimer = null;
