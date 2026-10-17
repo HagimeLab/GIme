@@ -36,6 +36,12 @@ if errorlevel 1 goto fail
 java -cp "%OUT%" com.fan.shuatiku.DownloadSourcesTest
 if errorlevel 1 goto fail
 echo.
+echo === release manifest (version/apk name single source of truth) ===
+javac -encoding UTF-8 -d "%OUT%" "%~dp0..\app\src\main\java\com\fan\shuatiku\ReleaseManifest.java" "%~dp0ReleaseManifestTest.java"
+if errorlevel 1 goto fail
+java -cp "%OUT%" com.fan.shuatiku.ReleaseManifestTest
+if errorlevel 1 goto fail
+echo.
 echo ALL CHECKS PASSED
 endlocal
 exit /b 0

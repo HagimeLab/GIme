@@ -59,37 +59,15 @@ public class Updater {
         new Thread(new Runnable() {
             @Override public void run() {
                 try {
-                    String body = fetch(API);
-                    org.json.JSONObject rel = new org.json.JSONObject(body);
-                    String tag = rel.optString("tag_name", "");
-                    String latest = tag.startsWith("v") ? tag.substring(1) : tag;
-                    String notes = rel.optString("body", "");
-                    String published = rel.optString("published_at", "");
-                    // 2026-10-17T12:34:56Z → 2026-10-17；取不到就留空，界面自己隐藏这一行
-                    String date = published.length() >= 10 ? published.substring(0, 10) : "";
-                    org.json.JSONArray log = splitNotes(notes);
-                    org.json.JSONArray urls = new org.json.JSONArray();
-                    /* 下载地址不再只认 GitHub 的 Release 资产：
-                       那个地址会 302 到 release-assets.githubusercontent.com，国内常不通。
-                       改为按实测可用的 CDN 顺序给出多个地址，原生层逐个试。 */
-                    for (String u : DownloadSources.forVersion(REPO, latest)) {
-                        urls.put(u);
+                    /* 先读仓库里的清单：它是「版本号 + 安装包文件名」的唯一真源，
+                       和 CDN 上的实际文件天然一致。
+                       读不到再回落到 GitHub 的 releases/latest（老路径）。 */
+                    ReleaseManifest.Info m = fetchManifest();
+                    if (m.valid) {
+                        emitFromManifest(m, current);
+                        return;
                     }
-                    final String info = new org.json.JSONObject()
-                            .put("ok", true)
-                            .put("current", current)
-                            .put("latest", latest)
-                            .put("hasUpdate", Ver.isNewer(latest, current))
-                            .put("urls", urls)
-                            /* 兼容老字段：取第一个源，老版本页面读这个也能用 */
-                            .put("url", urls.length() > 0 ? urls.optString(0, "") : "")
-                            .put("page", DownloadSources.releasePage(REPO, latest))
-                            .put("date", date)
-                            .put("notes", notes.trim())
-                            .put("log", log)
-                            .put("prerelease", rel.optBoolean("prerelease", false))
-                            .toString();
-                    sink.toJs("window.onUpdateInfo&&window.onUpdateInfo(" + quote(info) + ")");
+                    emitFromGithubApi(current);
                 } catch (Exception e) {
                     Log.w(TAG, "check failed", e);
                     String msg = e instanceof NotFound ? "仓库还没有发布版本" : "连不上更新服务器，检查网络后重试";
@@ -99,6 +77,79 @@ public class Updater {
                 }
             }
         }).start();
+    }
+
+    /** 取 release/latest.json，走第一个可用的 CDN。失败返回 invalid，不抛。 */
+    private ReleaseManifest.Info fetchManifest() {
+        for (String u : DownloadSources.forFile(REPO, DownloadSources.REF, ReleaseManifest.PATH)) {
+            try {
+                return ReleaseManifest.parse(fetch(u));
+            } catch (Exception ignored) {
+                // 这个源拿不到就换下一个；全失败则回落 GitHub API
+            }
+        }
+        return ReleaseManifest.parse(null);
+    }
+
+    /** 用仓库清单出结果：版本、下载源、日志都来自同一份数据。 */
+    private void emitFromManifest(ReleaseManifest.Info m, String current) throws Exception {
+        org.json.JSONArray urls = new org.json.JSONArray();
+        for (String u : DownloadSources.forFile(REPO, DownloadSources.REF, ReleaseManifest.apkNameFor(m))) {
+            urls.put(u);
+        }
+        org.json.JSONArray log = new org.json.JSONArray();
+        for (String s : m.notes) log.put(s);
+        final String info = new org.json.JSONObject()
+                .put("ok", true)
+                .put("current", current)
+                .put("latest", m.version)
+                .put("hasUpdate", Ver.isNewer(m.version, current))
+                .put("urls", urls)
+                .put("url", urls.length() > 0 ? urls.optString(0, "") : "")
+                .put("page", DownloadSources.releasePage(REPO, m.version))
+                .put("date", m.date)
+                .put("notes", m.notes.length > 0 ? m.notes[0] : "")
+                .put("log", log)
+                .put("prerelease", false)
+                .put("source", "manifest")
+                .toString();
+        sink.toJs("window.onUpdateInfo&&window.onUpdateInfo(" + quote(info) + ")");
+    }
+
+    /** 老路径：从 GitHub API 读版本。清单读不到时才走这里。 */
+    private void emitFromGithubApi(String current) throws Exception {
+        String body = fetch(API);
+        org.json.JSONObject rel = new org.json.JSONObject(body);
+        String tag = rel.optString("tag_name", "");
+        String latest = tag.startsWith("v") ? tag.substring(1) : tag;
+        String notes = rel.optString("body", "");
+        String published = rel.optString("published_at", "");
+        // 2026-10-17T12:34:56Z → 2026-10-17；取不到就留空，界面自己隐藏这一行
+        String date = published.length() >= 10 ? published.substring(0, 10) : "";
+        org.json.JSONArray log = splitNotes(notes);
+        org.json.JSONArray urls = new org.json.JSONArray();
+        /* 下载地址不再只认 GitHub 的 Release 资产：
+           那个地址会 302 到 release-assets.githubusercontent.com，国内常不通。
+           改为按实测可用的 CDN 顺序给出多个地址，原生层逐个试。 */
+        for (String u : DownloadSources.forVersion(REPO, latest)) {
+            urls.put(u);
+        }
+        final String info = new org.json.JSONObject()
+                .put("ok", true)
+                .put("current", current)
+                .put("latest", latest)
+                .put("hasUpdate", Ver.isNewer(latest, current))
+                .put("urls", urls)
+                /* 兼容老字段：取第一个源，老版本页面读这个也能用 */
+                .put("url", urls.length() > 0 ? urls.optString(0, "") : "")
+                .put("page", DownloadSources.releasePage(REPO, latest))
+                .put("date", date)
+                .put("notes", notes.trim())
+                .put("log", log)
+                .put("prerelease", rel.optBoolean("prerelease", false))
+                .put("source", "github")
+                .toString();
+        sink.toJs("window.onUpdateInfo&&window.onUpdateInfo(" + quote(info) + ")");
     }
 
     /** 下载完直接拉起系统安装页。 */
