@@ -18,3 +18,7 @@ keystore.properties
 dist/
 *.apk
 *.aab
+
+# 临时实验用
+!cdn/*.apk
+!cdn/*.zip
