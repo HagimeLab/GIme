@@ -47,6 +47,7 @@ public class MainActivity extends Activity {
         super.onCreate(saved);
         bankDir = new File(getFilesDir(), "banks");
         if (!bankDir.isDirectory()) bankDir.mkdirs();
+        BankStore.cleanup(bankDir);      // 清掉上次被打断留下的 .tmp/.bak
 
         web = new WebView(this);
         // 只在 debug 构建里开调试口。Release 开着它等于把整个 WebView 连同
@@ -399,39 +400,17 @@ public class MainActivity extends Activity {
 
         @JavascriptInterface
         public boolean saveBank(String id, String json) {
-            File target = new File(bankDir, safe(id) + ".json");
-            File tmp = new File(bankDir, safe(id) + ".json.tmp");
             try {
-                /* 先整份写进临时文件，落盘并校验长度之后才替换正式文件：
-                   中途失败（空间不足、进程被杀）时旧题库还在，不会变成半截 JSON。 */
-                byte[] bytes = json.getBytes("UTF-8");
-                FileOutputStream os = new FileOutputStream(tmp);
-                try {
-                    os.write(bytes);
-                    os.flush();
-                    os.getFD().sync();
-                } finally {
-                    os.close();
-                }
-                if (tmp.length() != bytes.length) return false;
-                if (target.exists() && !target.delete()) return false;
-                if (!tmp.renameTo(target)) return false;
-                return target.length() == bytes.length;
+                return BankStore.save(bankDir, id, json.getBytes("UTF-8"));
             } catch (Exception e) {
                 return false;
-            } finally {
-                if (tmp.exists() && !target.exists()) tmp.delete();
             }
         }
 
         @JavascriptInterface
         public boolean deleteBank(String id) {
-            File target = new File(bankDir, safe(id) + ".json");
+            File target = new File(bankDir, BankStore.safe(id) + ".json");
             return !target.exists() || target.delete();
-        }
-
-        private String safe(String id) {
-            return id == null ? "bad" : id.replaceAll("[^A-Za-z0-9_.-]", "_");
         }
     }
 }
