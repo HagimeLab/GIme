@@ -21,12 +21,14 @@ public final class DownloadSources {
     /**
      * CDN 读的引用。
      *
-     * 用**一个会被移动的 tag** 而不是分支：
-     * jsDelivr 对 `@main` 的同一路径强缓存 7 天，换内容后客户端仍会读到旧文件；
-     * 而 tag 在 jsDelivr 里是独立缓存键，每次发布把 `release` 这个 tag 移到新提交，
-     * 路径保持不变、内容立即生效。
+     * 用**一个固定的 tag**：jsDelivr 对 `@main` 的同一路径强缓存 7 天，
+     * 换内容后客户端仍会读到旧文件；tag 在 jsDelivr 里是独立缓存键。
+     *
+     * 注意：这个 tag 只在**首次**建立时有效。后续移动 tag 可能命中旧缓存，
+     * 所以安装包路径必须带版本号（见 forVersion），靠路径而非缓存键来保证拿到新包。
+     * 清单（latest.json）不走这里，改从 GitHub API 读，见 Updater.fetchManifest。
      */
-    static final String REF = "release";
+    static final String REF = "rel-v1.0.2";
 
     private DownloadSources() {
     }
@@ -71,3 +73,4 @@ public final class DownloadSources {
         return "https://github.com/" + repo + "/releases/tag/v" + version;
     }
 }
+

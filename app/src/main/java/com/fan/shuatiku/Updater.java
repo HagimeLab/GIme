@@ -79,17 +79,36 @@ public class Updater {
         }).start();
     }
 
-    /** 取 release/latest.json，走第一个可用的 CDN。失败返回 invalid，不抛。 */
+    /**
+     * 取 release/latest.json。
+     *
+     * **不走 CDN**：jsDelivr 对同一路径强缓存 7 天，清单路径又是固定的，
+     * 从 CDN 读会一直拿到旧版本号。改从 GitHub 的 contents API 读——
+     * 实测 `api.github.com` 在国内可达（能查版本就说明它通），且 API 不缓存。
+     * API 失败才退到 CDN 与 raw 地址，尽量不让检查更新整个失败。
+     */
     private ReleaseManifest.Info fetchManifest() {
+        // 1) GitHub API：不缓存，最可靠
+        try {
+            String api = "https://api.github.com/repos/" + REPO + "/contents/" +
+                    ReleaseManifest.PATH + "?ref=" + DownloadSources.REF;
+            String body = fetch(api);
+            /* contents API 把文件内容放在 content 字段里，且是 base64 + 换行 */
+            String b64 = new org.json.JSONObject(body).optString("content", "");
+            if (!b64.isEmpty()) {
+                String json = new String(android.util.Base64.decode(
+                        b64.replaceAll("\\s", ""), android.util.Base64.DEFAULT), "UTF-8");
+                ReleaseManifest.Info info = ReleaseManifest.parse(json);
+                if (info.valid) return info;
+            }
+        } catch (Exception ignored) {
+            // 落到下面的 CDN 兜底
+        }
+        // 2) CDN / raw 兜底（可能拿到旧缓存，但总比没有强）
         for (String u : DownloadSources.forFile(REPO, DownloadSources.REF, ReleaseManifest.PATH)) {
             try {
-                /* 加个时间戳穿透缓存：jsDelivr 对同一路径缓存 7 天，
-                   清单路径必须固定（客户端只认这一个地址），
-                   所以只能在请求上做手脚，否则发了新版会一直读到旧清单。 */
-                String bust = u + (u.contains("?") ? "&" : "?") + "t=" + (System.currentTimeMillis() / 60000);
-                return ReleaseManifest.parse(fetch(bust));
+                return ReleaseManifest.parse(fetch(u));
             } catch (Exception ignored) {
-                // 这个源拿不到就换下一个；全失败则回落 GitHub API
             }
         }
         return ReleaseManifest.parse(null);
