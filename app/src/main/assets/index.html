@@ -2205,13 +2205,18 @@ applyTheme();
 bootImportedBanks();
 renderAll();
 /* 上次是交卷/放弃到一半被杀掉的会话不该再被恢复出来：状态停在 submitting 说明
-   结算没走完，按 running 续上比丢掉整场作答更合理。 */
-if (S && S.mode === "exam") {
-  if (S.state === "submitted" || S.state === "abandoned") { S = null; localStorage.removeItem(LS.j); }
+   结算没走完，按 running 续上比丢掉整场作答更合理。
+   抽成函数是为了回归测试能直接调真实现，而不是复制一份规则。 */
+function normalizeSession(s) {
+  if (!s || s.mode !== "exam") return s;
+  if (s.state === "submitted" || s.state === "abandoned") return null;
   /* 注意 submitting 也要归一成 running：否则表不会走、交卷入口也不收，
      这场考试就永久卡死在「正在交卷」上。 */
-  else S.state = "running";
+  s.state = "running";
+  return s;
 }
+S = normalizeSession(S);
+if (S === null) localStorage.removeItem(LS.j);
 if (S && S.order && S.order.length && S.order[S.idx] && byId[S.order[S.idx]]) {
   render();
   document.getElementById("quiz").classList.add("on");

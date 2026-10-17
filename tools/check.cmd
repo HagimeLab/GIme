@@ -1,24 +1,36 @@
 @echo off
-rem GIme regression checks: page logic + bank structure + version compare.
-rem Requires node and the JDK 21 toolchain used by build.cmd.
+rem GIme regression checks: page logic + bank structure + version compare + bank store.
+rem Machine-specific toolchain paths come from build.local.cmd (gitignored).
 chcp 65001 >nul
 setlocal
-set "JAVA_HOME=C:\Users\fan\.jdks\jdk-21.0.12.1+1"
+if exist "%~dp0..\build.local.cmd" call "%~dp0..\build.local.cmd"
+if not defined JAVA_HOME goto nojava
 set "PATH=%JAVA_HOME%\bin;%PATH%"
+set "OUT=%~dp0..\build\test-classes"
 echo === page logic / bank structure ===
 node "%~dp0check.mjs"
 if errorlevel 1 goto fail
 echo.
 echo === version compare ===
-if not exist "%~dp0..\build\test-classes" mkdir "%~dp0..\build\test-classes"
-javac -encoding UTF-8 -d "%~dp0..\build\test-classes" "%~dp0..\app\src\main\java\com\fan\shuatiku\Ver.java" "%~dp0VerTest.java"
+if not exist "%OUT%" mkdir "%OUT%"
+javac -encoding UTF-8 -d "%OUT%" "%~dp0..\app\src\main\java\com\fan\shuatiku\Ver.java" "%~dp0VerTest.java"
 if errorlevel 1 goto fail
-java -cp "%~dp0..\build\test-classes" VerTest
+java -cp "%OUT%" VerTest
+if errorlevel 1 goto fail
+echo.
+echo === bank store (save/rollback) ===
+javac -encoding UTF-8 -d "%OUT%" "%~dp0..\app\src\main\java\com\fan\shuatiku\BankStore.java" "%~dp0BankStoreTest.java"
+if errorlevel 1 goto fail
+java -cp "%OUT%" com.fan.shuatiku.BankStoreTest
 if errorlevel 1 goto fail
 echo.
 echo ALL CHECKS PASSED
 endlocal
 exit /b 0
+
+:nojava
+echo JAVA_HOME is not set. Create build.local.cmd or export JAVA_HOME first.
+exit /b 1
 
 :fail
 echo.

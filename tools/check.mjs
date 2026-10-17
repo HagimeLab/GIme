@@ -217,6 +217,47 @@ const sidPractice = W.S.order.slice();
 W.exitQuiz();
 ok("普通练习退出保留会话且不结算", W.S !== null && W.S.order.length === sidPractice.length);
 
+/* ---------- 6. 两条返回入口必须一致 ----------
+   答题页左上角箭头走 exitQuiz()，系统返回键走 window.onBack()。
+   两条路都必须拦住考试，否则从箭头那条路就能把计时丢在后台。 */
+section("[6] 考试中两条返回入口一致");
+const backEntry = await (async () => {
+  // 箭头：直接调 exitQuiz
+  W.startSession("exam", "all", "exam");
+  const beforeArrow = totalN();
+  W.exitQuiz();
+  const arrowOpenedDialog = W.openLayers.length > 0 && W.S !== null;
+  const arrowSettled = totalN() === beforeArrow;
+  W.closeTop();
+
+  // 返回键：window.onBack
+  const beforeKey = totalN();
+  const handled = W.onBack();
+  const keyOpenedDialog = W.openLayers.length > 0 && W.S !== null;
+  const keySettled = totalN() === beforeKey;
+  W.closeTop();
+  W.abandonExam();
+  return { arrowOpenedDialog, arrowSettled, keyOpenedDialog, keySettled, handled };
+})();
+ok("答题页箭头拦下考试（不静默退出）", backEntry.arrowOpenedDialog === true);
+ok("答题页箭头不触发结算", backEntry.arrowSettled === true);
+ok("返回键拦下考试（不静默退出）", backEntry.keyOpenedDialog === true);
+ok("返回键不触发结算", backEntry.keySettled === true);
+ok("两条入口都被识别为已消费", backEntry.handled === true);
+
+/* ---------- 7. 存档恢复规则 ----------
+   submitting 必须归一成 running（否则永久卡在「正在交卷」）；
+   submitted/abandoned 必须丢弃（否则已结束的卷子又被恢复出来）。
+   直接调页面里的 normalizeSession，测真实现而不是复制一份规则。 */
+section("[7] 会话恢复归一");
+const norm = (s) => W.normalizeSession(JSON.parse(JSON.stringify(s)));
+ok("submitting 恢复为 running", norm({ mode: "exam", state: "submitting" }).state === "running");
+ok("缺失 state 恢复为 running", norm({ mode: "exam" }).state === "running");
+ok("submitted 被丢弃", norm({ mode: "exam", state: "submitted" }) === null);
+ok("abandoned 被丢弃", norm({ mode: "exam", state: "abandoned" }) === null);
+ok("练习会话不受影响", norm({ mode: "practice", state: "x" }).state === "x");
+ok("null 会话不崩", W.normalizeSession(null) === null);
+
 /* ---------- 结果 ---------- */
 console.log("\n" + "=".repeat(46));
 if (fails.length) {
