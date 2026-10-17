@@ -48,7 +48,7 @@
         │   ├── Updater.java         版本检查、下载安装包
         │   └── Ver.java             版本号比较
         └── res/
-            └── mipmap-*/            图标资源
+            └── mipmap-*/            各密度资源
 ```
 
 界面、样式和全部交互逻辑都在 `app/src/main/assets/index.html` 一个文件内；题库数据在 `app/src/main/assets/bank.js`。修改这两处即可完成大部分内容调整。
