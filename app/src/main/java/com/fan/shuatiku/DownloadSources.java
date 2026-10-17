@@ -18,8 +18,15 @@ public final class DownloadSources {
     /** 仓库内放发布件的目录。APK 随源码一起进仓库，由 CDN 直出。 */
     static final String CDN_DIR = "release";
 
-    /** CDN 读的分支。用分支而不是 tag：tag 需要额外推送，且 jsDelivr 对分支更稳。 */
-    static final String REF = "main";
+    /**
+     * CDN 读的引用。
+     *
+     * 用**一个会被移动的 tag** 而不是分支：
+     * jsDelivr 对 `@main` 的同一路径强缓存 7 天，换内容后客户端仍会读到旧文件；
+     * 而 tag 在 jsDelivr 里是独立缓存键，每次发布把 `release` 这个 tag 移到新提交，
+     * 路径保持不变、内容立即生效。
+     */
+    static final String REF = "release";
 
     private DownloadSources() {
     }

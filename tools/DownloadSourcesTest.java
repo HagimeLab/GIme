@@ -32,7 +32,7 @@ public class DownloadSourcesTest {
         List<String> other = DownloadSources.forVersion("HagimeLab/GIme", "9.9.9");
         checkBool("换版本号会改变下载路径（避开 CDN 强缓存）", !other.get(0).equals(urls.get(0)));
 
-        checkBool("使用 main 分支引用", urls.get(0).contains("@main/"));
+        checkBool("使用可移动的 release tag 作缓存键", urls.get(0).contains("@release/"));
 
         checkStr("发布页按版本号生成",
                  DownloadSources.releasePage("HagimeLab/GIme", "1.0.2"),
@@ -61,4 +61,5 @@ public class DownloadSourcesTest {
         else { fail++; System.out.println("  [FAIL] " + name + "（期望 " + expect + "，实际 " + actual + "）"); }
     }
 }
+
 

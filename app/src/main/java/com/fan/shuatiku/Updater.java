@@ -83,7 +83,11 @@ public class Updater {
     private ReleaseManifest.Info fetchManifest() {
         for (String u : DownloadSources.forFile(REPO, DownloadSources.REF, ReleaseManifest.PATH)) {
             try {
-                return ReleaseManifest.parse(fetch(u));
+                /* 加个时间戳穿透缓存：jsDelivr 对同一路径缓存 7 天，
+                   清单路径必须固定（客户端只认这一个地址），
+                   所以只能在请求上做手脚，否则发了新版会一直读到旧清单。 */
+                String bust = u + (u.contains("?") ? "&" : "?") + "t=" + (System.currentTimeMillis() / 60000);
+                return ReleaseManifest.parse(fetch(bust));
             } catch (Exception ignored) {
                 // 这个源拿不到就换下一个；全失败则回落 GitHub API
             }
