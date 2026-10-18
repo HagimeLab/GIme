@@ -168,6 +168,12 @@ svg { display: block; }
 .tab span { display: block; font-size: .625rem; font-weight: 600; letter-spacing: .3px; }
 .tab.on { color: var(--ink); }
 .tab.on .ico { stroke-width: 2.2; }
+/* 选中态不再只是换字色：一枚按下去的凹槽在四个按钮之间流动。
+   .tabs 是 fixed，它就是胶囊的包含块（无边框，所以按钮的 offsetLeft/Top 可直接当 left/top 用）；
+   按钮要压在凹槽之上，所以按钮 z-index:1、胶囊 0。底色与阴影全部沿用主题令牌，不引入彩色。 */
+.tab { position: relative; z-index: 1; }
+.tab-pill { position: absolute; z-index: 0; left: 0; top: 0; width: 0; height: 0;
+            border-radius: 999px; background: var(--raise); box-shadow: var(--sink); }
 
 /* ---------------- 答题页 ---------------- */
 #quiz { position: fixed; top: 0; left: 0; right: 0; bottom: 0; z-index: 850;
@@ -438,7 +444,7 @@ svg { display: block; }
 .trash.hot { box-shadow: var(--sink); }
 
 /* ---------------- 题型标签栏：选中放大、两侧让位 ---------------- */
-.tbar { display: flex; margin: 0 -4px 18px; }
+.tbar { display: flex; margin: 0 -4px 18px; position: relative; }
 .tbar button { flex: 1; min-width: 0; margin: 0 4px; padding: 10px 0; border-radius: 999px;
                background: var(--raise); box-shadow: var(--sh-sm); font-size: .8125rem; font-weight: 600;
                color: var(--ink-2); white-space: nowrap;
@@ -446,10 +452,17 @@ svg { display: block; }
 .tbar button.on { flex: 2.1; background: var(--ink); color: var(--paper); box-shadow: var(--sh); font-weight: 700; }
 /* 题型有六种，字号调到 120% 时一行放不下：改成横向滚动，别把字压扁或换行 */
 .tbar.scroll { overflow-x: auto; overflow-y: hidden; -webkit-overflow-scrolling: touch;
-               scrollbar-width: none; padding-bottom: 2px;
+               scrollbar-width: none;
+               /* 下面 9px 是留给滑动下划线的跑道：加 9px 内边距、减 9px 外边距，
+                  整块与下方内容的距离和改造前逐像素相同 */
+               padding-bottom: 11px; margin-bottom: 9px;
                /* 右边缘淡出：内容被裁一半时看着像 bug，加一层渐隐就变成「还能往右滑」的暗示 */
                -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 22px), transparent);
                mask-image: linear-gradient(to right, #000 calc(100% - 22px), transparent); }
+/* 题型筛选的毛毛虫下划线。元素跟着每次渲染重建，所以「上一枚在哪」记在 JS 的 tfU 里，
+   关键帧中间那一帧把条拉成同时盖住新旧两枚的长度，两头不同步收尾，就是虫在爬。 */
+.tbar-u { position: absolute; bottom: 3px; left: 0; width: 0; height: 3px;
+          border-radius: 999px; background: var(--ink); opacity: .72; }
 .tbar.scroll::-webkit-scrollbar { display: none; }
 .tbar.scroll button { flex: 0 0 auto; padding: 10px 15px; }
 .tbar.scroll button.on { flex: 0 0 auto; }
@@ -567,6 +580,7 @@ svg { display: block; }
 
 <!-- ============ 底部 tab ============ -->
 <div class="tabs" id="tabs">
+  <i class="tab-pill" id="tabPill" aria-hidden="true"></i>
   <button class="tab on" onclick="tabTap('home')"><svg class="ico" viewBox="0 0 24 24"><path d="M4 11l8-6 8 6v8a1 1 0 0 1-1 1h-5v-6h-4v6H5a1 1 0 0 1-1-1z"/></svg><span>首页</span></button>
   <button class="tab" onclick="tabTap('bank')"><svg class="ico" viewBox="0 0 24 24"><path d="M5 4h9a3 3 0 0 1 3 3v13H8a3 3 0 0 1-3-3z"/><path d="M17 7h2v13H8"/></svg><span>题库</span></button>
   <button class="tab" onclick="tabTap('wrong')"><svg class="ico" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8"/><path d="M9 9l6 6M15 9l-6 6"/></svg><span>错题本</span></button>
@@ -853,7 +867,7 @@ function render() {
       } else if (picks.indexOf(k) >= 0) {
         cls += " sel"; m = "✓";
       }
-      h += '<button class="' + cls + '" onclick="pick(&quot;' + k + '&quot;)">' +
+      h += '<button class="' + cls + '" data-k="' + k + '" onclick="pick(&quot;' + k + '&quot;)">' +
              '<span class="k">' + k + '</span><span class="v">' + esc(o[1]) + '</span><span class="m">' + m + "</span></button>";
     });
     h += "</div>";
@@ -887,6 +901,7 @@ function render() {
        "</div>";
 
   document.getElementById("qbody").innerHTML = h;
+  optBounce();          /* 题面刚被整块重画，按压回弹要补挂到新节点上 */
   var ta = document.getElementById("qText");
   if (ta) {
     /* 输入即存：切题、退到后台、被杀进程都不该丢掉刚敲的字 */
@@ -1113,16 +1128,182 @@ function tick() {
 setInterval(tick, 1000);
 
 /* ================= 首页 / 各 tab 渲染 ================= */
-function goTab(which) {
-  curTab = which;
-  ["home", "bank", "wrong", "me"].forEach(function (t) {
-    document.getElementById("tab-" + t).className = "page" + (t === which ? " on" : "");
-  });
-  var tabs = document.getElementById("tabs").children;
-  for (var i = 0; i < tabs.length; i++) {
-    tabs[i].className = "tab" + (["home", "bank", "wrong", "me"][i] === which ? " on" : "");
+/* ================= 动效 =================
+   四条约束：只用 transform / opacity；颜色一律走主题令牌（浅深两套自动成立）；
+   曲线复用滑杆吸附那条 cubic-bezier(.34,1.56,.64,1)，全站手感一致；
+   真机 WebView 是 Chrome 80，element.animate() 可用但**不派发 onfinish**，
+   所以凡是要「动画结束后收尾」的一律靠 cancel() 或定时，不挂 onfinish。 */
+var BOUNCE = "cubic-bezier(.34, 1.56, .64, 1)";
+var EASE = "cubic-bezier(0.16, 1, 0.3, 1)";
+
+/* ---- 1. 底部导航的流动胶囊 ---- */
+var pillBox = null;                     /* 上一枚胶囊的 {x,y,w,h}，用来当动画起点 */
+function moveTabPill(slide) {
+  var bar = document.getElementById("tabs"), p = document.getElementById("tabPill");
+  var b = bar && bar.querySelector(".tab.on");
+  if (!b || !p) return;
+  var x = b.offsetLeft, y = b.offsetTop, w = b.offsetWidth, h = b.offsetHeight;
+  p.style.left = x + "px"; p.style.top = y + "px";
+  p.style.width = w + "px"; p.style.height = h + "px";
+  if (slide && p.animate && pillBox && (pillBox.x !== x || pillBox.w !== w)) {
+    /* 起点是关键帧、终点是元素自己的行内值：动画跑完自然停在终点，不需要 fill 也不需要收尾回调。
+       回弹来自 BOUNCE 这条 >1 的曲线——left 与 width 同时过冲，胶囊会先被拉长再弹回。 */
+    p.animate([{ left: pillBox.x + "px", top: pillBox.y + "px", width: pillBox.w + "px", height: pillBox.h + "px" },
+               { left: x + "px", top: y + "px", width: w + "px", height: h + "px" }],
+              { duration: 420, easing: BOUNCE });
   }
-  renderAll();
+  pillBox = { x: x, y: y, w: w, h: h };
+}
+
+/* ---- 2. 选项按钮的按压弹性 ---- */
+var optPress = null, optPressEl = null, bounceKey = null, bounceAt = 0;
+function optOf(node) { return node && node.closest ? node.closest(".opt") : null; }
+function optSpring(el) {
+  if (el && el.animate) {
+    el.animate([{ transform: "scale(0.96)" }, { transform: "scale(1.02)", offset: 0.55 },
+                { transform: "scale(1)" }], { duration: 280, easing: BOUNCE });
+  }
+}
+document.addEventListener("pointerdown", function (e) {
+  var el = optOf(e.target);
+  if (!el || !el.animate) return;
+  if (optPress) optPress.cancel();
+  optPress = el.animate([{ transform: "scale(1)" }, { transform: "scale(0.96)" }],
+                        { duration: 90, easing: "ease-out", fill: "forwards" });
+  optPressEl = el;
+});
+function releaseOpt() {
+  var el = optPressEl;
+  /* 按住的这一段是 fill:forwards，不 cancel 掉按钮会永久停在 0.96；
+     手指滑出按钮时 pointerup 的 target 已不是它，所以收尾认的是「按住的那只」而不是事件目标。 */
+  if (optPress) { optPress.cancel(); optPress = null; }
+  optPressEl = null;
+  if (!el) return;
+  bounceKey = el.getAttribute("data-k");
+  bounceAt = Date.now();
+  optSpring(el);
+}
+document.addEventListener("pointerup", releaseOpt);
+document.addEventListener("pointercancel", releaseOpt);
+/* 选中/判分会立刻重画整块题面，旧节点连同它身上的动画一起被换掉，
+   所以回弹要在新节点上补一次；超过一帧半就当作已经错过，别在下次无关重画时凭空弹一下。 */
+function optBounce() {
+  if (!bounceKey) return;
+  var k = bounceKey, stale = Date.now() - bounceAt > 250;
+  bounceKey = null;
+  if (stale) return;
+  var el = document.querySelector('.opt[data-k="' + k + '"]');
+  optSpring(el);
+}
+
+/* ---- 3. 切页：旧页淡出 → 新页淡入 + 卡片交错入场 ----
+   顺序按语义点名，不按 DOM 顺序：首页是「搜索框 → 题型卡片（6 张同时）→ 今日待刷题 → 最近练习」，
+   题库页是「导入卡片 → 筛选标签 → 题库列表卡片」。每组占一个 40ms 槽位，
+   列表类那一组内部再按 40ms 逐张排开；单段时长 300ms，曲线用弹簧。
+   只用 transform / opacity，Chrome 80 上两者都能被 element.animate 插值。 */
+var TAB_ORDER = ["home", "bank", "wrong", "me"];
+var swapSeq = 0, swapTimer = null;
+
+function pageKids(pg, cls) {
+  var out = [], i;
+  for (i = 0; i < pg.children.length; i++) {
+    if (pg.children[i].className && pg.children[i].className.indexOf(cls) >= 0) out.push(pg.children[i]);
+  }
+  return out;
+}
+function pageKidById(pg, id) {
+  var i;
+  for (i = 0; i < pg.children.length; i++) if (pg.children[i].id === id) return pg.children[i];
+  return null;
+}
+/* 一个「小节」= 它的标题行 + 紧跟其后的列表容器，两者同时进 */
+function sectionOf(pg, listId) {
+  var list = pageKidById(pg, listId), out = [];
+  if (!list) return out;
+  var p = list.previousElementSibling;
+  if (p && p.className.indexOf("sec-title") >= 0) out.push(p);
+  out.push(list);
+  return out;
+}
+function enterGroups(which, pg) {
+  if (which === "home") {
+    var cats = document.getElementById("cats");
+    var head = pageKids(pg, "cats-head");
+    return [
+      { els: pageKids(pg, "search"), step: 0 },
+      { els: head.concat(cats ? [].slice.call(cats.children) : []), step: 0 },
+      { els: sectionOf(pg, "tasks"), step: 0 },
+      { els: sectionOf(pg, "recent"), step: 0 }
+    ];
+  }
+  if (which === "bank") {
+    var list = pageKidById(pg, "bankList");
+    var cards = list ? [].slice.call(list.querySelectorAll(".swipe")) : [];
+    return [
+      { els: list && list.firstElementChild ? [list.firstElementChild] : [], step: 0 },
+      { els: list ? [].slice.call(list.querySelectorAll(".tbar")) : [], step: 0 },
+      { els: cards.slice(0, 8), step: 40 }
+    ];
+  }
+  /* 错题本与「我的」没有指定的点名顺序：按页内出现次序逐块排开 */
+  var items = [], i;
+  for (i = 0; i < pg.children.length; i++) {
+    var k = pg.children[i];
+    if (!k.className && k.children.length) {
+      for (var j = 0; j < k.children.length && j < 8; j++) items.push(k.children[j]);
+    } else items.push(k);
+  }
+  return [{ els: items.slice(0, 10), step: 40 }];
+}
+function enterPage(which, pg) {
+  if (!pg || !pg.animate) return;
+  pg.animate([{ opacity: 0, transform: "translateY(12px)" },
+              { opacity: 1, transform: "translateY(0)" }],
+             { duration: 300, easing: BOUNCE });
+  var groups = enterGroups(which, pg), slot = 0, g, i;
+  for (g = 0; g < groups.length; g++) {
+    for (i = 0; i < groups[g].els.length; i++) {
+      groups[g].els[i].animate([{ opacity: 0, transform: "translateY(16px)" },
+                                { opacity: 1, transform: "translateY(0)" }],
+                               { duration: 300, delay: slot * 40 + i * groups[g].step, easing: BOUNCE });
+    }
+    slot++;
+  }
+}
+
+function goTab(which) {
+  var from = document.querySelector(".page.on");
+  var to = document.getElementById("tab-" + which);
+  curTab = which;
+  /* 遍历的是 #tabs .tab，不能遍历 children：里面还有一颗流动胶囊，
+     它不是按钮，被顺手写上 class="tab" 就会跟着变色变形 */
+  var tabs = document.querySelectorAll("#tabs .tab");
+  for (var i = 0; i < tabs.length; i++) {
+    tabs[i].className = "tab" + (TAB_ORDER[i] === which ? " on" : "");
+  }
+  moveTabPill(true);          /* 胶囊当场就走，切页的 200ms 淡出期间它就是反馈 */
+  swapPage(from, to, which);
+}
+
+function swapPage(from, to, which) {
+  var my = ++swapSeq;
+  if (swapTimer) { clearTimeout(swapTimer); swapTimer = null; }
+  function show() {
+    if (my !== swapSeq) return;
+    if (from && from !== to) from.className = "page";
+    to.className = "page on";
+    /* 淡出留下的行内 opacity=0 必须在这里清掉，否则下次进这一页是全透明的 */
+    to.style.opacity = "";
+    to.style.transform = "";
+    renderAll();
+    enterPage(which, to);
+  }
+  if (!from || from === to || !from.animate) { show(); return; }
+  /* 先把行内值压成 0 再跑 1→0 的动画：动画结束后不 fill，靠这个行内值保持隐藏。
+     少了这一步，动画收尾的那一帧会闪回旧页。 */
+  from.style.opacity = "0";
+  from.animate([{ opacity: 1 }, { opacity: 0 }], { duration: 200, easing: "ease-out" });
+  swapTimer = setTimeout(show, 200);
 }
 /* 底部四个 tab 的点击入口。和 goTab 分开：程序内部跳转（结算页的「回首页」等）
    不该顺带联网查版本，只有用户真点了「我的」才触发静默检查 */
@@ -1265,11 +1446,34 @@ function wrongList() {
 var bankTf = "";
 var BANK_TAGS = [["", "全部"], ["single", "单选题"], ["multi", "多选题"], ["judge", "判断题"],
                  ["fill", "填空题"], ["short", "解答题"]];
+var tfU = null, tfSlide = false;
 
-function setBankTf(tf) { bankTf = tf; renderBank(); }
+/* 用户点筛选才该有东西在爬；程序内部改 bankTf 不该，所以「要不要滑」在这里置位，
+   由下一次渲染消费掉 */
+function setBankTf(tf) { tfSlide = (tf !== bankTf); bankTf = tf; renderBank(); }
+
+/* 下划线元素跟着每次重建的 tbar 一起新建，所以「上一枚在哪」只能记在 tfU 里。
+   中间那一帧把条拉到同时盖住新旧两枚的跨度：前端先到、后端才收，就是虫在爬。 */
+function drawTfUnderline() {
+  var bar = document.querySelector("#bankList .tbar");
+  var u = bar && bar.querySelector(".tbar-u");
+  var b = bar && bar.querySelector("button.on");
+  if (!u || !b) return;
+  var x = b.offsetLeft + b.offsetWidth * 0.29, w = b.offsetWidth * 0.42;
+  var from = tfU;
+  u.style.left = x + "px"; u.style.width = w + "px";
+  if (tfSlide && u.animate && from && (from.x !== x || from.w !== w)) {
+    var lo = Math.min(from.x, x), hi = Math.max(from.x + from.w, x + w);
+    u.animate([{ left: from.x + "px", width: from.w + "px" },
+               { left: lo + "px", width: (hi - lo) + "px", offset: 0.5 },
+               { left: x + "px", width: w + "px" }], { duration: 380, easing: EASE });
+  }
+  tfSlide = false;
+  tfU = { x: x, w: w };
+}
 
 function renderBank() {
-  var bar = '<div class="tbar scroll">' + BANK_TAGS.map(function (t) {
+  var bar = '<div class="tbar scroll"><i class="tbar-u"></i>' + BANK_TAGS.map(function (t) {
     return '<button class="' + (bankTf === t[0] ? "on" : "") + '" onclick="setBankTf(&quot;' + t[0] + '&quot;)">' +
            t[1] + "</button>";
   }).join("") + "</div>";
@@ -1321,6 +1525,7 @@ function renderBank() {
   }
   h += '<div class="sl-hint" style="margin:14px 0 0">左滑题库卡片可以删除，导入的题库随时可以再导入</div>';
   document.getElementById("bankList").innerHTML = h;
+  drawTfUnderline();
 }
 
 var batchOn = false, batchSel = {};
@@ -1505,6 +1710,7 @@ function toggleSet(k, ev) {
 function cycleFont() {
   set.fscale = set.fscale >= 120 ? 90 : set.fscale + 10;
   applyTheme(); renderAll(); save();
+  moveTabPill(false);        /* 字号一变按钮就变宽，胶囊得跟上，不然会盖不住图标 */
 }
 function applyTheme() {
   document.documentElement.setAttribute("data-theme", set.theme === "dark" ? "dark" : "light");
@@ -2728,6 +2934,10 @@ bootImportedBanks();
    标记还是空的，要等用户点进来重画才出现 */
 updSyncMark();
 renderAll();
+/* 胶囊先按实测尺寸落位（不带动画）。字号切换和转屏都会改按钮宽度，
+   所以 resize 之后要重新量一次，否则胶囊和文字会错开一截。 */
+moveTabPill(false);
+window.addEventListener("resize", function () { moveTabPill(false); });
 /* 上次是交卷/放弃到一半被杀掉的会话不该再被恢复出来：状态停在 submitting 说明
    结算没走完，按 running 续上比丢掉整场作答更合理。
    抽成函数是为了回归测试能直接调真实现，而不是复制一份规则。 */
