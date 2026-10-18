@@ -258,6 +258,161 @@ ok("abandoned 被丢弃", norm({ mode: "exam", state: "abandoned" }) === null);
 ok("练习会话不受影响", norm({ mode: "practice", state: "x" }).state === "x");
 ok("null 会话不崩", W.normalizeSession(null) === null);
 
+/* ---------- 8. v1.0.2 进入「我的」自动检查更新 ----------
+   这一节全部走页面里的真实现（checkUpdateSilently / onUpdateInfo / showUpdateNotice），
+   不复制一份规则来测。原生层用桩记录调用次数，回调由测试手工触发。 */
+section("[8] 自动检查更新 / 暂缓 / 小红点");
+
+let nativeChecks = 0;
+let toasts = 0;
+W.Android = { checkUpdate: () => { nativeChecks++; }, appVersion: () => "1.0.2" };
+const realToast = W.toast;
+W.toast = function () { toasts++; };
+/* 沙箱里的 setTimeout 是同步立即执行的（为了测异步流程），但更新逻辑用它做
+   20 秒超时解锁。真跑起来不会立刻触发，这里换成空实现，让「请求在飞」的状态
+   能保持住，否则测不出并发保护。 */
+const realSetTimeout = W.setTimeout;
+W.setTimeout = () => 0;
+
+const glassEl = () => W.document.getElementById("glass");
+const glassOpen = () => W.openLayers.length > 0;
+const glassCls = () => String(glassEl().className || "");
+const glassHtml = () => String(glassEl().innerHTML || "");
+const resetUpd = (avail, dismissed) => {
+  W.upd.req = false; W.upd.silent = false;
+  W.upd.avail = avail || ""; W.upd.dismissed = dismissed || "";
+  W.upd.hasNew = !!(avail && W.Android_verNewer(avail, W.APP_VER));
+  W.updLast = 0;
+  while (W.openLayers.length) W.closeTop();
+};
+const info = (o) => JSON.stringify(Object.assign({
+  ok: true, hasUpdate: false, current: "1.0.2", latest: "1.0.2",
+  urls: ["https://cdn.example.com/GIme-v1.0.2.apk"], log: [], notes: ""
+}, o));
+
+/* 8.1 自动检查：已是最新版本时什么都不弹 */
+resetUpd(); toasts = 0; nativeChecks = 0;
+W.checkUpdateSilently();
+ok("进入「我的」会真的发起一次检查", nativeChecks === 1, "实际 " + nativeChecks);
+ok("自动检查本身不弹 Toast", toasts === 0, "实际 " + toasts);
+W.onUpdateInfo(info({ hasUpdate: false }));
+ok("自动检查到最新版本时不弹窗", !glassOpen());
+ok("自动检查到最新版本时不提示", toasts === 0, "实际 " + toasts);
+
+/* 8.2 首次发现新版本 → 小窗，且状态落盘 */
+resetUpd(); nativeChecks = 0;
+W.checkUpdateSilently();
+W.onUpdateInfo(info({ hasUpdate: true, latest: "1.0.3" }));
+ok("首次发现新版本弹小窗", glassOpen() && glassCls().includes("note"), glassCls());
+ok("小窗只给版本号和两个按钮，不展开日志", !glassHtml().includes("upd-log"));
+ok("发现新版本后小红点亮起", W.upd.hasNew === true);
+const savedUpd = JSON.parse(storage.get("stk.update.v1") || "{}");
+ok("可用版本已落盘", savedUpd.avail === "1.0.3", JSON.stringify(savedUpd));
+
+/* 8.3 稍后更新 → 记住这个版本，但小红点保留 */
+W.document.getElementById("noteLater").onclick();
+ok("稍后更新关掉小窗", !glassOpen());
+ok("稍后更新不熄灭小红点", W.upd.hasNew === true);
+const savedUpd2 = JSON.parse(storage.get("stk.update.v1") || "{}");
+ok("暂缓版本已落盘", savedUpd2.dismissed === "1.0.3", JSON.stringify(savedUpd2));
+
+/* 8.4 再次进入「我的」，同一个版本不重复打断 */
+resetUpdKeepDismissed();
+function resetUpdKeepDismissed() {
+  const s = JSON.parse(storage.get("stk.update.v1") || "{}");
+  resetUpd(s.avail, s.dismissed);
+}
+W.updLast = 0;
+W.checkUpdateSilently();
+W.onUpdateInfo(info({ hasUpdate: true, latest: "1.0.3" }));
+ok("同一暂缓版本不再弹窗", !glassOpen());
+ok("同一暂缓版本小红点还在", W.upd.hasNew === true);
+
+/* 8.5 出现更高的版本 → 重新提醒 */
+resetUpdKeepDismissed(); W.updLast = 0;
+W.checkUpdateSilently();
+W.onUpdateInfo(info({ hasUpdate: true, latest: "1.0.4" }));
+ok("更高版本重新弹窗", glassOpen() && glassCls().includes("note"));
+ok("小红点跟到更高版本", W.upd.avail === "1.0.4");
+W.closeTop();
+
+/* 8.6 自动检查失败：不打扰、也不清标记 */
+resetUpdKeepDismissed(); W.upd.avail = "1.0.4"; W.updSyncMark();
+W.updLast = 0;
+W.checkUpdateSilently();
+W.onUpdateInfo(JSON.stringify({ ok: false, error: "网络不可用" }));
+ok("自动检查失败不弹窗", !glassOpen());
+ok("自动检查失败不清小红点", W.upd.hasNew === true, JSON.stringify(W.upd));
+
+/* 8.7 确认已是最新版本 → 清掉提示 */
+resetUpd("1.0.4", "1.0.3");
+W.updLast = 0;
+W.checkUpdateSilently();
+W.onUpdateInfo(info({ hasUpdate: false }));
+ok("确认最新后小红点熄灭", W.upd.hasNew === false);
+ok("确认最新后清空落盘状态", (storage.get("stk.update.v1") || "").indexOf("1.0.4") < 0);
+
+/* 8.8 手动检查：仍然弹完整更新弹窗（带日志） */
+resetUpd(); toasts = 0; nativeChecks = 0;
+W.checkUpdate(true);
+ok("手动检查有「检查更新中」提示", toasts === 1, "实际 " + toasts);
+W.onUpdateInfo(info({ hasUpdate: true, latest: "1.0.3", log: ["修复下载失败", "新增自动检查"] }));
+ok("手动检查弹完整更新弹窗", glassCls().includes("upd"), glassCls());
+ok("完整弹窗里有更新日志", glassHtml().includes("upd-log") && glassHtml().includes("修复下载失败"));
+W.closeTop();
+
+/* 8.9 手动检查失败：沿用失败弹窗 */
+resetUpd(); W.upd.avail = "1.0.3"; W.updSyncMark();
+W.checkUpdate(true);
+W.onUpdateInfo(JSON.stringify({ ok: false, error: "连不上服务器" }));
+ok("手动检查失败弹失败提示", glassOpen() && glassHtml().includes("连不上服务器"));
+ok("手动检查失败不清小红点", W.upd.hasNew === true);
+W.closeTop();
+
+/* 8.10 自动请求在飞时点手动检查：不另开一条，而是升级成手动 */
+resetUpd(); nativeChecks = 0;
+W.checkUpdateSilently();
+W.checkUpdate(true);
+ok("在飞时点手动检查不重复发请求", nativeChecks === 1, "实际 " + nativeChecks);
+ok("在飞的手动检查会升级为手动模式", W.upd.silent === false);
+W.onUpdateInfo(info({ hasUpdate: true, latest: "1.0.3", log: ["x"] }));
+ok("升级后结果按手动流程弹完整弹窗", glassCls().includes("upd"), glassCls());
+W.closeTop();
+
+/* 8.11 触发点：只有用户点「我的」才查，程序内跳转不查 */
+resetUpd(); nativeChecks = 0;
+W.goTab("me");
+ok("程序内 goTab 不触发检查", nativeChecks === 0, "实际 " + nativeChecks);
+W.tabTap("me");
+ok("用户点「我的」触发检查", nativeChecks === 1, "实际 " + nativeChecks);
+nativeChecks = 0;
+W.tabTap("home");
+ok("点其它 tab 不触发检查", nativeChecks === 0, "实际 " + nativeChecks);
+
+/* 8.12 冷却：短时间内反复进「我的」不重复打 GitHub 配额 */
+resetUpd(); W.updLast = Date.now();
+nativeChecks = 0;
+W.checkUpdateSilently();
+ok("冷却期内不重复请求", nativeChecks === 0, "实际 " + nativeChecks);
+nativeChecks = 0;
+W.checkUpdate(true);
+ok("手动检查不受冷却限制", nativeChecks === 1, "实际 " + nativeChecks);
+W.onUpdateInfo(info({ hasUpdate: false }));
+
+/* 8.13 小红点渲染在「检查更新」这一行上，且重画后仍在 */
+resetUpd("1.0.3", "");
+W.renderMe();
+const meHtml = String(W.document.getElementById("meSet").innerHTML || "");
+ok("「检查更新」行带小红点", /data-k="update"[\s\S]*?class="dot"/.test(meHtml));
+ok("其它行没有小红点", (meHtml.match(/class="dot"/g) || []).length === 1,
+   "实际 " + (meHtml.match(/class="dot"/g) || []).length);
+resetUpd("1.0.2", "");
+W.renderMe();
+ok("无新版本时小红点消失", !/class="dot"/.test(String(W.document.getElementById("meSet").innerHTML || "")));
+
+W.toast = realToast;
+W.setTimeout = realSetTimeout;
+
 /* ---------- 结果 ---------- */
 console.log("\n" + "=".repeat(46));
 if (fails.length) {

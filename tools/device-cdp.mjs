@@ -106,11 +106,121 @@ const base = await evalJs(`
     hasExamDone: typeof examDone === "function"
   };
 `);
-ok("运行的是 v1.0.1", base.ver === "1.0.1", base.ver);
+ok("运行的是 v1.0.2", base.ver === "1.0.2", base.ver);
 ok("题库已装载", base.total > 900, String(base.total));
 ok("原生 pageReady 握手存在", base.hasReady === true);
 ok("更新日志渲染函数存在", base.hasUpdLog === true);
 ok("导入统计函数存在", base.hasImportReport === true);
+ok("考试状态判断函数存在", base.hasExamDone === true);
+
+console.log("\n[真机] v1.0.2 进入「我的」自动检查更新（A/B/D）");
+const autoUpd = await evalJs(`
+  /* 只验证「接线」，不真的打网络：把两个检查函数换成计数器再调 tabTap。
+     tabTap 是用户点底部「我的」的唯一入口，goTab 是程序内跳转。 */
+  var realSilent = window.checkUpdateSilently, realManual = window.checkUpdate;
+  var silentN = 0, manualN = 0;
+  window.checkUpdateSilently = function () { silentN++; };
+  window.checkUpdate = function () { manualN++; };
+  var res = {};
+  try {
+    tabTap("me");            res.tabMe = silentN;
+    tabTap("home");          res.tabHome = silentN;
+    goTab("me");             res.programmatic = silentN;
+    tabTap("wrong");         res.tabWrong = silentN;
+  } finally {
+    window.checkUpdateSilently = realSilent;
+    window.checkUpdate = realManual;
+  }
+  res.manualUntouched = manualN;
+  return res;
+`);
+ok("点「我的」触发静默检查（A-01）", autoUpd.tabMe === 1, String(autoUpd.tabMe));
+ok("点其它 tab 不检查（A-02/A-03）", autoUpd.tabHome === 1 && autoUpd.tabWrong === 1,
+   autoUpd.tabHome + "/" + autoUpd.tabWrong);
+ok("程序内 goTab 不触发检查", autoUpd.programmatic === 1, String(autoUpd.programmatic));
+ok("静默检查不会调手动检查", autoUpd.manualUntouched === 0, String(autoUpd.manualUntouched));
+
+const notice = await evalJs(`
+  var snapshot = localStorage.getItem(LS.u);
+  /* 造一个「发现新版本」的自动检查结果 */
+  upd.silent = true; upd.req = true;
+  window.onUpdateInfo(JSON.stringify({
+    ok: true, hasUpdate: true, current: Android.appVersion(), latest: "9.9.9",
+    urls: ["https://example.com/x.apk"], log: ["不该在这里出现的日志"], notes: ""
+  }));
+  var g = document.getElementById("glass");
+  var res = {
+    cls: g.className,
+    small: g.classList.contains("note"),
+    hasLater: !!g.querySelector("#noteLater"),
+    hasNow: !!g.querySelector("#noteNow"),
+    noLog: g.querySelectorAll(".upd-log").length === 0,
+    latestShown: g.textContent.indexOf("9.9.9") >= 0,
+    hasNew: upd.hasNew === true,
+    dotInMe: (function () {
+      renderMe();
+      return /data-k="update"[\\s\\S]*?class="dot"/.test(document.getElementById("meSet").innerHTML);
+    })()
+  };
+  /* 稍后更新：关窗、记住版本、小红点留着 */
+  g.querySelector("#noteLater").onclick();
+  res.closedAfterLater = !g.classList.contains("on") && openLayers.length === 0;
+  res.dismissedSaved = (JSON.parse(localStorage.getItem(LS.u) || "{}").dismissed) === "9.9.9";
+  res.dotAfterLater = upd.hasNew === true;
+  /* 同一版本再进来：不该再弹 */
+  upd.silent = true; upd.req = true;
+  window.onUpdateInfo(JSON.stringify({ ok: true, hasUpdate: true, current: Android.appVersion(),
+    latest: "9.9.9", urls: ["https://example.com/x.apk"], log: [], notes: "" }));
+  res.noRepeat = !g.classList.contains("on") && openLayers.length === 0;
+  /* 自动检查失败：不弹、不清标记 */
+  upd.silent = true; upd.req = true;
+  window.onUpdateInfo(JSON.stringify({ ok: false, error: "网络不可用" }));
+  res.failSilent = !g.classList.contains("on");
+  res.failKeepsDot = upd.hasNew === true;
+  /* 确认最新：标记熄灭 */
+  upd.silent = true; upd.req = true;
+  window.onUpdateInfo(JSON.stringify({ ok: true, hasUpdate: false, current: Android.appVersion() }));
+  res.clearedOnLatest = upd.hasNew === false;
+  if (snapshot === null) localStorage.removeItem(LS.u); else localStorage.setItem(LS.u, snapshot);
+  upd.avail = ""; upd.dismissed = ""; upd.hasNew = false; upd.req = false; upd.silent = false;
+  renderMe();
+  return res;
+`);
+ok("自动发现新版本用小窗（B-01）", notice.small === true, notice.cls);
+ok("小窗只有稍后/立即两个按钮", notice.hasLater && notice.hasNow);
+ok("小窗不展开更新日志", notice.noLog === true);
+ok("小窗显示最新版本号", notice.latestShown === true);
+ok("「检查更新」行亮起小红点（B-03）", notice.dotInMe === true && notice.hasNew === true);
+ok("稍后更新关窗（B-02）", notice.closedAfterLater === true);
+ok("稍后更新记住暂缓版本（D-01）", notice.dismissedSaved === true);
+ok("稍后更新后小红点保留（B-05）", notice.dotAfterLater === true);
+ok("同一版本不再重复弹窗（B-04）", notice.noRepeat === true);
+ok("自动检查失败不弹窗（C-05）", notice.failSilent === true);
+ok("自动检查失败不清小红点", notice.failKeepsDot === true);
+ok("确认最新后小红点熄灭（B-07）", notice.clearedOnLatest === true);
+
+const manualUpd = await evalJs(`
+  var res = {};
+  var snapshot = localStorage.getItem(LS.u);
+  upd.silent = false; upd.req = true;
+  window.onUpdateInfo(JSON.stringify({ ok: true, hasUpdate: true, current: Android.appVersion(),
+    latest: "9.9.9", urls: ["https://example.com/x.apk"], log: ["修复下载卡 0%"], notes: "" }));
+  var g = document.getElementById("glass");
+  res.fullSheet = g.classList.contains("upd");
+  res.hasLog = g.textContent.indexOf("修复下载卡 0%") >= 0;
+  closeTop();
+  upd.silent = false; upd.req = true;
+  window.onUpdateInfo(JSON.stringify({ ok: false, error: "连不上更新服务器" }));
+  res.failDialog = g.textContent.indexOf("检查失败") >= 0;
+  closeTop();
+  if (snapshot === null) localStorage.removeItem(LS.u); else localStorage.setItem(LS.u, snapshot);
+  upd.avail = ""; upd.dismissed = ""; upd.hasNew = false; upd.req = false; upd.silent = false;
+  renderMe();
+  return res;
+`);
+ok("手动检查仍走完整更新弹窗（C-01）", manualUpd.fullSheet === true);
+ok("手动检查能看到完整日志", manualUpd.hasLog === true);
+ok("手动检查失败仍有提示（C-06）", manualUpd.failDialog === true);
 
 console.log("\n[真机] 更新弹窗（U-01/U-02/U-04/U-08）");
 const upd = await evalJs(`
