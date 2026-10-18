@@ -1446,7 +1446,7 @@ function renderMe() {
     row("dark", "深色模式", "从开关处圆形扩散换肤", true, set.theme === "dark") +
     row("haptics", "震动反馈", "答对短震、答错长震", true, set.haptics) +
     row("autoExp", "答完展开解析", "关闭后判分只给答案，解析自己点开", true, set.autoExp) +
-    row("import", "导入题库", "Word（.docx）/ txt / md，带解析一起导", false) +
+    row("import", "导入题库", "PDF / Word / txt / md，带解析一起导", false) +
     row("font", "字号", "当前 " + set.fscale + "%，点击循环切换", false) +
     row("update", "检查更新", "当前 v" + APP_VER + " 版本", false, false, upd.hasNew) +
     row("clear", "清空进度", "做题记录、错题、收藏全部删除", false);
@@ -2615,7 +2615,7 @@ function finishImport(all, usable) {
   renderAll();
 }
 function bankName(file) {
-  return String(file).replace(/\.(docx|doc|txt|md)$/i, "").replace(/^[\s\-—_]+|[\s\-—_]+$/g, "") || "导入题库";
+  return String(file).replace(/\.(docx|doc|pdf|txt|md)$/i, "").replace(/^[\s\-—_]+|[\s\-—_]+$/g, "") || "导入题库";
 }
 window.onImportError = function (msg) {
   var sh = document.getElementById("sheet3");
