@@ -14,11 +14,11 @@ public class ReleaseManifestTest {
     public static void main(String[] args) {
         // 正常清单
         ReleaseManifest.Info ok = ReleaseManifest.parse(
-            "{\"version\":\"1.0.3\",\"apk\":\"GIme-v1.0.3.apk\",\"date\":\"2026-10-18\"," +
+            "{\"version\":\"1.0.3\",\"apk\":\"GIme-v1.0.3-a1b2c3d4.apk\",\"date\":\"2026-10-18\"," +
             "\"notes\":[\"第一条\",\"第二条\"]}");
         checkBool("正常清单可解析", ok.valid);
         checkStr("版本号正确", ok.version, "1.0.3");
-        checkStr("安装包名正确", ok.apk, "GIme-v1.0.3.apk");
+        checkStr("安装包名原样保留（含内容指纹）", ok.apk, "GIme-v1.0.3-a1b2c3d4.apk");
         checkStr("日期正确", ok.date, "2026-10-18");
         checkInt("说明条数正确", ok.notes.length, 2);
         checkStr("首条说明", ok.notes[0], "第一条");
@@ -28,6 +28,10 @@ public class ReleaseManifestTest {
         checkStr("去掉 v 前缀", v.version, "1.0.4");
         checkBool("缺 apk 字段时仍有效", v.valid);
         checkStr("缺 apk 时按版本号推默认名", ReleaseManifest.apkNameFor(v), "GIme-v1.0.4.apk");
+        checkStr("清单写了 apk 就以清单为准",
+                 ReleaseManifest.apkNameFor(ReleaseManifest.parse(
+                     "{\"version\":\"1.0.4\",\"apk\":\"GIme-v1.0.4-deadbeef.apk\"}")),
+                 "GIme-v1.0.4-deadbeef.apk");
 
         // 脏数据一律判无效，交给调用方回落，不抛异常
         checkBool("空字符串判无效", ReleaseManifest.parse("").valid == false);

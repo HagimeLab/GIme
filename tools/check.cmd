@@ -37,9 +37,13 @@ java -cp "%OUT%" com.fan.shuatiku.DownloadSourcesTest
 if errorlevel 1 goto fail
 echo.
 echo === release manifest (version/apk name single source of truth) ===
-javac -encoding UTF-8 -d "%OUT%" "%~dp0..\app\src\main\java\com\fan\shuatiku\ReleaseManifest.java" "%~dp0ReleaseManifestTest.java"
+javac -encoding UTF-8 -d "%OUT%" "%~dp0..\app\src\main\java\com\fan\shuatiku\DownloadSources.java" "%~dp0..\app\src\main\java\com\fan\shuatiku\ReleaseManifest.java" "%~dp0ReleaseManifestTest.java"
 if errorlevel 1 goto fail
 java -cp "%OUT%" com.fan.shuatiku.ReleaseManifestTest
+if errorlevel 1 goto fail
+echo.
+echo === release folder (manifest points at an existing, matching apk) ===
+powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0check-release.ps1"
 if errorlevel 1 goto fail
 echo.
 echo ALL CHECKS PASSED

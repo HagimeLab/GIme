@@ -41,7 +41,27 @@ public final class DownloadSources {
      * 带版本号后，每个版本是不同 URL，天然绕开缓存，也不需要主动刷新。
      */
     public static List<String> forVersion(String repo, String version) {
-        return forFile(repo, REF, "GIme-v" + version + ".apk");
+        return forFile(repo, REF, apkName(version, ""));
+    }
+
+    /**
+     * 安装包在仓库里的文件名。
+     *
+     * 清单没写 apk 字段时，按版本号推一个默认名。
+     *
+     * **文件名必须随内容变**：jsDelivr 按 URL 强缓存 7 天，而同一个版本号
+     * 在开发期难免要重新构建。只要路径不变，重新上传的新包在缓存过期前
+     * 都不会被下发——用户装到的还是上一版。把内容指纹钉进文件名，
+     * 每个不同的包就是不同的 URL，缓存自然失效。
+     *
+     * @param version 版本号，如 1.0.2
+     * @param digest  内容指纹，一般取安装包 SHA-256 的前 8 位；空则不带
+     */
+    public static String apkName(String version, String digest) {
+        String base = "GIme-v" + version;
+        String d = digest == null ? "" : digest.trim();
+        if (d.isEmpty()) return base + ".apk";
+        return base + "-" + d + ".apk";
     }
 
     /**

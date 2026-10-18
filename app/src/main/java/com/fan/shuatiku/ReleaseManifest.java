@@ -49,10 +49,15 @@ public final class ReleaseManifest {
         return out;
     }
 
-    /** 清单里没写 apk 文件名时，按版本号推一个默认名。 */
+    /**
+     * 清单里没写 apk 文件名时，按版本号推一个默认名。
+     *
+     * 正常发布时清单会显式写上带内容指纹的文件名（见 DownloadSources.apkName），
+     * 这里只是兜底，保证字段缺失时仍能拼出一个地址而不是空串。
+     */
     public static String apkNameFor(Info info) {
         if (info.apk != null && !info.apk.isEmpty()) return info.apk;
-        return "GIme-v" + info.version + ".apk";
+        return DownloadSources.apkName(info.version, "");
     }
 
     /** 取一个字符串字段；缺失返回空串。 */

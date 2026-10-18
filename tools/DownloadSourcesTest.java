@@ -38,6 +38,20 @@ public class DownloadSourcesTest {
                  DownloadSources.releasePage("HagimeLab/GIme", "1.0.2"),
                  "https://github.com/HagimeLab/GIme/releases/tag/v1.0.2");
 
+        /* 内容指纹进文件名：同一个版本号重新构建时，路径必须跟着变，
+           否则 jsDelivr 的 7 天强缓存会一直下发旧包。 */
+        checkStr("文件名带内容指纹", DownloadSources.apkName("1.0.2", "a4b73111"),
+                 "GIme-v1.0.2-a4b73111.apk");
+        checkStr("没给指纹时退回纯版本名", DownloadSources.apkName("1.0.2", ""),
+                 "GIme-v1.0.2.apk");
+        checkStr("指纹为 null 也不炸", DownloadSources.apkName("1.0.2", null),
+                 "GIme-v1.0.2.apk");
+        checkBool("不同指纹给出不同地址",
+                  !DownloadSources.forFile("r/x", "main", DownloadSources.apkName("1.0.2", "aaaaaaaa"))
+                   .get(0).equals(
+                   DownloadSources.forFile("r/x", "main", DownloadSources.apkName("1.0.2", "bbbbbbbb"))
+                   .get(0)));
+
         System.out.println();
         if (fail > 0) {
             System.out.println("失败 " + fail + " 项");
