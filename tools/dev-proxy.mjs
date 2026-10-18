@@ -9,6 +9,7 @@ import http from "node:http";
 const port = Number(process.argv[2] || 8899);
 
 const server = http.createServer((req, res) => {
+  console.log(`REQ ${req.method} ${req.url}`);
   const target = new URL(req.url);
   const up = http.request(
     { host: target.hostname, port: target.port || 80, path: target.pathname + target.search, method: req.method, headers: req.headers },
@@ -19,6 +20,7 @@ const server = http.createServer((req, res) => {
 });
 
 server.on("connect", (req, sock, head) => {
+  console.log(`CONNECT ${req.url}`);
   const [host, p] = req.url.split(":");
   const up = net.connect(Number(p || 443), host, () => {
     sock.write("HTTP/1.1 200 Connection Established\r\n\r\n");
