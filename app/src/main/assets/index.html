@@ -175,6 +175,25 @@ svg { display: block; }
 .tab-pill { position: absolute; z-index: 0; left: 0; top: 0; width: 0; height: 0;
             border-radius: 999px; background: var(--raise); box-shadow: var(--sink); }
 
+/* ---------------- 启动页 ----------------
+   两层：#splash 是主题底色的幕布 + Logo；#stage 是把首页真实节点临时搬进来的裁剪舞台。
+   揭幕靠舞台的 clip-path 圆从 0 涨到 150%，所以是「首页从 Logo 位置张开来」，
+   而不是幕布越盖越多。clip-path 在 Blink 里走主线程逐帧重绘，圆的边缘是矢量裁剪，
+   不会被合成层放大糊掉——这是不用 transform 缩放遮罩的原因。
+   只用到 transform / opacity / clip-path，Chrome 80 全部支持。 */
+#splash { position: fixed; top: 0; left: 0; right: 0; bottom: 0; z-index: 1400;
+          background: var(--paper); display: flex; flex-direction: column;
+          align-items: center; justify-content: center; }
+.sp-logo { width: 104px; height: 104px; border-radius: 50%; background: var(--raise);
+           box-shadow: var(--sink); display: flex; align-items: center; justify-content: center;
+           color: var(--ink); }
+.sp-logo svg { width: 52px; height: 52px; }
+.sp-word { margin-top: 22px; font-size: 1.0625rem; font-weight: 800; letter-spacing: 1.6px;
+           color: var(--ink); opacity: 0; }
+.sp-sub { margin-top: 7px; font-size: .75rem; letter-spacing: 2.5px; color: var(--ink-3); opacity: 0; }
+#stage { position: fixed; top: 0; left: 0; right: 0; bottom: 0; z-index: 1450; overflow: hidden;
+         pointer-events: none; clip-path: circle(0px at 50% 50%); }
+
 /* ---------------- 答题页 ---------------- */
 #quiz { position: fixed; top: 0; left: 0; right: 0; bottom: 0; z-index: 850;
         background: var(--paper); overflow-y: auto;
@@ -579,6 +598,19 @@ svg { display: block; }
 </div>
 
 <!-- ============ 底部 tab ============ -->
+<!-- ============ 启动页 ============ -->
+<div id="splash">
+  <div class="sp-logo" id="spLogo">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"
+         stroke-linecap="round" aria-hidden="true">
+      <path d="M17.3 7.5A6.5 6.5 0 1 0 17.8 16.2"/><path d="M17.8 11.9h-3.6"/>
+    </svg>
+  </div>
+  <div class="sp-word" id="spWord">GIme</div>
+  <div class="sp-sub" id="spSub">刷好每一个题</div>
+</div>
+<div id="stage"></div>
+
 <div class="tabs" id="tabs">
   <i class="tab-pill" id="tabPill" aria-hidden="true"></i>
   <button class="tab on" onclick="tabTap('home')"><svg class="ico" viewBox="0 0 24 24"><path d="M4 11l8-6 8 6v8a1 1 0 0 1-1 1h-5v-6h-4v6H5a1 1 0 0 1-1-1z"/></svg><span>首页</span></button>
@@ -1265,10 +1297,123 @@ function enterPage(which, pg) {
     for (i = 0; i < groups[g].els.length; i++) {
       groups[g].els[i].animate([{ opacity: 0, transform: "translateY(16px)" },
                                 { opacity: 1, transform: "translateY(0)" }],
-                               { duration: 300, delay: slot * 40 + i * groups[g].step, easing: BOUNCE });
+                               /* fill: backwards 必须有：带 delay 的动画在等待期不生效，
+                                  元素会先以完全不透明亮一帧再消失，看着就是闪一下 */
+                               { duration: 300, delay: slot * 40 + i * groups[g].step, easing: BOUNCE,
+                                 fill: "backwards" });
     }
     slot++;
   }
+}
+
+/* ---- 4. 启动页：呼吸 → 圆形揭幕 → 首页交错浮入 ----
+   第一帧就是 #splash 的主题底色，全程没有白屏；揭幕期间首页节点被临时搬进
+   被圆形裁剪的 #stage，跑完再按原兄弟位置插回 body。
+   交错用 fill:forwards 收尾——因为入场前给元素压了行内 opacity:0，
+   不 fill 的话动画一结束元素会退回透明，所以结束时要「先放行内终值、再 cancel」。 */
+var BOOT_BREATH = 600, BOOT_REVEAL = 700, BOOT_STEP = 60, BOOT_WAIT = 1800;
+var banksLoaded = false;
+
+function bootGroups(home) {
+  var cats = [].slice.call(document.getElementById("cats").children);
+  return [
+    { els: pageKids(home, "hello"), step: 0 },
+    { els: pageKids(home, "search"), step: 0 },
+    { els: pageKids(home, "cats-head").concat(cats), step: 20 },
+    { els: sectionOf(home, "tasks"), step: 0 },
+    { els: sectionOf(home, "recent"), step: 0 },
+    { els: [document.getElementById("tabs")], step: 0 }
+  ];
+}
+function bootSplash() {
+  var sp = document.getElementById("splash"), stage = document.getElementById("stage");
+  var home = document.getElementById("tab-home"), tabs = document.getElementById("tabs");
+  if (!sp) return;
+  if (!stage || !sp.animate || !("clipPath" in document.documentElement.style)) {
+    if (sp.parentNode) sp.parentNode.removeChild(sp);      /* 缺 clip-path 动画的内核：不做揭幕，直接进首页 */
+    return;
+  }
+  var groups = bootGroups(home), items = [], bootAnims = [], g, i;
+  for (g = 0; g < groups.length; g++) {
+    for (i = 0; i < groups[g].els.length; i++) if (groups[g].els[i]) items.push(groups[g].els[i]);
+  }
+  for (i = 0; i < items.length; i++) { items[i].style.opacity = "0"; items[i].style.transform = "translateY(16px)"; }
+
+  var restore = [[home, home.nextSibling], [tabs, tabs.nextSibling]];
+  /* 搬进舞台 = 首页此刻的可见性完全由启动页负责。编排中途任何意外都必须还原，
+     否则用户面对的会是一个永久透明的首页，而不是一个小 bug。 */
+  function bail() {
+    for (var k = 0; k < restore.length; k++) {
+      if (restore[k][0].parentNode !== document.body) document.body.insertBefore(restore[k][0], restore[k][1]);
+    }
+    if (stage.parentNode) stage.parentNode.removeChild(stage);
+    if (sp.parentNode) sp.parentNode.removeChild(sp);
+    for (var m = 0; m < items.length; m++) { items[m].style.opacity = ""; items[m].style.transform = ""; }
+  }
+  try {
+    stage.appendChild(home);
+    stage.appendChild(tabs);
+    run();
+  } catch (e) {
+    bail();
+    return;
+  }
+
+  function run() {
+  var logo = document.getElementById("spLogo"), word = document.getElementById("spWord"), sub = document.getElementById("spSub");
+  function breathe() {
+    logo.animate([{ transform: "scale(1)" }, { transform: "scale(1.06)", offset: 0.5 }, { transform: "scale(1)" }],
+                 { duration: BOOT_BREATH, easing: EASE });
+  }
+  breathe();
+  word.animate([{ opacity: 0 }, { opacity: 1 }], { duration: 420, delay: 120, easing: EASE, fill: "forwards" });
+  sub.animate([{ opacity: 0 }, { opacity: 1 }], { duration: 420, delay: 260, easing: EASE, fill: "forwards" });
+
+  var t0 = Date.now();
+  /* 数据没读完就再呼吸一轮，不转圈不进度条。上限是必要的：读失败和读得慢
+     在这里长得一模一样，无限等会把用户挡在「导入题库」入口之外，而那正是唯一的出路 */
+  function waitData() {
+    if (banksLoaded || Date.now() - t0 > BOOT_WAIT) { reveal(); return; }
+    breathe();
+    setTimeout(waitData, BOOT_BREATH);
+  }
+  setTimeout(waitData, BOOT_BREATH);
+
+  function reveal() {
+    stage.style.clipPath = "circle(150% at 50% 50%)";
+    stage.animate([{ clipPath: "circle(0px at 50% 50%)" }, { clipPath: "circle(150% at 50% 50%)" }],
+                  { duration: BOOT_REVEAL, easing: "cubic-bezier(.55, 0, .85, .35)" });
+    var art = [logo, word, sub];
+    for (var k = 0; k < art.length; k++) {
+      art[k].animate([{ opacity: 1 }, { opacity: 0 }],
+                     { duration: BOOT_REVEAL * 0.55, easing: "ease-in", fill: "forwards" });
+    }
+    setTimeout(finish, BOOT_REVEAL);
+  }
+  function finish() {
+    for (var k = 0; k < restore.length; k++) document.body.insertBefore(restore[k][0], restore[k][1]);
+    if (stage.parentNode) stage.parentNode.removeChild(stage);
+    if (sp.parentNode) sp.parentNode.removeChild(sp);
+    /* 交错一次性按 delay 排好，而不是逐组 setTimeout：定时器更少，
+       而且每条动画的延迟是可读到、可核对的数字 */
+    var last = 0;
+    for (var s = 0; s < groups.length; s++) {
+      var els = groups[s].els, step = groups[s].step;
+      for (var m = 0; m < els.length; m++) {
+        if (!els[m] || !els[m].animate) continue;
+        var d = s * BOOT_STEP + m * step;
+        if (d > last) last = d;
+        bootAnims.push(els[m].animate([{ opacity: 0, transform: "translateY(16px)" },
+                                       { opacity: 1, transform: "translateY(0)" }],
+                                      { duration: 300, delay: d, easing: BOUNCE, fill: "forwards" }));
+      }
+    }
+    setTimeout(function () {
+      for (var m2 = 0; m2 < items.length; m2++) { items[m2].style.opacity = "1"; items[m2].style.transform = ""; }
+      for (var a = 0; a < bootAnims.length; a++) { try { bootAnims[a].cancel(); } catch (e) {} }
+    }, last + 360);
+  }
+  }   /* run() —— 上面整段编排都在 try 的保护里 */
 }
 
 function goTab(which) {
@@ -2847,6 +2992,7 @@ function bootImportedBanks() {
       BANK.questions.push(q);
     }
   }
+  banksLoaded = true;
 }
 function subjectOf(sid) {
   for (var i = 0; i < BANK.subjects.length; i++) if (BANK.subjects[i].id === sid) return BANK.subjects[i];
@@ -2938,6 +3084,7 @@ renderAll();
    所以 resize 之后要重新量一次，否则胶囊和文字会错开一截。 */
 moveTabPill(false);
 window.addEventListener("resize", function () { moveTabPill(false); });
+bootSplash();      /* 启动页要在首屏都画好之后再编排，此时 #splash 已经盖在最上层 */
 /* 上次是交卷/放弃到一半被杀掉的会话不该再被恢复出来：状态停在 submitting 说明
    结算没走完，按 running 续上比丢掉整场作答更合理。
    抽成函数是为了回归测试能直接调真实现，而不是复制一份规则。 */
