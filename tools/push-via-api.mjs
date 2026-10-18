@@ -3,6 +3,7 @@
  * 走 API 而不是 git push：本机 git 走代理连不上 github.com，但 api.github.com 可达。
  *
  * 用法：node tools/push-via-api.mjs <token> <owner/repo> <branch> <commitMessage> <file1> <file2> ...
+ * 删除文件：在参数前加 "!"，例如 !release/GIme-v1.0.3.apk（tree 里该路径写 null）。
  */
 import fs from "node:fs";
 import path from "node:path";
@@ -40,10 +41,17 @@ const baseSha = ref.object.sha;
 const baseCommit = await api("GET", `/repos/${repo}/git/commits/${baseSha}`);
 console.log(`base: ${baseSha.slice(0, 8)}`);
 
-// 2. 逐个文件建 blob
+// 2. 逐个文件建 blob（"!path" 表示删除该路径）
 const entries = [];
-for (const rel of files) {
+for (const raw of files) {
+  const remove = raw.startsWith("!");
+  const rel = remove ? raw.slice(1) : raw;
   const abs = path.isAbsolute(rel) ? rel : path.join(root, rel);
+  if (remove) {
+    entries.push({ path: rel.replace(/\\/g, "/"), mode: "100644", type: "blob", sha: null });
+    console.log(`  del  ${rel}`);
+    continue;
+  }
   if (!fs.existsSync(abs)) { console.error(`跳过（不存在）: ${rel}`); continue; }
   const content = fs.readFileSync(abs);
   const isBinary = /\.(apk|png|jpg|zip|jar)$/i.test(rel);
