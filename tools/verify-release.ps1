@@ -94,6 +94,42 @@ if ($len -lt 50 -or $len -gt 100) {
     Write-Host "    within 50-100" -ForegroundColor Green
 }
 
+Write-Host "== update notes length (release/manifest) =="
+# Two outlets feed the in-app dialog: the release body (older builds read this) and
+# release/latest.json notes (current builds). Both must stay inside 50-100 chars,
+# otherwise the dialog fills the whole phone screen.
+try {
+    $mf = Invoke-RestMethod -Uri "https://api.github.com/repos/$Repo/contents/release/latest.json?ref=main" `
+        -Headers @{ "User-Agent" = "GIme-release-verify"; "Accept" = "application/vnd.github+json" } -TimeoutSec 30
+    $mjson = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String(($mf.content -replace '\s', '')))
+    $manifest = $mjson | ConvertFrom-Json
+    $mnotes = @($manifest.notes | Where-Object { ("$_").Trim() -ne "" })
+    $mlen = (($mnotes -join "") -replace '\s', '').Length
+    Write-Host ("  manifest notes: {0} item(s), {1} chars" -f $mnotes.Count, $mlen)
+    if ($mlen -lt 50 -or $mlen -gt 100) {
+        $fails += "manifest notes are $mlen chars, outside the 50-100 rule (fills the phone dialog)"
+    } else {
+        Write-Host "    within 50-100" -ForegroundColor Green
+    }
+    # docs/<tag>-release-body.md is the single source; outlets must match it.
+    # latest.json always describes the *current* version, so only compare when it does.
+    $bodySrc = Join-Path $root ("docs\" + $Tag + "-release-body.md")
+    if ("$($manifest.version)" -ne ($Tag -replace '^v', '')) {
+        Write-Host "    manifest describes $($manifest.version), not $Tag - source match skipped" -ForegroundColor Yellow
+    } elseif (Test-Path $bodySrc) {
+        $src = @((Get-Content $bodySrc -Raw -Encoding UTF8) -split "`n" | ForEach-Object { $_.Trim() } | Where-Object { $_ -ne "" })
+        if (Compare-Object $src $mnotes -SyncWindow 0) {
+            $fails += "release/latest.json notes differ from docs/$Tag-release-body.md"
+        } else {
+            Write-Host "    manifest matches docs/$Tag-release-body.md" -ForegroundColor Green
+        }
+    } else {
+        $fails += "missing docs/$Tag-release-body.md (single source for the notes)"
+    }
+} catch {
+    $fails += "cannot read release/latest.json: $($_.Exception.Message)"
+}
+
 Write-Host "== auditing source zip =="
 $z = [IO.Compression.ZipFile]::OpenRead($srcPath)
 try {
