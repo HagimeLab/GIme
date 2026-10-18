@@ -30,10 +30,14 @@
                 <category android:name="android.intent.category.BROWSABLE" />
                 <data android:scheme="content" />
                 <data android:scheme="file" />
+                <data android:mimeType="application/pdf" />
                 <data android:mimeType="application/vnd.openxmlformats-officedocument.wordprocessingml.document" />
-                <data android:mimeType="application/msword" />
                 <data android:mimeType="text/plain" />
                 <data android:mimeType="text/markdown" />
+                <!-- 不再声明 application/msword：.doc 是 OLE 复合文档，我们真读不了，
+                     把 GIme 放进 .doc 的「打开方式」里只会让用户白点一次再吃一个报错。
+                     octet-stream 保留：不少文件管理器把 PDF 也报成它，
+                     进来后按文件头嗅探，认得出来就照常导，认不出才拒绝。 -->
                 <data android:mimeType="application/octet-stream" />
             </intent-filter>
             <intent-filter android:label="导入题库">

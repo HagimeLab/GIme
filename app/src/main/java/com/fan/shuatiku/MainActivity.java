@@ -390,6 +390,7 @@ public class MainActivity extends Activity {
                     i.addCategory(Intent.CATEGORY_OPENABLE);
                     i.setType("*/*");
                     i.putExtra(Intent.EXTRA_MIME_TYPES, new String[]{
+                            "application/pdf",
                             "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
                             "text/plain", "text/markdown"});
                     try {

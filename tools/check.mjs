@@ -47,7 +47,13 @@ function makeElement(id) {
     offsetWidth: 0, offsetHeight: 0, scrollHeight: 0, children: [],
     classList: {
       add: (c) => cls.add(c), remove: (c) => cls.delete(c), contains: (c) => cls.has(c),
-      toggle: (c) => (cls.has(c) ? cls.delete(c) : cls.add(c))
+      /* 真 DOM 的 toggle 支持第二参数（force）：折叠逻辑靠它决定加还是删，
+         桩里不实现这一半就等于没测 */
+      toggle: (c, force) => {
+        const want = force === undefined ? !cls.has(c) : !!force;
+        if (want) cls.add(c); else cls.delete(c);
+        return want;
+      }
     },
     setAttribute: (k, v) => { el["attr_" + k] = v; },
     getAttribute: (k) => el["attr_" + k],
@@ -113,36 +119,46 @@ try {
   process.exit(1);
 }
 
-/* ---------- 3. 题库结构 ---------- */
-section("[3] bank.js 题库结构");
+/* ---------- 3. 内置题库已移除 ----------
+   v1.0.3 起所有题库都由用户导入。bank.js 只剩一个合法的空壳，
+   这里要钉住「空题库是正式支持状态」，而不是把它当异常。 */
+section("[3] 内置题库已移除 / 空题库是正常状态");
 const BANK = sandbox.BANK;
-ok("有 subjects", Array.isArray(BANK.subjects) && BANK.subjects.length > 0);
-ok("有 questions", Array.isArray(BANK.questions) && BANK.questions.length > 0);
-const ids = new Set();
-let dupId = 0, badAns = 0, badOpt = 0, badType = 0, emptyStem = 0;
-const TYPES = new Set(["single", "multi", "judge"]);
-for (const q of BANK.questions) {
-  if (ids.has(q.id)) dupId++; else ids.add(q.id);
-  if (!q.stem || !String(q.stem).trim()) emptyStem++;
-  if (!TYPES.has(q.type)) badType++;
-  if (!Array.isArray(q.options) || q.options.length < 2) badOpt++;
-  const letters = (q.options || []).map((o) => o[0]);
-  if (!Array.isArray(q.answer)) badAns++;
-  else if (q.answer.some((a) => !letters.includes(a))) badAns++;
-  else if (q.type === "single" && q.answer.length > 1) badAns++;
-  else if (q.type === "judge" && q.answer.length !== 1) badAns++;
+ok("bank.js 仍是合法 BANK 结构", !!BANK && Array.isArray(BANK.subjects) && Array.isArray(BANK.questions));
+ok("不再自带任何题库", BANK.subjects.length === 0, "还有 " + BANK.subjects.length + " 个");
+ok("不再自带任何题目", BANK.questions.length === 0, "还有 " + BANK.questions.length + " 题");
+
+/* 空题库下四个 tab 必须都能画出来，且不能出现 NaN / undefined。
+   注意 renderAll() 只画当前 tab，所以要逐个切过去再读。 */
+let emptyDraw = null;
+try {
+  sandbox.goTab("home");
+  const home = String(sandbox.document.getElementById("tasks").innerHTML);
+  const cats = String(sandbox.document.getElementById("cats").innerHTML);
+  sandbox.goTab("bank");
+  const bank = String(sandbox.document.getElementById("bankList").innerHTML);
+  sandbox.goTab("me");
+  const me = String(sandbox.document.getElementById("meStat").innerHTML);
+  sandbox.goTab("home");
+  emptyDraw = { home, cats, bank, me };
+} catch (e) {
+  emptyDraw = { err: e.stack };
 }
-ok("题目 id 唯一", dupId === 0, dupId + " 个重复");
-ok("题干非空", emptyStem === 0, emptyStem + " 条空题干");
-ok("题型合法", badType === 0, badType + " 条非法题型");
-ok("选项至少两个", badOpt === 0, badOpt + " 条选项不足");
-ok("答案落在选项内且与题型一致", badAns === 0, badAns + " 条不一致");
-const subjIds = new Set(BANK.subjects.map((s) => s.id));
-const orphan = BANK.questions.filter((q) => !subjIds.has(q.subject)).length;
-ok("题目都挂在已知题库下", orphan === 0, orphan + " 条孤儿题");
+ok("空题库下 renderAll 不抛异常", emptyDraw && !emptyDraw.err, emptyDraw && emptyDraw.err);
+ok("「我的」页没有 NaN", emptyDraw && emptyDraw.me.indexOf("NaN") < 0);
+ok("题库页给出导入入口", emptyDraw && emptyDraw.bank.indexOf("openImport") >= 0);
+ok("首页给出导入入口", emptyDraw && emptyDraw.home.indexOf("openImport") >= 0);
+ok("首页六张题型卡片都在", emptyDraw && (emptyDraw.cats.match(/class="cat-wrap/g) || []).length === 6,
+   emptyDraw && String((emptyDraw.cats.match(/class="cat-wrap/g) || []).length));
+
+/* 组卷在空题库下不能抛异常，只能提示 */
+let paperThrew = null;
+try { sandbox.openPaper("all"); } catch (e) { paperThrew = e.message; }
+ok("空题库下点组卷不抛异常", paperThrew === null, paperThrew);
+while (sandbox.openLayers.length) sandbox.closeTop();
 
 /* ---------- 4. 导入解析与统计口径 ---------- */
-section("[4] 导入解析 / 无答案题统计");
+section("[4] 导入解析 / 无答案题统计 / 主观题");
 const sample = [
   "1、以下哪个是可靠传输协议？",
   "A、UDP",
@@ -165,12 +181,75 @@ ok("第 1 题答案 B", parsed[0] && parsed[0].answer.join("") === "B", JSON.str
 ok("第 1 题带解析", !!(parsed[0] && parsed[0].explain));
 ok("第 2 题识别为判断题", parsed[1] && parsed[1].type === "judge", parsed[1] && parsed[1].type);
 ok("第 3 题无答案", parsed[2] && parsed[2].answer.length === 0);
-const usable = parsed.filter((x) => x.answer.length && x.options.length >= 2);
+const usable = parsed.filter(sandbox.usableQ);
 const rep = sandbox.importReport(parsed, usable);
 ok("可判分 2 题", rep.usable === 2, "实际 " + rep.usable);
 ok("无答案 1 题（不再恒为 0）", rep.noans === 1, "实际 " + rep.noans);
 ok("统计三项相加等于总数", rep.usable + rep.noans + rep.dropped === rep.total,
    [rep.usable, rep.noans, rep.dropped, rep.total].join("+"));
+
+/* 主观题：题型标记优先，参考答案单独存 ref，永远不进自动判分 */
+const subjSample = [
+  "1、（填空题）Kubernetes 中用于暴露集群内部服务的最小对象是 ______。",
+  "参考答案：Service",
+  "解析：Service 为一组 Pod 提供稳定入口。",
+  "2、（解答题）简述容器与虚拟机的区别。",
+  "参考答案：容器共享宿主内核，虚拟机各自运行完整操作系统。",
+  "3、下列哪个是容器编排平台？",
+  "A、Docker",
+  "B、Kubernetes",
+  "答案：B",
+  "4、______ 是华为云的分布式缓存服务。",
+  "参考答案：DCS"
+].join("\n");
+const sp = sandbox.parseBankText(subjSample);
+ok("主观题样本解析出 4 题", sp.length === 4, "实际 " + sp.length);
+ok("带「（填空题）」标记的识别为填空题", sp[0] && sp[0].type === "fill", sp[0] && sp[0].type);
+ok("填空题的参考答案进 ref", sp[0] && sp[0].ref === "Service", sp[0] && sp[0].ref);
+ok("填空题不带选项", sp[0] && sp[0].options.length === 0);
+ok("填空题不被判为「无答案」", sp[0] && sp[0].answer.length === 0 && sandbox.usableQ(sp[0]));
+ok("带「（解答题）」标记的识别为解答题", sp[1] && sp[1].type === "short", sp[1] && sp[1].type);
+ok("解答题的参考答案进 ref", sp[1] && String(sp[1].ref).indexOf("容器共享宿主内核") === 0, sp[1] && sp[1].ref);
+ok("题干里的「参考答案」四个字没有留在题干里",
+   sp[0] && sp[0].stem.indexOf("参考答案") < 0, sp[0] && sp[0].stem);
+ok("客观题不受影响（第 3 题仍是单选 B）", sp[2] && sp[2].type === "single" && sp[2].answer.join("") === "B",
+   sp[2] && (sp[2].type + "/" + sp[2].answer.join("")));
+ok("没写题型标记但有横线也按填空收", sp[3] && sp[3].type === "fill", sp[3] && sp[3].type);
+
+const spUsable = sp.filter(sandbox.usableQ);
+const spRep = sandbox.importReport(sp, spUsable);
+ok("主观题计入收录数", spRep.usable === 4, "实际 " + spRep.usable);
+ok("分题型统计：填空 2", spRep.by.fill === 2, "实际 " + spRep.by.fill);
+ok("分题型统计：解答 1", spRep.by.short === 1, "实际 " + spRep.by.short);
+ok("分题型统计：单选 1", spRep.by.single === 1, "实际 " + spRep.by.single);
+ok("主观题不算「无答案」", spRep.noans === 0, "实际 " + spRep.noans);
+ok("缺参考答案单独计数", spRep.noRef === 0, "实际 " + spRep.noRef);
+ok("结果统计行包含题型明细", sandbox.importLine(spRep).indexOf("填空 2") >= 0);
+
+/* ---------- 4b. 装入一套测试题库，后面的练习/考试流程才有题可出 ---------- */
+section("[4b] 装入测试题库");
+const TB = "test_bank";
+BANK.subjects.push({ id: TB, name: "测试题库", file: "t.txt", count: 6, custom: true });
+const mk = (i, type, opts, ans, ref) => ({
+  id: TB + "-" + i, subject: TB, num: i + 1, pnum: i + 1, type,
+  stem: "测试题 " + (i + 1) + "（" + type + "）",
+  options: opts, answer: ans, ans_raw: ans.join(""), ref: ref || "",
+  explain: "解析 " + (i + 1), note: "", flag: "", ex_source: "编写"
+});
+const testQs = [
+  mk(0, "single", [["A", "甲"], ["B", "乙"], ["C", "丙"], ["D", "丁"]], ["A"]),
+  mk(1, "multi", [["A", "甲"], ["B", "乙"], ["C", "丙"], ["D", "丁"]], ["A", "C"]),
+  mk(2, "judge", [["A", "正确"], ["B", "错误"]], ["A"]),
+  mk(3, "single", [["A", "甲"], ["B", "乙"]], ["B"]),
+  mk(4, "fill", [], [], "参考答案甲"),
+  mk(5, "short", [], [], "参考答案乙")
+];
+testQs.forEach((q) => { BANK.questions.push(q); sandbox.byId[q.id] = q; });
+sandbox.set.paper.subs = {}; sandbox.set.paper.subs[TB] = 1;
+ok("测试题库已装入 6 题", BANK.questions.length === 6, "实际 " + BANK.questions.length);
+ok("模拟考试只抽客观题", sandbox.paperPool().length === 4, "实际 " + sandbox.paperPool().length);
+ok("主观题不进组卷池", sandbox.paperPool().every((q) => sandbox.isObjective(q.type)));
+ok("统计口径：总题数含主观题", sandbox.stats(TB).total === 6, "实际 " + sandbox.stats(TB).total);
 
 /* ---------- 5. 模拟考试状态机 ---------- */
 section("[5] 模拟考试交卷 / 计时 / 放弃");
@@ -263,9 +342,22 @@ ok("null 会话不崩", W.normalizeSession(null) === null);
    不复制一份规则来测。原生层用桩记录调用次数，回调由测试手工触发。 */
 section("[8] 自动检查更新 / 暂缓 / 小红点");
 
+/* 版本号全部相对页面实际版本推导：以后升 1.0.4、1.0.5 都不用回来改测试，
+   也不会出现「测试里写死 1.0.3、页面已经是 1.0.3 之后」那种假通过。 */
+function bump(v, n) {
+  const a = String(v).split(".").map((x) => parseInt(x, 10) || 0);
+  while (a.length < 3) a.push(0);
+  a[a.length - 1] += n;
+  return a.join(".");
+}
+const VER = W.APP_VER;
+const NEXT = bump(VER, 1);
+const NEXT2 = bump(VER, 2);
+ok("页面兜底版本号格式正确", /^\d+\.\d+\.\d+$/.test(VER), VER);
+
 let nativeChecks = 0;
 let toasts = 0;
-W.Android = { checkUpdate: () => { nativeChecks++; }, appVersion: () => "1.0.2" };
+W.Android = { checkUpdate: () => { nativeChecks++; }, appVersion: () => VER };
 const realToast = W.toast;
 W.toast = function () { toasts++; };
 /* 沙箱里的 setTimeout 是同步立即执行的（为了测异步流程），但更新逻辑用它做
@@ -286,8 +378,8 @@ const resetUpd = (avail, dismissed) => {
   while (W.openLayers.length) W.closeTop();
 };
 const info = (o) => JSON.stringify(Object.assign({
-  ok: true, hasUpdate: false, current: "1.0.2", latest: "1.0.2",
-  urls: ["https://cdn.example.com/GIme-v1.0.2.apk"], log: [], notes: ""
+  ok: true, hasUpdate: false, current: VER, latest: VER,
+  urls: ["https://cdn.example.com/GIme-v" + VER + ".apk"], log: [], notes: ""
 }, o));
 
 /* 8.1 自动检查：已是最新版本时什么都不弹 */
@@ -302,19 +394,19 @@ ok("自动检查到最新版本时不提示", toasts === 0, "实际 " + toasts);
 /* 8.2 首次发现新版本 → 小窗，且状态落盘 */
 resetUpd(); nativeChecks = 0;
 W.checkUpdateSilently();
-W.onUpdateInfo(info({ hasUpdate: true, latest: "1.0.3" }));
+W.onUpdateInfo(info({ hasUpdate: true, latest: NEXT }));
 ok("首次发现新版本弹小窗", glassOpen() && glassCls().includes("note"), glassCls());
 ok("小窗只给版本号和两个按钮，不展开日志", !glassHtml().includes("upd-log"));
 ok("发现新版本后小红点亮起", W.upd.hasNew === true);
 const savedUpd = JSON.parse(storage.get("stk.update.v1") || "{}");
-ok("可用版本已落盘", savedUpd.avail === "1.0.3", JSON.stringify(savedUpd));
+ok("可用版本已落盘", savedUpd.avail === NEXT, JSON.stringify(savedUpd));
 
 /* 8.3 稍后更新 → 记住这个版本，但小红点保留 */
 W.document.getElementById("noteLater").onclick();
 ok("稍后更新关掉小窗", !glassOpen());
 ok("稍后更新不熄灭小红点", W.upd.hasNew === true);
 const savedUpd2 = JSON.parse(storage.get("stk.update.v1") || "{}");
-ok("暂缓版本已落盘", savedUpd2.dismissed === "1.0.3", JSON.stringify(savedUpd2));
+ok("暂缓版本已落盘", savedUpd2.dismissed === NEXT, JSON.stringify(savedUpd2));
 
 /* 8.4 再次进入「我的」，同一个版本不重复打断 */
 resetUpdKeepDismissed();
@@ -324,20 +416,20 @@ function resetUpdKeepDismissed() {
 }
 W.updLast = 0;
 W.checkUpdateSilently();
-W.onUpdateInfo(info({ hasUpdate: true, latest: "1.0.3" }));
+W.onUpdateInfo(info({ hasUpdate: true, latest: NEXT }));
 ok("同一暂缓版本不再弹窗", !glassOpen());
 ok("同一暂缓版本小红点还在", W.upd.hasNew === true);
 
 /* 8.5 出现更高的版本 → 重新提醒 */
 resetUpdKeepDismissed(); W.updLast = 0;
 W.checkUpdateSilently();
-W.onUpdateInfo(info({ hasUpdate: true, latest: "1.0.4" }));
+W.onUpdateInfo(info({ hasUpdate: true, latest: NEXT2 }));
 ok("更高版本重新弹窗", glassOpen() && glassCls().includes("note"));
-ok("小红点跟到更高版本", W.upd.avail === "1.0.4");
+ok("小红点跟到更高版本", W.upd.avail === NEXT2);
 W.closeTop();
 
 /* 8.6 自动检查失败：不打扰、也不清标记 */
-resetUpdKeepDismissed(); W.upd.avail = "1.0.4"; W.updSyncMark();
+resetUpdKeepDismissed(); W.upd.avail = NEXT2; W.updSyncMark();
 W.updLast = 0;
 W.checkUpdateSilently();
 W.onUpdateInfo(JSON.stringify({ ok: false, error: "网络不可用" }));
@@ -345,24 +437,24 @@ ok("自动检查失败不弹窗", !glassOpen());
 ok("自动检查失败不清小红点", W.upd.hasNew === true, JSON.stringify(W.upd));
 
 /* 8.7 确认已是最新版本 → 清掉提示 */
-resetUpd("1.0.4", "1.0.3");
+resetUpd(NEXT2, NEXT);
 W.updLast = 0;
 W.checkUpdateSilently();
 W.onUpdateInfo(info({ hasUpdate: false }));
 ok("确认最新后小红点熄灭", W.upd.hasNew === false);
-ok("确认最新后清空落盘状态", (storage.get("stk.update.v1") || "").indexOf("1.0.4") < 0);
+ok("确认最新后清空落盘状态", (storage.get("stk.update.v1") || "").indexOf(NEXT2) < 0);
 
 /* 8.8 手动检查：仍然弹完整更新弹窗（带日志） */
 resetUpd(); toasts = 0; nativeChecks = 0;
 W.checkUpdate(true);
 ok("手动检查有「检查更新中」提示", toasts === 1, "实际 " + toasts);
-W.onUpdateInfo(info({ hasUpdate: true, latest: "1.0.3", log: ["修复下载失败", "新增自动检查"] }));
+W.onUpdateInfo(info({ hasUpdate: true, latest: NEXT, log: ["修复下载失败", "新增自动检查"] }));
 ok("手动检查弹完整更新弹窗", glassCls().includes("upd"), glassCls());
 ok("完整弹窗里有更新日志", glassHtml().includes("upd-log") && glassHtml().includes("修复下载失败"));
 W.closeTop();
 
 /* 8.9 手动检查失败：沿用失败弹窗 */
-resetUpd(); W.upd.avail = "1.0.3"; W.updSyncMark();
+resetUpd(); W.upd.avail = NEXT; W.updSyncMark();
 W.checkUpdate(true);
 W.onUpdateInfo(JSON.stringify({ ok: false, error: "连不上服务器" }));
 ok("手动检查失败弹失败提示", glassOpen() && glassHtml().includes("连不上服务器"));
@@ -375,7 +467,7 @@ W.checkUpdateSilently();
 W.checkUpdate(true);
 ok("在飞时点手动检查不重复发请求", nativeChecks === 1, "实际 " + nativeChecks);
 ok("在飞的手动检查会升级为手动模式", W.upd.silent === false);
-W.onUpdateInfo(info({ hasUpdate: true, latest: "1.0.3", log: ["x"] }));
+W.onUpdateInfo(info({ hasUpdate: true, latest: NEXT, log: ["x"] }));
 ok("升级后结果按手动流程弹完整弹窗", glassCls().includes("upd"), glassCls());
 W.closeTop();
 
@@ -400,18 +492,122 @@ ok("手动检查不受冷却限制", nativeChecks === 1, "实际 " + nativeCheck
 W.onUpdateInfo(info({ hasUpdate: false }));
 
 /* 8.13 小红点渲染在「检查更新」这一行上，且重画后仍在 */
-resetUpd("1.0.3", "");
+resetUpd(NEXT, "");
 W.renderMe();
 const meHtml = String(W.document.getElementById("meSet").innerHTML || "");
 ok("「检查更新」行带小红点", /data-k="update"[\s\S]*?class="dot"/.test(meHtml));
 ok("其它行没有小红点", (meHtml.match(/class="dot"/g) || []).length === 1,
    "实际 " + (meHtml.match(/class="dot"/g) || []).length);
-resetUpd("1.0.2", "");
+resetUpd(VER, "");
 W.renderMe();
 ok("无新版本时小红点消失", !/class="dot"/.test(String(W.document.getElementById("meSet").innerHTML || "")));
 
 W.toast = realToast;
 W.setTimeout = realSetTimeout;
+
+/* ---------- 9. v1.0.3 新增能力 ----------
+   主观题、震动开关、六卡片展开、头像、删掉的搜索行。全部走页面真实现。 */
+section("[9] v1.0.3：主观题 / 震动 / 六卡片 / 头像");
+
+/* 9.1 主观题在练习里能出、能存文本、能自评，且不进正确率 */
+W.startSession("practice", TB, "fill");
+ok("填空题能开练习", W.S !== null && W.S.order.length === 1, W.S && W.S.order.length);
+const qb = () => String(W.document.getElementById("qbody").innerHTML);
+ok("主观题渲染成文本框", qb().indexOf('class="q-input"') >= 0);
+ok("主观题展示参考答案", qb().indexOf("参考答案") >= 0);
+ok("主观题没有可点的选项", qb().indexOf('onclick="pick') < 0);
+ok("主观题没有「确认」按钮", W.document.getElementById("btnAct").textContent === "下一题",
+   W.document.getElementById("btnAct").textContent);
+const rateBefore = W.stats(TB).rate;
+const nBefore = (W.prog[TB + "-4"] && W.prog[TB + "-4"].n) || 0;
+W.selfCheck(1);
+ok("自评写入 S.self", W.S.self[TB + "-4"] === 1, String(W.S.self[TB + "-4"]));
+ok("自评计入练习次数", (W.prog[TB + "-4"].n || 0) === nBefore + 1);
+ok("自评不影响正确率", W.stats(TB).rate === rateBefore, W.stats(TB).rate + " vs " + rateBefore);
+W.selfCheck(0);
+ok("改判为待复习后进错题本", W.prog[TB + "-4"].in === 1 && W.prog[TB + "-4"].w > 0);
+ok("主观题自评不产生 graded（不进判分口径）", W.S.graded[TB + "-4"] === undefined);
+
+/* 9.2 主观题不能被当成客观题判分 */
+W.startSession("practice", TB, "fill");
+W.pick("A");
+ok("主观题调 pick 不改变 picks", (W.S.picks[TB + "-4"] || []).length === 0);
+W.grade(["A"]);
+ok("主观题调 grade 不写 graded", W.S.graded[TB + "-4"] === undefined);
+
+/* 9.3 震动开关：关掉就一次都不该调 navigator.vibrate */
+let vibes = 0;
+W.navigator.vibrate = () => { vibes++; };
+W.set.haptics = false;
+W.startSession("practice", TB, "single");
+const correct = W.S.order[0] === TB + "-1" ? "A" : "A";
+vibes = 0;
+W.grade([correct]);
+ok("震动关闭时不调 vibrate", vibes === 0, "实际 " + vibes);
+W.set.haptics = true;
+vibes = 0;
+W.grade([correct]);
+ok("震动开启时会调 vibrate", vibes > 0, "实际 " + vibes);
+W.set.haptics = "false";
+vibes = 0;
+W.grade([correct]);
+ok("haptics 存成字符串 \"false\" 也算关闭", vibes === 0, "实际 " + vibes);
+W.set.haptics = true;
+
+/* 9.4 分类区整体折叠：一个开关管六张卡片，卡片本身只负责进练习 */
+W.S = null; W.goTab("home");
+const catHtml = () => String(W.document.getElementById("cats").innerHTML);
+const foldEl = () => W.document.getElementById("catsFold");
+const toggleBtn = () => W.document.getElementById("catsToggle");
+ok("首页六张卡片", (catHtml().match(/class="cat-wrap/g) || []).length === 6);
+ok("卡片不再带展开面板", catHtml().indexOf("cat-panel") < 0 && catHtml().indexOf("cat-in") < 0);
+ok("卡片不再有 aria-expanded（没有单卡展开了）", catHtml().indexOf("aria-expanded") < 0);
+ok("卡片点击直接进练习", /onclick="catGo\(/.test(catHtml()));
+W.catsClosed = false; W.syncCatsFold();
+ok("默认展开", !foldEl().classList.contains("closed") && toggleBtn().getAttribute("aria-expanded") === "true");
+ok("默认按钮文案是「收起」", W.document.getElementById("catsToggleTx").textContent === "收起");
+W.toggleCats();
+ok("点一下整体收起", W.catsClosed === true && foldEl().classList.contains("closed"));
+ok("收起后 aria-expanded=false", toggleBtn().getAttribute("aria-expanded") === "false");
+ok("收起后按钮文案变「展开」", W.document.getElementById("catsToggleTx").textContent === "展开");
+ok("收起不动会话（不会顺手开始答题）", W.S === null);
+W.toggleCats();
+ok("再点一下整体展开", W.catsClosed === false && !foldEl().classList.contains("closed"));
+ok("展开后六张卡片仍都在", (catHtml().match(/class="cat-wrap/g) || []).length === 6);
+W.catGo("judge");
+ok("卡片点击进对应题型练习", W.S !== null && W.S.tf === "judge", W.S && W.S.tf);
+W.exitQuiz();
+W.S = null;
+
+/* 9.5 首页头像已删除；「我的」页不再有搜索行 */
+W.goTab("me");
+const meSetHtml = String(W.document.getElementById("meSet").innerHTML);
+ok("「我的」页没有搜索题目行", meSetHtml.indexOf('data-k="search"') < 0);
+ok("「检查更新」行还在", meSetHtml.indexOf('data-k="update"') >= 0);
+ok("首页头像已删除", html.indexOf('id="avatarImg"') < 0 && html.indexOf('class="avatar"') < 0);
+ok("首页不再引用 icon.png", html.indexOf('src="icon.png"') < 0);
+ok("主题按钮还在", html.indexOf('id="themeBtn"') >= 0);
+ok("学习统计按钮还在", html.indexOf("openFS('stat')") >= 0);
+
+/* 9.6 空题库时首页不出现 NaN，且不再重复格式说明 */
+const emptyStats = { total: 0, seen: 0, rate: 0 };
+BANK.subjects = BANK.subjects.filter((s) => s.id !== TB);
+BANK.questions = BANK.questions.filter((q) => q.subject !== TB);
+W.goTab("home");
+const homeEmpty = String(W.document.getElementById("tasks").innerHTML);
+ok("删光题库后首页无 NaN", homeEmpty.indexOf("NaN") < 0);
+ok("删光题库后首页给导入入口", homeEmpty.indexOf("openImport") >= 0);
+ok("删光题库后统计为 0", W.stats("all").total === 0, W.stats("all").total);
+const hiSubEl = W.document.getElementById("hiSub");
+ok("空题库时问候语副标题被隐藏", hiSubEl.hidden === true);
+ok("空题库时不再显示格式说明", String(hiSubEl.textContent).indexOf("支持 .docx") < 0,
+   String(hiSubEl.textContent));
+ok("空题库时标题仍是「先导入一个题库」",
+   W.document.getElementById("hiName").textContent === "先导入一个题库",
+   W.document.getElementById("hiName").textContent);
+W.goTab("me");
+ok("删光题库后「我的」页无 NaN",
+   String(W.document.getElementById("meStat").innerHTML).indexOf("NaN") < 0);
 
 /* ---------- 结果 ---------- */
 console.log("\n" + "=".repeat(46));

@@ -31,8 +31,8 @@ android {
         applicationId = "com.fan.shuatiku"
         minSdk = 24
         targetSdk = 36
-        versionCode = 3
-        versionName = "1.0.2"
+        versionCode = 4
+        versionName = "1.0.3"
     }
 
     // BuildConfig.DEBUG 用来区分构建变体：Release 里必须关掉 WebView 调试，
@@ -59,4 +59,14 @@ android {
     }
 }
 
-
+dependencies {
+    // PDF 正文抽取。中文 PDF 的字体编码（CID / 预定义 CMap / ToUnicode）组合太多，
+    // 自己写解析器能过样例却过不了真实题库，这里用久经考验的实现，且只在这一层用到。
+    //
+    // 排除 BouncyCastle：PDFBox 只在「打开加密 PDF」和「验签」时才用到它，
+    // 而本项目对加密文件的态度是明确拒绝、告诉用户去解密，不需要真能解。
+    // 留着它会让 APK 从 0.9MB 涨到 9MB（光 dex 就多 8MB），不值得。
+    implementation("com.tom-roush:pdfbox-android:2.0.27.0") {
+        exclude(group = "org.bouncycastle")
+    }
+}

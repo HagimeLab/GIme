@@ -36,6 +36,32 @@ if errorlevel 1 goto fail
 java -cp "%OUT%" com.fan.shuatiku.DownloadSourcesTest
 if errorlevel 1 goto fail
 echo.
+echo === pdf text tidy / reject rules ===
+javac -encoding UTF-8 -d "%OUT%" "%~dp0..\app\src\main\java\com\fan\shuatiku\PdfTidy.java" "%~dp0PdfTidyTest.java"
+if errorlevel 1 goto fail
+java -cp "%OUT%" PdfTidyTest
+if errorlevel 1 goto fail
+echo.
+echo === file header sniff (missing extension) ===
+rem TextExtract needs android.content.Context and PDFBox on the desktop classpath.
+rem Both already exist in the build environment; when either is missing this section
+rem is skipped with a visible note instead of pretending "not tested" means "passed".
+set "ANDROID_JAR="
+for /d %%d in ("%ANDROID_HOME%\platforms\android-*") do set "ANDROID_JAR=%%d\android.jar"
+set "PDFBOX_JAR="
+for /f "delims=" %%f in ('dir /b /s "%USERPROFILE%\.gradle\caches\9.7.1\transforms\pdfbox-android-2.0.27.0" 2^>nul') do if not defined PDFBOX_JAR if exist "%%f\jars\classes.jar" set "PDFBOX_JAR=%%f\jars\classes.jar"
+if not exist "%ANDROID_JAR%" goto nosniff
+if not defined PDFBOX_JAR goto nosniff
+if not exist "%PDFBOX_JAR%" goto nosniff
+javac -encoding UTF-8 -cp "%ANDROID_JAR%;%PDFBOX_JAR%;%OUT%" -d "%OUT%" "%~dp0..\app\src\main\java\com\fan\shuatiku\PdfTidy.java" "%~dp0..\app\src\main\java\com\fan\shuatiku\PdfText.java" "%~dp0..\app\src\main\java\com\fan\shuatiku\TextExtract.java" "%~dp0SniffTest.java"
+if errorlevel 1 goto fail
+java -cp "%OUT%" com.fan.shuatiku.SniffTest
+if errorlevel 1 goto fail
+goto afterSniff
+:nosniff
+echo   [SKIP] android.jar or pdfbox classes.jar not found; sniff test skipped
+:afterSniff
+echo.
 echo === release manifest (version/apk name single source of truth) ===
 javac -encoding UTF-8 -d "%OUT%" "%~dp0..\app\src\main\java\com\fan\shuatiku\DownloadSources.java" "%~dp0..\app\src\main\java\com\fan\shuatiku\ReleaseManifest.java" "%~dp0ReleaseManifestTest.java"
 if errorlevel 1 goto fail

@@ -106,12 +106,39 @@ const base = await evalJs(`
     hasExamDone: typeof examDone === "function"
   };
 `);
-ok("运行的是 v1.0.2", base.ver === "1.0.2", base.ver);
-ok("题库已装载", base.total > 900, String(base.total));
+ok("运行的是 v1.0.3", base.ver === "1.0.3", base.ver);
+ok("不再内置题库（v1.0.3）", base.total === 0 && base.subjects === 0, base.total + "/" + base.subjects);
 ok("原生 pageReady 握手存在", base.hasReady === true);
 ok("更新日志渲染函数存在", base.hasUpdLog === true);
 ok("导入统计函数存在", base.hasImportReport === true);
 ok("考试状态判断函数存在", base.hasExamDone === true);
+
+/* v1.0.3 起没有内置题库，后面所有练习/考试用例都要自带一套。
+   装进去的同时记下当前 BANK 快照，跑完原样还原，不把测试题留在用户数据里。 */
+const seed = await evalJs(`
+  window.__bankSnap = { subjects: BANK.subjects.slice(), questions: BANK.questions.slice() };
+  var TB = "cdp_test";
+  BANK.subjects.push({ id: TB, name: "CDP 测试题库", file: "t.txt", count: 6, custom: true });
+  function mk(i, type, opts, ans, ref) {
+    return { id: TB + "-" + i, subject: TB, num: i + 1, pnum: i + 1, type: type,
+             stem: "CDP 测试题 " + (i + 1), options: opts, answer: ans, ans_raw: (ans || []).join(""),
+             ref: ref || "", explain: "解析 " + (i + 1), note: "", flag: "", ex_source: "编写" };
+  }
+  var qs = [
+    mk(0, "single", [["A","甲"],["B","乙"],["C","丙"],["D","丁"]], ["A"]),
+    mk(1, "multi",  [["A","甲"],["B","乙"],["C","丙"],["D","丁"]], ["A","C"]),
+    mk(2, "judge",  [["A","正确"],["B","错误"]], ["A"]),
+    mk(3, "single", [["A","甲"],["B","乙"]], ["B"]),
+    mk(4, "fill",   [], [], "参考答案甲"),
+    mk(5, "short",  [], [], "参考答案乙")
+  ];
+  qs.forEach(function (q) { BANK.questions.push(q); byId[q.id] = q; });
+  set.paper.subs = {}; set.paper.subs[TB] = 1; save();
+  return { added: BANK.questions.length, pool: paperPool().length, TB: TB };
+`);
+ok("测试题库已装入 6 题", seed.added === 6, String(seed.added));
+ok("组卷池只含客观题（4 题）", seed.pool === 4, String(seed.pool));
+const TB = seed.TB;
 
 console.log("\n[真机] v1.0.2 进入「我的」自动检查更新（A/B/D）");
 const autoUpd = await evalJs(`
@@ -362,7 +389,7 @@ const imp = await evalJs(`
                 "2、HTTP 默认端口？","A、21","B、80","C、443","D、8080","答案：B",
                 "3、没有答案的题","A、甲","B、乙"].join("\\n");
   var all = parseBankText(sample);
-  var usable = all.filter(function (x) { return x.answer.length && x.options.length >= 2; });
+  var usable = all.filter(usableQ);
   var rep = importReport(all, usable);
   return { total: all.length, usable: usable.length, noans: rep.noans, dropped: rep.dropped,
            sumOk: rep.usable + rep.noans + rep.dropped === rep.total };
@@ -411,6 +438,198 @@ const restore = await evalJs(`
   return { submittingBecomesRunning: normalized === "running" };
 `);
 ok("submitting 恢复为 running（不会卡死）", restore.submittingBecomesRunning === true);
+
+console.log("\n[真机] v1.0.3：主观题 / 震动 / 分类折叠 / 头像已删");
+const v103 = await evalJs(`
+  var res = {};
+  /* 主观题：能出、能写、能自评，且不产生 graded */
+  startSession("practice", "${TB}", "fill");
+  var body = document.getElementById("qbody");
+  res.fillOpened = !!(S && S.order.length === 1);
+  res.hasTextarea = !!body.querySelector(".q-input");
+  res.hasRefBox = !!body.querySelector(".ref-box");
+  res.noOpts = body.querySelectorAll(".opt").length === 0;
+  res.actText = document.getElementById("btnAct").textContent;
+  var qid = S.order[0];
+  var rateBefore = stats("${TB}").rate;
+  selfCheck(1);
+  res.selfSaved = S.self[qid] === 1;
+  res.noGraded = S.graded[qid] === undefined;
+  res.rateSame = stats("${TB}").rate === rateBefore;
+  selfCheck(0);
+  res.wrongAfter = prog[qid].in === 1;
+  exitQuiz();
+
+  /* 震动开关：关掉就一次都不该调 navigator.vibrate */
+  var realVib = navigator.vibrate, vibes = 0;
+  navigator.vibrate = function () { vibes++; };
+  set.haptics = false;
+  startSession("practice", "${TB}", "single");
+  vibes = 0; grade(["A"]);
+  res.vibOff = vibes;
+  set.haptics = true;
+  vibes = 0; grade(["A"]);
+  res.vibOn = vibes;
+  set.haptics = "false";
+  vibes = 0; grade(["A"]);
+  res.vibStrFalse = vibes;
+  set.haptics = true;
+  navigator.vibrate = realVib;
+  exitQuiz();
+
+  /* 分类区整体折叠：一个开关管六张卡片，卡片点击直接进练习 */
+  S = null; goTab("home");
+  var cats = document.getElementById("cats");
+  var fold = document.getElementById("catsFold");
+  var togg = document.getElementById("catsToggle");
+  res.catCount = cats.querySelectorAll(".cat-wrap").length;
+  res.noPanel = cats.querySelectorAll(".cat-panel, .cat-in").length === 0;
+  res.cardGo = cats.querySelector(".cat").getAttribute("onclick").indexOf("catGo") >= 0;
+  catsClosed = false; syncCatsFold();
+  res.expandedByDefault = !fold.classList.contains("closed") && togg.getAttribute("aria-expanded") === "true";
+  toggleCats();
+  res.collapses = catsClosed === true && fold.classList.contains("closed")
+                  && togg.getAttribute("aria-expanded") === "false"
+                  && document.getElementById("catsToggleTx").textContent === "展开";
+  res.collapseKeepsSession = (S === null);
+  toggleCats();
+  res.reopens = catsClosed === false && !fold.classList.contains("closed")
+                && document.getElementById("catsToggleTx").textContent === "收起";
+  /* 这台机器是 Chrome 80：grid-template-rows 过渡会被忽略成瞬跳，只能过渡 height。 */
+  /* 这台机器系统里开了「减弱动画」，prefers-reduced-motion 就是 reduce：
+     此时过渡被 CSS 按设计关掉，属正常，不能当成失败。 */
+  res.reducedMotion = matchMedia("(prefers-reduced-motion: reduce)").matches;
+  res.foldTransition = res.reducedMotion
+      ? getComputedStyle(fold).transitionProperty === "none"
+      : getComputedStyle(fold).transitionProperty.indexOf("height") >= 0;
+  res.foldHeightBefore = fold.style.height;
+  toggleCats();
+  res.foldHeightClosing = fold.style.height;
+  toggleCats();
+  res.foldHeightOpening = fold.style.height;
+  res.foldSingleContainer = fold.querySelectorAll(":scope > .cats-fold-in > .cats").length === 1;
+  catGo("judge");
+  res.cardEntersPractice = !!(S && S.tf === "judge");
+  exitQuiz();
+
+  /* 头像已删除，两个圆形按钮还在 */
+  res.noAvatarImg = !document.getElementById("avatarImg");
+  res.noAvatarNode = !document.querySelector(".avatar");
+  renderMe();
+  var meSet = document.getElementById("meSet").innerHTML;
+  res.noSearchRow = meSet.indexOf('data-k="search"') < 0;
+  res.hasUpdateRow = meSet.indexOf('data-k="update"') >= 0;
+  res.meNoNaN = document.getElementById("meStat").innerHTML.indexOf("NaN") < 0;
+  var btns = document.querySelectorAll(".hello .icon-btn");
+  res.iconBtns = btns.length;
+  res.themeBtn = !!document.getElementById("themeBtn");
+  res.statBtn = !!(btns[1] && btns[1].getAttribute("onclick").indexOf("openFS") >= 0);
+  /* 问候文字与按钮组不再贴在一起 */
+  var tb = document.querySelector(".hello .txt").getBoundingClientRect();
+  var bb = document.querySelector(".hello .bl").getBoundingClientRect();
+  res.gap = Math.round(bb.left - tb.right);
+  return res;
+`);
+ok("填空题能开练习", v103.fillOpened === true);
+ok("主观题渲染文本框", v103.hasTextarea === true);
+ok("主观题展示参考答案", v103.hasRefBox === true);
+ok("主观题没有可点选项", v103.noOpts === true);
+ok("主观题按钮是「下一题」", v103.actText === "下一题", v103.actText);
+ok("自评写入 S.self", v103.selfSaved === true);
+ok("自评不产生自动判分", v103.noGraded === true);
+ok("自评不影响正确率", v103.rateSame === true);
+ok("自评「待复习」进错题本", v103.wrongAfter === true);
+ok("震动关闭时不调 vibrate", v103.vibOff === 0, String(v103.vibOff));
+ok("震动开启时会调 vibrate", v103.vibOn > 0, String(v103.vibOn));
+ok("haptics 存成 \"false\" 也算关闭", v103.vibStrFalse === 0, String(v103.vibStrFalse));
+ok("首页六张题型卡片", v103.catCount === 6, String(v103.catCount));
+ok("卡片不再有单卡展开面板", v103.noPanel === true);
+ok("卡片点击走 catGo", v103.cardGo === true);
+ok("分类区默认展开", v103.expandedByDefault === true);
+ok("一个开关收起六张卡片", v103.collapses === true);
+ok("收起不影响答题会话", v103.collapseKeepsSession === true);
+ok("再点一下整体展开", v103.reopens === true);
+ok(v103.reducedMotion ? "减弱动画时过渡被关掉（系统设置）" : "折叠过渡作用在 height 上（Chrome 80 兼容）", v103.foldTransition === true);
+ok("收起时把高度写成具体像素（过渡有终点）", /^\d+(\.\d+)?px$/.test(String(v103.foldHeightClosing)), String(v103.foldHeightClosing));
+ok("展开时先量出内容高度再过渡", /^\d+(\.\d+)?px$/.test(String(v103.foldHeightOpening)), String(v103.foldHeightOpening));
+ok("折叠只有一个容器（不会逐张错位）", v103.foldSingleContainer === true);
+ok("卡片点击进对应题型练习", v103.cardEntersPractice === true);
+ok("首页头像已删除", v103.noAvatarImg === true && v103.noAvatarNode === true);
+ok("主题与统计两个按钮都还在", v103.iconBtns === 2 && v103.themeBtn && v103.statBtn);
+ok("问候文字与按钮组有间距", v103.gap >= 12, "实际 " + v103.gap + "px");
+ok("「我的」页没有搜索题目行", v103.noSearchRow === true);
+ok("「检查更新」行还在", v103.hasUpdateRow === true);
+ok("「我的」页统计无 NaN", v103.meNoNaN === true);
+
+/* 空题库引导：不再重复格式说明，导入入口还在 */
+const emptyGuide = await evalJs(`
+  var snapSubs = BANK.subjects.slice(), snapQs = BANK.questions.slice();
+  BANK.subjects = []; BANK.questions = []; byId = {};
+  goTab("home");
+  var res = {
+    hiName: document.getElementById("hiName").textContent,
+    hiSubHidden: document.getElementById("hiSub").hidden,
+    hiSubText: document.getElementById("hiSub").textContent,
+    taskHasImport: document.getElementById("tasks").innerHTML.indexOf("openImport") >= 0,
+    taskSmall: (document.querySelector("#tasks .task small") || {}).textContent || "",
+    noNaN: document.getElementById("tasks").innerHTML.indexOf("NaN") < 0
+  };
+  BANK.subjects = snapSubs; BANK.questions = snapQs;
+  byId = {}; BANK.questions.forEach(function (q) { byId[q.id] = q; });
+  save(); renderAll();
+  return res;
+`);
+ok("空题库标题仍是「先导入一个题库」", emptyGuide.hiName === "先导入一个题库", emptyGuide.hiName);
+ok("空题库不再显示格式说明", emptyGuide.hiSubHidden === true && emptyGuide.hiSubText === "",
+   "hidden=" + emptyGuide.hiSubHidden + " text=" + emptyGuide.hiSubText);
+ok("空题库保留导入入口", emptyGuide.taskHasImport === true);
+ok("空题库卡片不再重复「导入题库」", emptyGuide.taskSmall.indexOf("导入题库") >= 0, emptyGuide.taskSmall);
+ok("空题库统计无 NaN", emptyGuide.noNaN === true);
+
+console.log("\n[真机] v1.0.3：PDF 导入（文字层 / 拒绝路径 / 统计口径）");
+/* PdfTidy / PdfText 是原生类，JS 侧碰不到；这里验两件 JS 能负责的事：
+   1. 原生把 PDF 取成文字后，同一套 parseBankText 能正确解析；
+   2. 导入面板把「需要文字层」讲清楚，用户不会把扫描件当成成功。 */
+const pdf = await evalJs(`
+  var tidied = "1\\u3001\\u4e0b\\u5217\\u54ea\\u4e2a\\u662f TCP \\u534f\\u8bae \\uff1f\\nA\\u3001UDP\\nB\\u3001TCP\\n\\u7b54\\u6848\\uff1aB\\n\\u89e3\\u6790\\uff1aTCP \\u6709\\u786e\\u8ba4\\u4e0e\\u91cd\\u4f20\\u3002\\n" +
+                "2\\u3001HTTP \\u9ed8\\u8ba4\\u7aef\\u53e3\\u662f 80\\u3002\\n\\u7b54\\u6848\\uff1a\\u6b63\\u786e\\n" +
+                "3\\u3001\\uff08\\u591a\\u9009\\uff09\\u4e0b\\u5217\\u54ea\\u4e9b\\u5c5e\\u4e8e\\u4e91\\u539f\\u751f\\u8981\\u7d20\\uff1f\\nA\\u3001\\u5bb9\\u5668\\nB\\u3001\\u5fae\\u670d\\u52a1\\nC\\u3001DevOps\\nD\\u3001\\u4f20\\u7edf\\u673a\\u623f\\n\\u7b54\\u6848\\uff1aABC";
+  var qs = parseBankText(tidied);
+  var usable = qs.filter(usableQ);
+  var rep = importReport(qs, usable);
+  var im = document.getElementById("impBar");
+  openImport();
+  var txt = document.getElementById("sheet3").textContent;
+  closeTop();
+  return {
+    total: qs.length, usable: usable.length,
+    types: usable.map(function (q) { return q.type; }).join(","),
+    ans0: qs.length ? qs[0].answer.join("") : "",
+    exp0: qs.length ? qs[0].explain.slice(0, 12) : "",
+    noans: rep.noans, dropped: rep.dropped,
+    sumOk: rep.usable + rep.noans + rep.dropped === rep.total,
+    saysPdf: txt.indexOf("PDF") >= 0, saysLayer: txt.indexOf("\\u6587\\u5b57\\u5c42") >= 0
+  };
+`);
+ok("PDF 取出的文字能解析出 3 题", pdf.total === 3, String(pdf.total));
+ok("单选 / 判断 / 多选 都认对", pdf.types === "single,judge,multi", pdf.types);
+ok("答案与解析一起带出来", pdf.ans0 === "B" && pdf.exp0.length > 0, pdf.ans0 + "/" + pdf.exp0);
+ok("PDF 题目统计三项相加等于总数", pdf.sumOk === true && pdf.noans === 0 && pdf.dropped === 0);
+ok("导入说明写清支持 PDF", pdf.saysPdf === true);
+ok("导入说明提示 PDF 需要文字层", pdf.saysLayer === true);
+
+/* 还原题库快照，测试题不留在用户数据里 */
+const cleanup = await evalJs(`
+  if (window.__bankSnap) {
+    BANK.subjects = window.__bankSnap.subjects;
+    BANK.questions = window.__bankSnap.questions;
+    byId = {}; BANK.questions.forEach(function (q) { byId[q.id] = q; });
+    delete window.__bankSnap;
+    save(); renderAll();
+  }
+  return { subjects: BANK.subjects.length, questions: BANK.questions.length };
+`);
+console.log("  · 已还原题库：" + cleanup.subjects + " 个题库 / " + cleanup.questions + " 题");
 
 console.log("\n" + "=".repeat(46));
 cdp.close();

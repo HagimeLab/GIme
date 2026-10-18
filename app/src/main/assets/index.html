@@ -83,30 +83,56 @@ svg { display: block; }
 .page.on { display: block; }
 
 .hello { display: flex; align-items: center; margin-bottom: 22px; }
-.hello .txt { flex: 1; }
+.hello .txt { flex: 1; min-width: 0; }
 .hello .txt i { font-style: normal; display: block; font-size: .8125rem; color: var(--ink-2); }
 .hello .txt b { display: block; font-size: 1.375rem; font-weight: 800; letter-spacing: .3px; }
-.hello .av { width: 46px; text-align: center; }
-.hello .bl { display: flex; }
+.hello .bl { flex: 0 0 auto; display: flex; align-items: center; margin-left: 14px; }
 .hello .bl .icon-btn + .icon-btn { margin-left: 8px; }
-.avatar { width: 44px; height: 44px; border-radius: 50%; background: var(--raise);
-          box-shadow: var(--sh-sm); display: inline-table; text-align: center; }
-.avatar span { display: table-cell; vertical-align: middle; font-size: .8125rem; font-weight: 700; }
-.icon-btn { width: 42px; height: 42px; border-radius: 50%; background: var(--raise);
-            box-shadow: var(--sh-sm); display: inline-flex; align-items: center; justify-content: center; }
+/* 两个圆形按钮共用一个尺寸变量：圆心必须落在同一条水平线上，
+   各写一个 44/42 迟早会再对不齐 */
+.hello { --round: 44px; }
+.icon-btn { width: var(--round); height: var(--round); border-radius: 50%; background: var(--raise);
+            box-shadow: var(--sh-sm); display: inline-flex; align-items: center; justify-content: center;
+            flex: 0 0 auto; }
 .icon-btn:active { box-shadow: var(--sink); }
 
 .search { display: flex; align-items: center; width: 100%; border-radius: 999px;
           background: var(--surface); box-shadow: var(--sink); padding: 13px 18px; color: var(--ink-3); }
 .search b { flex: 1; margin-left: 9px; font-weight: 400; font-size: .9375rem; text-align: left; }
 
-.cats { display: flex; margin: 0 -5px; }
-.cat { flex: 1; margin: 0 5px; text-align: center;
-       padding: 16px 2px 14px; border-radius: var(--r-in); background: var(--raise); box-shadow: var(--sh-sm); }
-.cat:active { box-shadow: var(--sink); }
-.cat .ico { margin: 0 auto 8px; width: 21px; height: 21px; }
-.cat b { display: block; font-size: .75rem; font-weight: 600; }
-.cat i { display: block; font-style: normal; font-size: .6875rem; color: var(--ink-3); margin-top: 1px; }
+/* 六个题型卡片：窄屏 3×2，宽一点排成一行。
+   点卡片直接进对应题型的练习，卡片本身不再展开说明 */
+.cats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
+@media (min-width: 520px) { .cats { grid-template-columns: repeat(6, 1fr); } }
+.cat-wrap { min-width: 0; }
+.cat { display: block; width: 100%; text-align: center;
+       padding: 15px 4px 13px; border-radius: var(--r-in); background: var(--raise); box-shadow: var(--sh-sm);
+       transition: background .2s ease, color .2s ease, box-shadow .2s ease, transform .16s var(--ease); }
+.cat:active { box-shadow: var(--sink); transform: scale(.97); }
+.cat .ico { display: block; margin: 0 auto 8px; width: 21px; height: 21px; }
+.cat b { display: block; font-size: .75rem; font-weight: 600;
+         white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.cat i { display: block; font-style: normal; font-size: .6875rem; color: var(--ink-3); margin-top: 2px; }
+
+/* 分类区整体折叠：外层容器定高 + overflow:hidden，高度由 JS 量一次再过渡。
+   不用 grid-template-rows 0fr→1fr —— 那个写法要 Chrome 107+，
+   这台机器的 WebView 是 Chrome 80，过渡会被直接忽略，折叠变成瞬跳。
+   只动一个容器，六张卡片是一起出现/消失的，不存在逐张错位。 */
+.cats-fold { overflow: hidden; transition: height .3s var(--ease); }
+.cats-fold-in { min-height: 0; }
+.cats-fold.closed .cats { opacity: 0; transition: opacity .18s ease; }
+.cats-fold .cats { opacity: 1; transition: opacity .25s ease .06s; }
+.cats-head { align-items: center; }
+.cats-toggle { display: inline-flex; align-items: center; flex: 0 0 auto;
+               margin: -6px -8px -6px 0; padding: 6px 8px; border-radius: 999px;
+               font-size: .8125rem; color: var(--ink-3); }
+.cats-toggle:active { background: var(--surface); }
+.cats-toggle .ar { margin-left: 3px; transition: transform .3s var(--ease); }
+.cats-toggle[aria-expanded="false"] .ar { transform: rotate(-90deg); }
+@media (prefers-reduced-motion: reduce) {
+  .cat, .cats-fold, .cats-fold .cats, .cats-toggle .ar,
+  .fold, .fold-head .ar, .swipe > .card { transition: none; }
+}
 
 .task { display: flex; align-items: center; width: 100%; padding: 15px 18px; margin-bottom: 12px;
         border-radius: var(--r-in); background: var(--raise); box-shadow: var(--sh-sm); text-align: left; }
@@ -115,7 +141,8 @@ svg { display: block; }
 .task .bd { flex: 1; padding-right: 10px; }
 .task .bd b { display: block; font-size: .9375rem; font-weight: 600; }
 .task .bd small { display: block; font-size: .75rem; color: var(--ink-3); margin-top: 1px; }
-.task .rt { flex: 0 0 auto; text-align: right; font-size: 1.0625rem; font-weight: 800; }
+.task .rt { flex: 0 0 auto; text-align: right; font-size: 1.0625rem; font-weight: 800;
+            white-space: nowrap; }
 .task .rt i { font-style: normal; font-size: .6875rem; color: var(--ink-3); font-weight: 400; }
 .box { display: block; width: 22px; height: 22px; border-radius: 8px; border: 1.7px solid var(--ink-3); }
 .box.ok { background: var(--ink); border-color: var(--ink); }
@@ -190,6 +217,24 @@ svg { display: block; }
 .opt.miss .m { color: var(--ink-2); font-weight: 600; font-size: .6875rem; }
 .opt.dim { opacity: .45; }
 .opt.right .m, .opt.wrong .m { font-size: 1.375rem; font-weight: 900; }
+
+/* 填空题 / 解答题：不判分，只给「你的作答 / 参考答案」两块和两个自我核对按钮 */
+.q-input { width: 100%; min-height: 96px; padding: 16px 18px; border-radius: var(--r-in);
+           border: 1.5px solid var(--line); outline: none; resize: vertical;
+           background: var(--raise); color: var(--ink); font-size: .9375rem; line-height: 1.7;
+           font-family: inherit; -webkit-user-select: text; user-select: text; }
+.q-input:focus { border-color: var(--ink-3); }
+.ref-box { margin-top: 16px; padding: 18px; border-radius: var(--r-in);
+           background: var(--surface); box-shadow: var(--sink); }
+.ref-box h4 { font-size: .6875rem; letter-spacing: 1px; color: var(--ink-3); margin-bottom: 8px; }
+.ref-box .ref { font-size: .9375rem; line-height: 1.8; white-space: pre-wrap;
+                -webkit-user-select: text; user-select: text; }
+.selfcheck { display: flex; margin-top: 16px; }
+.selfcheck button { flex: 1; padding: 14px 0; border-radius: var(--r-in); background: var(--raise);
+                    box-shadow: var(--sh-sm); font-size: .875rem; font-weight: 700; }
+.selfcheck button + button { margin-left: 12px; }
+.selfcheck button.pri { background: var(--ink); color: var(--paper); }
+.subj-tip { margin-top: 14px; font-size: .6875rem; line-height: 1.7; color: var(--ink-3); }
 
 .explain { margin-top: 6px; padding: 18px; border-radius: var(--r-in); background: var(--surface);
            box-shadow: var(--sink); font-size: .875rem; line-height: 1.8;
@@ -399,6 +444,15 @@ svg { display: block; }
                color: var(--ink-2); white-space: nowrap;
                transition: flex-grow .3s var(--ease), background .2s ease, color .2s ease, box-shadow .2s ease; }
 .tbar button.on { flex: 2.1; background: var(--ink); color: var(--paper); box-shadow: var(--sh); font-weight: 700; }
+/* 题型有六种，字号调到 120% 时一行放不下：改成横向滚动，别把字压扁或换行 */
+.tbar.scroll { overflow-x: auto; overflow-y: hidden; -webkit-overflow-scrolling: touch;
+               scrollbar-width: none; padding-bottom: 2px;
+               /* 右边缘淡出：内容被裁一半时看着像 bug，加一层渐隐就变成「还能往右滑」的暗示 */
+               -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 22px), transparent);
+               mask-image: linear-gradient(to right, #000 calc(100% - 22px), transparent); }
+.tbar.scroll::-webkit-scrollbar { display: none; }
+.tbar.scroll button { flex: 0 0 auto; padding: 10px 15px; }
+.tbar.scroll button.on { flex: 0 0 auto; }
 
 /* ---------------- 组卷：题库多选 ---------------- */
 .pick { display: flex; align-items: center; width: 100%; padding: 13px 16px; margin-bottom: 9px;
@@ -460,7 +514,6 @@ svg { display: block; }
 <div class="page on" id="tab-home">
   <div class="hello">
     <div class="txt"><i id="hiSub">今天也来刷一组</i><b id="hiName">GIme</b></div>
-    <span class="av"><span class="avatar"><span id="avatar">G</span></span></span>
     <span class="bl">
       <button class="icon-btn" id="themeBtn" onclick="onThemeTap(event)" aria-label="切换主题"><svg class="ico" viewBox="0 0 24 24" style="width:19px;height:19px"><circle cx="12" cy="12" r="8"/><path d="M12 4a8 8 0 0 1 0 16z" fill="currentColor" stroke="none"/></svg></button>
       <button class="icon-btn" onclick="openFS('stat')" aria-label="学习统计"><svg class="ico" viewBox="0 0 24 24" style="width:19px;height:19px"><path d="M18 8a6 6 0 1 0-12 0c0 7-3 8-3 8h18s-3-1-3-8"/><path d="M13.7 21a2 2 0 0 1-3.4 0"/></svg></button>
@@ -472,8 +525,18 @@ svg { display: block; }
     <b>搜索题库 / 知识点</b>
   </button>
 
-  <div class="sec-title"><b>题库分类</b><span id="catTotal"></span></div>
-  <div class="cats" id="cats"></div>
+  <div class="sec-title cats-head">
+    <b>题库分类</b>
+    <button class="cats-toggle" id="catsToggle" onclick="toggleCats()" aria-expanded="true">
+      <span id="catsToggleTx">收起</span>
+      <svg class="ico ar" viewBox="0 0 24 24" style="width:15px;height:15px"><path d="M6 9l6 6 6-6"/></svg>
+    </button>
+  </div>
+  <div class="cats-fold" id="catsFold">
+    <div class="cats-fold-in">
+      <div class="cats" id="cats"></div>
+    </div>
+  </div>
 
   <div class="sec-title"><b>今日待刷题</b><span onclick="openPaper()" style="text-decoration:underline">组卷出题</span></div>
   <div id="tasks"></div>
@@ -555,9 +618,19 @@ var store = {
 };
 var prog = store.read(LS.p, {});
 var set = store.read(LS.s, { theme: "light", fscale: 100 });
-if (set.haptics === undefined) set.haptics = true;
-if (set.autoExp === undefined) set.autoExp = true;
-if (!set.hidden) set.hidden = {};
+/* 老版本可能把开关存成字符串 / 0 / 1（手改存档、早期迁移残留都出现过）。
+   统一归一成布尔：只有明确关掉的值才算关，其余按默认开。
+   归一之后 vibrate() 里的判断才有意义——否则 "false" 这种真值会被当成开启。 */
+function asBool(v, dft) {
+  if (v === true || v === 1 || v === "1" || v === "true" || v === "on") return true;
+  if (v === false || v === 0 || v === "0" || v === "false" || v === "off") return false;
+  return dft;
+}
+set.haptics = asBool(set.haptics, true);
+set.autoExp = asBool(set.autoExp, true);
+/* 旧版本可以「隐藏内置题库」，那套数据已经没有对应题库了。
+   这里只做兼容清理：不再读它，但也不动它，免得降级回旧版时用户发现隐藏状态被重置 */
+if (set.hidden && typeof set.hidden !== "object") set.hidden = {};
 var S = store.read(LS.j, null);
 var openLayers = [];
 var curTab = "home";
@@ -577,7 +650,6 @@ function inWrong(x) {
 }
 function subjQs(sid, tf) {
   return BANK.questions.filter(function (q) {
-    if (set.hidden && set.hidden[q.subject]) return false;      // 被隐藏的题库不参与出题
     return (sid === "all" || q.subject === sid) && (!tf || q.type === tf);
   });
 }
@@ -600,26 +672,44 @@ window.saveProgress = save;
 
 /* ================= 统计 ================= */
 function stats(sid, tf) {
-  var qs = subjQs(sid, tf), seen = 0, right = 0, mark = 0, lastT = 0;
+  var qs = subjQs(sid, tf), seen = 0, mark = 0, lastT = 0;
+  /* 正确率只统计客观题：主观题是自己核对出来的「掌握 / 待复习」，
+     把它算进正确率等于给了个假分数 */
+  var rated = 0, right = 0;
   qs.forEach(function (q) {
     var p = prog[q.id];
     if (!p) return;
-    if (p.n > 0) { seen++; if (p.last === 1) right++; }
+    if (p.n > 0) seen++;
+    if (isObjective(q.type) && p.n > 0) { rated++; if (p.last === 1) right++; }
     if (p.b) mark++;
     if (p.t > lastT) lastT = p.t;
   });
   var wrong = qs.filter(inWrong).length;
-  return { total: qs.length, seen: seen, right: right, wrong: wrong, mark: mark, lastT: lastT,
-           rate: seen ? Math.round(right / seen * 100) : 0 };
+  return { total: qs.length, seen: seen, rated: rated, right: right, wrong: wrong, mark: mark, lastT: lastT,
+           rate: rated ? Math.round(right / rated * 100) : 0 };
 }
 
 /* ================= 会话 ================= */
+/* 六类卡片：前五种是题型，最后一张是组卷入口。
+   scored=false 的主观题不参与自动判分，只在练习里给参考答案和自我核对，
+   也永远不进模拟考试——没有可靠判分规则就不能假装它是客观题。 */
 var TYPES = [
-  { tf: "single", name: "单选题", ico: '<circle cx="12" cy="12" r="8"/><circle cx="12" cy="12" r="2.6" fill="currentColor" stroke="none"/>' },
-  { tf: "multi",  name: "多选题", ico: '<rect x="4.5" y="4.5" width="15" height="15" rx="4.5"/><path d="M8.6 12.2l2.4 2.4 4.4-4.8"/>' },
-  { tf: "judge",  name: "判断题", ico: '<circle cx="12" cy="12" r="8"/><path d="M9.2 12.2l2 2 3.6-4.2"/>' },
-  { tf: "exam",   name: "真题套卷", ico: '<rect x="4.5" y="3.5" width="15" height="17" rx="4"/><path d="M8.5 8.5h7M8.5 12.5h7M8.5 16.5h4"/>' }
+  { tf: "single", name: "单选题", scored: true,
+    ico: '<circle cx="12" cy="12" r="8"/><circle cx="12" cy="12" r="2.6" fill="currentColor" stroke="none"/>' },
+  { tf: "multi", name: "多选题", scored: true,
+    ico: '<rect x="4.5" y="4.5" width="15" height="15" rx="4.5"/><path d="M8.6 12.2l2.4 2.4 4.4-4.8"/>' },
+  { tf: "judge", name: "判断题", scored: true,
+    ico: '<circle cx="12" cy="12" r="8"/><path d="M9.2 12.2l2 2 3.6-4.2"/>' },
+  { tf: "fill", name: "填空题", scored: false,
+    ico: '<path d="M4 7h16M4 12h10M4 17h6"/><path d="M17.5 14.5v6M14.5 17.5h6"/>' },
+  { tf: "short", name: "解答题", scored: false,
+    ico: '<rect x="4.5" y="3.5" width="15" height="17" rx="4"/><path d="M8.5 8.5h7M8.5 12.5h7M8.5 16.5h3"/>' },
+  { tf: "exam", name: "真题套卷", scored: true,
+    ico: '<rect x="4.5" y="3.5" width="15" height="17" rx="4"/><path d="M8.5 8.5h7M8.5 12.5h7M8.5 16.5h4"/>' }
 ];
+var OBJECTIVE = { single: 1, multi: 1, judge: 1 };
+function isObjective(t) { return OBJECTIVE[t] === 1; }
+function isSubjective(t) { return t === "fill" || t === "short"; }
 
 function examN() {
   paperInit();
@@ -645,7 +735,10 @@ function startSession(mode, sid, tf) {
   }
   var order = mode === "exam" ? paperOrder() : pool.map(function (q) { return q.id; });
   if (mode === "random" || mode === "wrong") shuffle(order);
-  if (!order.length) { toast("这个分类下没有题目"); return; }
+  if (!order.length) {
+    toast(tf && isSubjective(tf) ? "这个题库里没有" + typeName(tf) : "这个分类下没有题目");
+    return;
+  }
 
   var idx = 0;
   if (mode === "practice") {                       // 顺序练习：停在第一道没刷过的题
@@ -657,7 +750,8 @@ function startSession(mode, sid, tf) {
   S = { subject: sid, mode: mode, tf: tf || "", order: order, idx: idx,
         title: mode === "exam" ? paperTitle() : "",
         state: mode === "exam" ? "running" : "",
-        picks: {}, graded: {}, started: Date.now(), dur: mode === "exam" ? examMin() * 60 : 0 };
+        picks: {}, graded: {}, text: {}, self: {},
+        started: Date.now(), dur: mode === "exam" ? examMin() * 60 : 0 };
   save();
   render();
   document.getElementById("quiz").classList.add("on");
@@ -670,7 +764,20 @@ function isExam() { return S && S.mode === "exam"; }
 function examDone() { return S && S.mode === "exam" && (S.state === "submitted" || S.state === "abandoned"); }
 function isRecite() { return S && S.mode === "recite"; }
 function noAns(cur) { return !cur.answer || !cur.answer.length; }
-function typeName(t) { return { single: "单选题", multi: "多选题", judge: "判断题" }[t] || "题目"; }
+/* 主观题没有「答案字母」，参考答案单独放 ref 字段 */
+function isSubjQ(cur) { return !!cur && isSubjective(cur.type); }
+function typeName(t) {
+  return { single: "单选题", multi: "多选题", judge: "判断题", fill: "填空题", short: "解答题" }[t] || "题目";
+}
+/* 列表里展示的「答案」：客观题拼字母，主观题给参考答案首段，没有就留空 */
+function answerText(x) {
+  if (!x) return "";
+  if (isSubjective(x.type)) {
+    var r = String(x.ref || "").trim();
+    return r ? r.slice(0, 40) + (r.length > 40 ? "…" : "") : "未提供";
+  }
+  return (x.answer || []).join("");
+}
 
 function exitQuiz() {
   /* 答题页左上角那个返回箭头也走这里，所以考试中必须同样拦一道，
@@ -689,38 +796,70 @@ function render() {
   document.getElementById("qSub").textContent = (S.title || subjName(S.subject)) + " · " + (S.idx + 1) + " / " + S.order.length;
   document.getElementById("qBar").style.width = ((S.idx + 1) / S.order.length * 100) + "%";
 
+  var subj = isSubjQ(cur);
   var picks = S.picks[cur.id] || [];
-  var done = (isExam() || noAns(cur)) ? false : S.graded[cur.id] !== undefined;
-  var reveal = done || (isRecite() && !noAns(cur));
+  /* 主观题没有「判分」，只有「已核对 / 未核对」；作答内容单独存在 S.text 里 */
+  var text = (S.text && S.text[cur.id]) || "";
+  var checked = subj && S.self && S.self[cur.id] !== undefined;
+  var done = subj ? checked : ((isExam() || noAns(cur)) ? false : S.graded[cur.id] !== undefined);
+  var reveal = subj ? true : (done || (isRecite() && !noAns(cur)));
 
+  var tagText = subj
+    ? (checked ? (S.self[cur.id] === 1 ? "自评掌握" : "待复习") : typeName(cur.type))
+    : (reveal ? (S.graded[cur.id] === 1 ? "回答正确" : S.graded[cur.id] === 0 ? "回答错误" : typeName(cur.type)) : typeName(cur.type));
   var h = '<div class="stem-card"><div class="tagrow">' +
-            '<span class="tag' + (reveal && S.graded[cur.id] === 1 ? " solid" : "") + '">' +
-              (reveal ? (S.graded[cur.id] === 1 ? "回答正确" : S.graded[cur.id] === 0 ? "回答错误" : typeName(cur.type)) : typeName(cur.type)) +
-            "</span>" +
-            '<span class="tag">' + esc(cur.subject === "hcip_cloud" ? "HCIP" : subjName(cur.subject)) + "</span>" +
+            '<span class="tag' + ((!subj && reveal && S.graded[cur.id] === 1) || (subj && checked && S.self[cur.id] === 1) ? " solid" : "") + '">' +
+              tagText + "</span>" +
+            '<span class="tag">' + esc(subjName(cur.subject)) + "</span>" +
           '</div><div class="stem">' + esc(cur.stem) + "</div>" +
           (cur.note ? '<div class="note">' + esc(cur.note) + "</div>" : "") +
-          (noAns(cur) ? '<div class="note">题源未标注本题答案 · 此题不判分</div>' : "") +
+          (!subj && noAns(cur) ? '<div class="note">题源未标注本题答案 · 此题不判分</div>' : "") +
         "</div>";
 
-  h += '<div class="opts">';
-  cur.options.forEach(function (o) {
-    var k = o[0], cls = "opt", m = "";
-    if (reveal) {
-      var isAns = cur.answer.indexOf(k) >= 0, picked = picks.indexOf(k) >= 0;
-      if (isAns && picked) { cls += " right"; m = "✓"; }
-      else if (isAns) { cls += " miss"; m = "答案"; }
-      else if (picked) { cls += " wrong"; m = "✕"; }
-      else cls += " dim";
-    } else if (picks.indexOf(k) >= 0) {
-      cls += " sel"; m = "✓";
+  if (subj) {
+    /* 主观题：先自己写，再对照参考答案。全程不显示对错——没有判分规则就
+       不能给出一个假的「回答正确」，那会直接教错人。 */
+    h += '<div class="opts">' +
+           '<textarea class="q-input" id="qText" placeholder="' +
+             (cur.type === "fill" ? "在这里填写答案" : "先自己写下要点，再展开参考答案对照") + '"' +
+             (isRecite() ? " readonly" : "") + ">" + esc(text) + "</textarea>" +
+         "</div>";
+    if (checked && S.self[cur.id] === 0) {
+      h += '<div class="note">已标记为待复习，下次还会出现在练习里。</div>';
     }
-    h += '<button class="' + cls + '" onclick="pick(&quot;' + k + '&quot;)">' +
-           '<span class="k">' + k + '</span><span class="v">' + esc(o[1]) + '</span><span class="m">' + m + "</span></button>";
-  });
-  h += "</div>";
+    var ref = String(cur.ref || "").trim();
+    h += '<div class="ref-box"><h4>参考答案</h4><div class="ref">' +
+           (ref ? esc(ref) : "（题库未提供参考答案，可对照解析自己判断）") + "</div></div>";
+    if (!isRecite() && !checked) {
+      h += '<div class="selfcheck">' +
+             '<button onclick="selfCheck(0)">还要再看</button>' +
+             '<button class="pri" onclick="selfCheck(1)">已经掌握</button>' +
+           "</div>";
+    } else if (!isRecite() && checked) {
+      h += '<div class="selfcheck"><button onclick="selfCheck(' + (S.self[cur.id] === 1 ? 0 : 1) + ')">' +
+             (S.self[cur.id] === 1 ? "改判为待复习" : "改判为已掌握") + "</button></div>";
+    }
+    h += '<div class="subj-tip">填空题和解答题由你自己核对，不计入正确率，也不进模拟考试。</div>';
+  } else {
+    h += '<div class="opts">';
+    cur.options.forEach(function (o) {
+      var k = o[0], cls = "opt", m = "";
+      if (reveal) {
+        var isAns = cur.answer.indexOf(k) >= 0, picked = picks.indexOf(k) >= 0;
+        if (isAns && picked) { cls += " right"; m = "✓"; }
+        else if (isAns) { cls += " miss"; m = "答案"; }
+        else if (picked) { cls += " wrong"; m = "✕"; }
+        else cls += " dim";
+      } else if (picks.indexOf(k) >= 0) {
+        cls += " sel"; m = "✓";
+      }
+      h += '<button class="' + cls + '" onclick="pick(&quot;' + k + '&quot;)">' +
+             '<span class="k">' + k + '</span><span class="v">' + esc(o[1]) + '</span><span class="m">' + m + "</span></button>";
+    });
+    h += "</div>";
+  }
 
-  if (done) {
+  if (done && !subj) {
     var okk = S.graded[cur.id] === 1;
     h += '<div class="verdict"><span class="mk">' + (okk ? "✓" : "✕") + "</span>" +
          '<span class="tx"><b>' + (okk ? "回答正确" : "回答错误") + "</b><i>正确答案 " +
@@ -731,12 +870,12 @@ function render() {
     /* 解析来源必须让他看得见：题源原文 vs 按知识点撰写，可信度不是一回事 */
     var src = ex ? (cur.ex_src === "题源" ? "题源" : "编写") : "";
     h += '<button class="fold-head' + (foldOpen ? " open" : "") + '" onclick="toggleFold(event)">' +
-           "答案 " + cur.answer.join("") + " · 解析" +
+           (subj ? "解析" : "答案 " + cur.answer.join("") + " · 解析") +
            (src ? '<span class="tag src">' + src + "</span>" : "") +
            '<svg class="ico ar" viewBox="0 0 24 24" style="width:16px;height:16px"><path d="M6 9l6 6 6-6"/></svg>' +
          "</button>" +
          '<div class="fold" id="fold"><div class="explain">' +
-           (ex ? esc(ex) : "（题源未提供本题答案与解析）") + "</div></div>";
+           (ex ? esc(ex) : (subj ? "（题库未提供解析）" : "（题源未提供本题答案与解析）")) + "</div></div>";
   }
 
   h += '<div class="tools">' +
@@ -748,9 +887,20 @@ function render() {
        "</div>";
 
   document.getElementById("qbody").innerHTML = h;
+  var ta = document.getElementById("qText");
+  if (ta) {
+    /* 输入即存：切题、退到后台、被杀进程都不该丢掉刚敲的字 */
+    ta.addEventListener("input", function () {
+      if (!S) return;
+      if (!S.text) S.text = {};
+      S.text[cur.id] = ta.value;
+      save();
+    });
+  }
   document.getElementById("btnPrev").disabled = S.idx === 0;
   document.getElementById("btnAct").textContent =
     isExam() ? (S.idx === S.order.length - 1 ? "交卷" : "下一题")
+    : subj ? "下一题"
     : (isRecite() || noAns(cur) || done) ? "下一题" : "确认";
   var pill = document.getElementById("qPill");
   var pct = Math.round(Object.keys(S.graded).length / S.order.length * 100);
@@ -789,6 +939,7 @@ function pick(k) {
   if (!S) return;
   if (examDone()) return;
   var cur = q();
+  if (isSubjQ(cur)) return;        /* 主观题没有选项，这个入口不该被触发 */
   if (isRecite()) { go(1); return; }
   if (noAns(cur)) {
     var p0 = S.picks[cur.id] || (S.picks[cur.id] = []);
@@ -815,6 +966,8 @@ function act() {
   if (!S) return;
   if (examDone()) return;
   var cur = q();
+  /* 主观题只有「下一题」一种动作，判分与自评都在页面上的按钮里 */
+  if (isSubjQ(cur)) { go(1); return; }
   if (noAns(cur)) { go(1); return; }
   if (isExam()) { if (S.idx === S.order.length - 1) submitExam(); else go(1); return; }
   if (isRecite()) { go(1); return; }
@@ -830,6 +983,7 @@ function same(a, b) {
 
 function grade(picks) {
   var cur = q();
+  if (isSubjQ(cur)) return;        /* 主观题走 selfCheck，永远不进自动判分 */
   if (!picks.length && cur.type === "multi") { toast("请先选择选项"); return; }
   var ok = same(picks, cur.answer) ? 1 : 0;
   S.graded[cur.id] = ok;
@@ -845,6 +999,25 @@ function grade(picks) {
   if (!ok) body.classList.add("shake");
   quiz.classList.add("q-flash");
   setTimeout(function () { body.classList.remove("shake"); quiz.classList.remove("q-flash"); }, 700);
+}
+
+/* 主观题的自我核对：只记录「掌握 / 待复习」，不进正确率、不进错题本。
+   没有可靠判分规则，就不能让它冒充自动对错——那是把人教错的捷径。 */
+function selfCheck(ok) {
+  if (!S) return;
+  var cur = q();
+  if (!isSubjQ(cur)) return;
+  if (!S.self) S.self = {};
+  S.self[cur.id] = ok ? 1 : 0;
+  var p = P(cur.id);
+  p.n++;
+  p.last = ok ? 1 : -1;
+  p.t = Date.now();
+  if (!ok) { p.w++; p.in = 1; }
+  vibrate(ok ? [25, 30, 25] : [70, 60, 70, 60, 160]);
+  render();
+  save();
+  toast(ok ? "已记为掌握" : "已记为待复习");
 }
 
 function go(d) {
@@ -896,6 +1069,7 @@ function submitExam() {
   var right = 0, scored = 0;
   S.order.forEach(function (id) {
     var cur = byId[id];
+    if (!cur || !isObjective(cur.type)) return;   /* 主观题不进卷，万一混进来也不能按对错算 */
     if (noAns(cur)) return;
     var ok = same(S.picks[id] || [], cur.answer) ? 1 : 0;
     S.graded[id] = ok; scored++;
@@ -957,21 +1131,103 @@ function tabTap(which) {
   if (which === "me") checkUpdateSilently();
 }
 
+/* 分类区整体展开/收起。和单个题型无关，所以只存一个布尔值；
+   不落盘——重启后展开是最不容易让人迷路的状态 */
+var catsClosed = false;
+
 function renderHome() {
   var all = stats("all");
-  document.getElementById("hiName").textContent = all.seen ? "继续上次进度" : "先挑一个题库";
-  document.getElementById("hiSub").textContent = "共 " + all.total + " 题 · 已刷 " + all.seen + " 题";
-  document.getElementById("catTotal").textContent = all.total + " 题";
+  var noQ = !all.total;
+  document.getElementById("hiName").textContent = noQ ? "先导入一个题库" : (all.seen ? "继续上次进度" : "先挑一个题库");
+  /* 空题库时下面那张「还没有题目」的卡已经把该导入什么说清楚了，
+     这里再挂一行格式说明就是重复，而且会把问候语挤成两行 */
+  var sub = document.getElementById("hiSub");
+  sub.textContent = noQ ? "" : "共 " + all.total + " 题 · 已刷 " + all.seen + " 题";
+  sub.hidden = noQ;
 
   var cats = "";
   TYPES.forEach(function (t) {
-    var n = t.tf === "exam" ? examN() + " 题 / 卷" : stats("all", t.tf).total + " 题";
-    cats += '<button class="cat" onclick="catTap(&quot;' + t.tf + '&quot;)">' +
-              '<svg class="ico" viewBox="0 0 24 24">' + t.ico + "</svg><b>" + t.name + "</b><i>" + n + "</i></button>";
+    var n, sub2;
+    if (t.tf === "exam") { n = examN(); sub2 = n + " 题 / 卷"; }
+    else { n = stats("all", t.tf).total; sub2 = n + " 题"; }
+    cats += '<div class="cat-wrap" data-tf="' + t.tf + '">' +
+              '<button class="cat" onclick="catGo(&quot;' + t.tf + '&quot;)">' +
+                '<svg class="ico" viewBox="0 0 24 24">' + t.ico + "</svg>" +
+                "<b>" + t.name + "</b><i>" + sub2 + "</i></button>" +
+            "</div>";
   });
   document.getElementById("cats").innerHTML = cats;
+  syncCatsFold();
+  renderTasks(noQ);
+}
 
-  var rows = "";
+/* 折叠：只改一个容器的类，六张卡片一起动，不会逐张错位。
+   高度必须由 JS 量：这台机器的 WebView 是 Chrome 80，
+   grid-template-rows 的 0fr→1fr 过渡（Chrome 107+）会被忽略成瞬跳。
+   量完把终点写死成像素，过渡结束后再放开成 auto——
+   否则字号调大或换行变多时，写死的高度会把内容裁掉。 */
+var catsFoldState = null;      /* null = 还没同步过；true/false = 上一次的展开状态 */
+
+function syncCatsFold() {
+  var fold = document.getElementById("catsFold");
+  var btn = document.getElementById("catsToggle");
+  var tx = document.getElementById("catsToggleTx");
+  if (!fold) return;
+  var closed = catsClosed;
+  var changed = catsFoldState !== closed;
+  catsFoldState = closed;
+
+  if (btn) btn.setAttribute("aria-expanded", closed ? "false" : "true");
+  if (tx) tx.textContent = closed ? "展开" : "收起";
+
+  if (!changed) {
+    /* 状态没变（renderHome 重画卡片时会走到这里）：高度保持现状，
+       重画不该再触发一次动画，否则每次点别的按钮分类区都抖一下 */
+    if (!closed) fold.style.height = "auto";
+    return;
+  }
+
+  if (closed) {
+    /* 收起：先固定当前像素高度，再收到 0，过渡才有起点 */
+    fold.style.height = fold.scrollHeight + "px";
+    void fold.offsetHeight;
+    fold.classList.add("closed");
+    fold.style.height = "0px";
+    return;
+  }
+
+  /* 展开：容器此刻是 0 高，scrollHeight 量到的就是内容自然高度 */
+  fold.classList.remove("closed");
+  fold.style.height = "auto";
+  var target = fold.scrollHeight;
+  fold.style.height = "0px";
+  void fold.offsetHeight;
+  fold.style.height = target + "px";
+  setTimeout(function () {
+    if (!catsClosed) fold.style.height = "auto";
+  }, 320);
+}
+function toggleCats() {
+  catsClosed = !catsClosed;
+  syncCatsFold();
+  vibrate(10);
+}
+function catGo(tf) {
+  if (tf === "exam") { openExam("all"); return; }
+  startSession("practice", "all", tf);
+}
+
+/* 空题库时只留一张卡：标题说清楚「还没有题目」，副标题说清楚点进去做什么。
+   格式说明由导入面板负责，这里不再重复一遍 */
+function emptyTaskHtml() {
+  return '<button class="task" onclick="openImport()">' +
+           '<span class="ck"><span class="box"></span></span>' +
+           '<span class="bd"><b>还没有题目</b><small>点这里导入题库</small></span>' +
+           '<span class="rt">导入</span></button>';
+}
+
+function renderTasks(noQ) {
+  var rows = noQ ? emptyTaskHtml() : "";
   BANK.subjects.forEach(function (s) {
     var t = stats(s.id);
     var left = t.total - t.seen;
@@ -983,11 +1239,13 @@ function renderHome() {
             "</button>";
   });
   var w = wrongList();
-  rows += '<button class="task" onclick="pickMode(&quot;wrong&quot;,&quot;all&quot;)">' +
-            '<span class="ck"><span class="box' + (w.length ? "" : " ok") + '"></span></span>' +
-            '<span class="bd"><b>错题本</b><small>' +
-            (w.length ? "答错过的题，答对不会自动移出" : "已经清空了") + "</small></span>" +
-            '<span class="rt">' + w.length + "<i>题</i></span></button>";
+  if (!noQ || w.length) {
+    rows += '<button class="task" onclick="pickMode(&quot;wrong&quot;,&quot;all&quot;)">' +
+              '<span class="ck"><span class="box' + (w.length ? "" : " ok") + '"></span></span>' +
+              '<span class="bd"><b>错题本</b><small>' +
+              (w.length ? "答错过的题，答对不会自动移出" : "已经清空了") + "</small></span>" +
+              '<span class="rt">' + w.length + "<i>题</i></span></button>";
+  }
   document.getElementById("tasks").innerHTML = rows;
 
   var rec = BANK.subjects.map(function (s) { var t = stats(s.id); t.id = s.id; t.name = s.name; return t; })
@@ -1000,21 +1258,18 @@ function renderHome() {
   }).join("") : '<div class="cap" style="margin:0">还没有练习记录</div>';
 }
 
-function catTap(tf) {
-  if (tf === "exam") { openExam("all"); return; }
-  startSession("practice", "all", tf);
-}
 function wrongList() {
   return BANK.questions.filter(inWrong);
 }
 
 var bankTf = "";
-var BANK_TAGS = [["", "全部"], ["single", "单选题"], ["multi", "多选题"], ["judge", "判断题"]];
+var BANK_TAGS = [["", "全部"], ["single", "单选题"], ["multi", "多选题"], ["judge", "判断题"],
+                 ["fill", "填空题"], ["short", "解答题"]];
 
 function setBankTf(tf) { bankTf = tf; renderBank(); }
 
 function renderBank() {
-  var bar = '<div class="tbar">' + BANK_TAGS.map(function (t) {
+  var bar = '<div class="tbar scroll">' + BANK_TAGS.map(function (t) {
     return '<button class="' + (bankTf === t[0] ? "on" : "") + '" onclick="setBankTf(&quot;' + t[0] + '&quot;)">' +
            t[1] + "</button>";
   }).join("") + "</div>";
@@ -1027,24 +1282,21 @@ function renderBank() {
             '<path d="M12 4v11M7.5 10.5L12 15l4.5-4.5"/><path d="M4.5 18.5h15"/></svg></span>' +
             '<span style="flex:1;text-align:left;margin-left:12px"><b style="font-size:1rem">导入题库</b>' +
             '<em style="font-style:normal;display:block;font-size:.6875rem;color:var(--ink-3)">' +
-            "Word（.docx）/ txt / md，带解析一起导</em></span>" +
+            "PDF / Word / txt / md，带解析一起导</em></span>" +
             '<span style="color:var(--ink-3)">›</span></button>' + bar;
 
   var shown = 0;
   BANK.subjects.forEach(function (s) {
-    if (set.hidden[s.id]) return;
     var t = stats(s.id, bankTf);
     if (!t.total) return;
     shown++;
     h += '<div class="swipe" data-sid="' + s.id + '">' +
-           '<div class="swipe-del" onclick="askDeleteBank(&quot;' + s.id + '&quot;)">' +
-             (s.custom ? "删除" : "隐藏") + "</div>" +
+           '<div class="swipe-del" onclick="askDeleteBank(&quot;' + s.id + '&quot;)">删除</div>' +
            '<div class="card pad">' +
              '<div style="display:flex;align-items:center">' +
                '<div style="flex:1"><b style="font-size:1rem">' + esc(s.name) + "</b>" +
                "<em style='font-style:normal;display:block;font-size:.6875rem;color:var(--ink-3)'>" +
-               t.total + " 题 · 已刷 " + t.seen + " · 错题 " + t.wrong +
-               (s.custom ? " · 导入" : "") + "</em></div>" +
+               t.total + " 题 · 已刷 " + t.seen + " · 错题 " + t.wrong + "</em></div>" +
                '<div style="font-size:1.5rem;font-weight:800">' + t.rate + "%</div></div>" +
              '<div style="display:flex;margin-top:16px">' +
                '<button style="flex:1;padding:12px 0;border-radius:16px;background:var(--ink);color:var(--paper);font-size:.8125rem;font-weight:700" ' +
@@ -1056,15 +1308,18 @@ function renderBank() {
              "</div></div></div>";
   });
   if (!shown) {
-    h += '<div class="card pad" style="text-align:center;color:var(--ink-3)">这个题型下暂时没题</div>';
+    /* 题库为空是正常状态，不是错误：这里必须给出下一步能做什么 */
+    h += !BANK.subjects.length
+      ? '<div class="card pad" style="text-align:center">' +
+          '<div class="bignum" style="font-size:3rem">0</div>' +
+          '<div class="cap">还没有任何题库</div>' +
+          '<button style="width:100%;padding:15px 0;border-radius:16px;background:var(--ink);color:var(--paper);font-size:.9375rem;font-weight:700" ' +
+            'onclick="openImport()">导入题库</button>' +
+          '<div class="sl-hint" style="margin:14px 0 0">题库全部由你导入，导入后随时可以删除</div>' +
+        "</div>"
+      : '<div class="card pad" style="text-align:center;color:var(--ink-3)">这个题型下暂时没题</div>';
   }
-  var hid = Object.keys(set.hidden).length;
-  if (hid) {
-    h += '<button class="row" style="border:1px dashed var(--ink-3);border-radius:var(--r-in);padding:14px 16px" ' +
-          'onclick="restoreHidden()"><span>已隐藏 ' + hid + ' 个内置题库</span>' +
-          '<span style="flex:0 0 auto;color:var(--ink-2)">恢复 ›</span></button>';
-  }
-  h += '<div class="sl-hint" style="margin:14px 0 0">左滑题库卡片可以删除（导入的）或隐藏（内置的）</div>';
+  h += '<div class="sl-hint" style="margin:14px 0 0">左滑题库卡片可以删除，导入的题库随时可以再导入</div>';
   document.getElementById("bankList").innerHTML = h;
 }
 
@@ -1101,7 +1356,8 @@ function renderWrong() {
       (batchOn ? "tapSel(&quot;" + x.id + "&quot;)" : "openQuestion(&quot;" + x.id + "&quot;)") + '">' +
       (batchOn ? '<span class="cbx"></span>' : "") +
       "<b>" + esc(x.stem) + "</b>" +
-      "<small>" + esc(subjName(x.subject)) + " · " + typeName(x.type) + " · 答案 " + x.answer.join("") +
+      "<small>" + esc(subjName(x.subject)) + " · " + typeName(x.type) + " · " +
+      (isSubjective(x.type) ? "参考答案" : "答案") + " " + esc(answerText(x)) +
       " · " + (prog[x.id].n > 0 ? "错 " + prog[x.id].w + " 次" : "手动标记") + "</small></button>";
   }).join("");
   if (batchOn) {
@@ -1171,6 +1427,8 @@ function flyTo(el, target) {
 
 function renderMe() {
   var a = stats("all");
+  /* 题库为空时覆盖率的分母是 0，直接除会得到 NaN 显示在界面上 */
+  var cover = a.total ? Math.round(a.seen / a.total * 100) + "%" : "—";
   document.getElementById("meStat").innerHTML =
     '<div class="metrics">' +
       '<div class="metric"><b>' + a.seen + "</b><i>已刷题数</i></div>" +
@@ -1181,7 +1439,7 @@ function renderMe() {
     '<div class="metrics">' +
       '<div class="metric" onclick="startSession(&quot;star&quot;,&quot;all&quot;, &quot;&quot;)"><b>' + a.mark + "</b><i>收藏 · 点击刷</i></div>" +
       '<div class="metric"><b>' + a.total + "</b><i>题库总量</i></div>" +
-      '<div class="metric"><b>' + Math.round(a.seen / a.total * 100) + "%</b><i>覆盖率</i></div>" +
+      '<div class="metric"><b>' + cover + "</b><i>覆盖率</i></div>" +
     "</div>";
 
   document.getElementById("meSet").innerHTML =
@@ -1189,10 +1447,7 @@ function renderMe() {
     row("haptics", "震动反馈", "答对短震、答错长震", true, set.haptics) +
     row("autoExp", "答完展开解析", "关闭后判分只给答案，解析自己点开", true, set.autoExp) +
     row("import", "导入题库", "Word（.docx）/ txt / md，带解析一起导", false) +
-    (Object.keys(set.hidden).length
-      ? row("restore", "恢复隐藏题库", Object.keys(set.hidden).length + " 个内置题库被隐藏", false) : "") +
     row("font", "字号", "当前 " + set.fscale + "%，点击循环切换", false) +
-    row("search", "搜索题目", "按题干 / 解析关键词", false) +
     row("update", "检查更新", "当前 v" + APP_VER + " 版本", false, false, upd.hasNew) +
     row("clear", "清空进度", "做题记录、错题、收藏全部删除", false);
 }
@@ -1202,8 +1457,8 @@ function row(k, title, sub, sw, on, mark) {
   var fn = k === "dark" ? "toggleSet('dark', event)"
          : k === "haptics" ? "toggleSet('haptics', event)"
          : k === "autoExp" ? "toggleSet('autoExp', event)"
-         : k === "font" ? "cycleFont()" : k === "search" ? "openFS('search')"
-         : k === "import" ? "openImport()" : k === "restore" ? "restoreHidden()"
+         : k === "font" ? "cycleFont()"
+         : k === "import" ? "openImport()"
          : k === "update" ? "checkUpdate(true)" : "askClear()";
   return '<div class="row" data-k="' + k + '" onclick="' + fn + '"><span>' + title +
          (mark ? '<i class="dot"></i>' : "") +
@@ -1243,8 +1498,8 @@ function pickMode(mode, sid) { startSession(mode, sid, ""); }
 function toggleSet(k, ev) {
   var p = pointOf(ev);
   if (k === "dark") { setTheme(set.theme === "dark" ? "light" : "dark", p.x, p.y); jiggleSiblings(k); return; }
-  if (k === "haptics") set.haptics = !set.haptics;
-  if (k === "autoExp") set.autoExp = !set.autoExp;
+  if (k === "haptics") set.haptics = set.haptics !== true;
+  if (k === "autoExp") set.autoExp = set.autoExp !== true;
   renderAll(); save(); jiggleSiblings(k);
 }
 function cycleFont() {
@@ -1362,7 +1617,7 @@ function askClear() {
 }
 
 /* ================= 检查更新 ================= */
-var APP_VER = "1.0.2";
+var APP_VER = "1.0.3";
 try { if (window.Android && Android.appVersion) APP_VER = Android.appVersion() || APP_VER; } catch (e) {}
 var updInfo = null;
 /* 更新状态拆成三份，别混在一个布尔里：
@@ -1667,13 +1922,18 @@ document.addEventListener("mouseup", function () { if (activeSl) activeSl.up(); 
 function paperInit() {
   if (!set.paper) {
     var subs = {};
-    subs[BANK.subjects[0].id] = 1;
+    /* 题库可能一个都没有（全是用户导入的，随时可能被删干净），
+       这里不能直接取 subjects[0].id，否则空题库时组卷一点就抛异常 */
+    if (BANK.subjects.length) subs[BANK.subjects[0].id] = 1;
     set.paper = { subs: subs, mode: "total", total: 30, single: 10, multi: 10, judge: 10, min: 20 };
   }
 }
 function paperPool() {
   paperInit();
-  return BANK.questions.filter(function (q) { return set.paper.subs[q.subject]; });
+  /* 模拟考试只抽客观题：主观题没有可靠判分规则，塞进限时卷里交卷会算错分 */
+  return BANK.questions.filter(function (q) {
+    return set.paper.subs[q.subject] && isObjective(q.type);
+  });
 }
 function paperAvail(tf) {
   return paperPool().filter(function (q) { return !tf || q.type === tf; }).length;
@@ -1717,6 +1977,7 @@ function paperRelabel() {
 function openExam(sid) { openPaper(sid); }
 function openPaper(sid) {
   paperInit();
+  if (!BANK.subjects.length) { toast("还没有题库，先导入一个"); openImport(); return; }
   if (sid && sid !== "all") { set.paper.subs = {}; set.paper.subs[sid] = 1; }
   var p = set.paper;
   p.total = Math.min(p.total, paperAvail());
@@ -1736,7 +1997,11 @@ function openPaper(sid) {
     "</div>";
 
   var avail = paperAvail();
-  if (p.mode !== "types") {
+  if (!avail) {
+    /* 勾选的题库里只有主观题时，卷子是 0 题，滑杆也没有意义 */
+    h += '<div class="note" style="margin:6px 0 18px">所选题库里没有可用于模拟考试的客观题。' +
+         "填空题和解答题不参与限时卷（它们没有自动判分规则），请在首页按题型练习。</div>";
+  } else if (p.mode !== "types") {
     h += sliderHtml("pTotal", "总题数", 0, avail, p.total, " 题");
   } else {
     ["single", "multi", "judge"].forEach(function (t) {
@@ -1745,13 +2010,14 @@ function openPaper(sid) {
     h += '<div class="sl-hint">三类分别定题数，0 表示不要这类；上限随所选题库变化</div>';
   }
   h += sliderHtml("pMin", "时长（分钟）", 5, 45, p.min, " 分钟") +
-     '<button class="sheet-act" onclick="startPaper()">' + paperCta() + "</button>";
+     '<button class="sheet-act"' + (avail ? "" : " disabled") +
+       ' onclick="startPaper()">' + (avail ? paperCta() : "没有可出的客观题") + "</button>";
 
   var sh = document.getElementById("sheet2");
   sh.innerHTML = h;
-  if (p.mode !== "types") {
+  if (avail && p.mode !== "types") {
     wireSlider("pTotal", 0, avail, function () { return p.total; }, function (v) { p.total = v; }, " 题");
-  } else {
+  } else if (avail) {
     ["single", "multi", "judge"].forEach(function (t) {
       wireSlider("p_" + t, 0, paperAvail(t), function () { return p[t]; }, function (x) { p[t] = x; }, " 题");
     });
@@ -1771,7 +2037,7 @@ function paperAllSubs() {
 }
 function paperMode(m) { set.paper.mode = m; save(); openPaper(); }
 function startPaper() {
-  if (!paperPool().length) { toast("先勾选至少一个题库"); return; }
+  if (!paperPool().length) { toast("所选题库里没有可用于模拟考试的客观题"); return; }
   if (!paperOrder().length) { toast("题数还是 0，先拖滑杆"); return; }
   closeTop();
   startSession("exam", "all", "exam");
@@ -1806,7 +2072,6 @@ window.onBack = function () {
 function askExitExam() {
   glass({
     title: "要离开这场考试吗？",
-    desc: "继续考试会回到刚才那一题，倒计时不会停。交卷会立刻结算成绩，放弃则本次作答全部作废。",
     no: ["继续考试", function () {}],
     ok: ["交卷", function () { submitExam(); }]
   });
@@ -1874,7 +2139,13 @@ function toast(msg) {
   clearTimeout(toastTimer);
   toastTimer = setTimeout(function () { t.classList.remove("on"); }, 2200);
 }
-function vibrate(p) { if (!set.haptics) return; try { navigator.vibrate(p); } catch (e) {} }
+/* 只有明确开着才震。用 === true 而不是真值判断：设置项从 localStorage 回来时
+   可能是 "false" / 0 / "0" 这类真值串，真值判断会把「关」当成「开」，
+   这正是「开关关了还震」的根因。 */
+function vibrate(p) {
+  if (set.haptics !== true) return;
+  try { if (navigator && navigator.vibrate) navigator.vibrate(p); } catch (e) {}
+}
 
 /* ================= 全屏：搜索 / 统计 ================= */
 function openFS(which) {
@@ -1914,15 +2185,17 @@ function doSearch(v) {
   }).slice(0, 60);
   box.innerHTML = '<div class="cap">' + hits.length + " 条结果</div>" + hits.map(function (x) {
     return '<button class="res" onclick="openQuestion(&quot;' + x.id + '&quot;)"><b>' + esc(x.stem) + "</b>" +
-           "<small>" + esc(subjName(x.subject)) + " · " + typeName(x.type) + " · 答案 " + x.answer.join("") + "</small></button>";
+           "<small>" + esc(subjName(x.subject)) + " · " + typeName(x.type) + " · " +
+           (isSubjective(x.type) ? "参考答案" : "答案") + " " + esc(answerText(x)) + "</small></button>";
   }).join("");
 }
 function openQuestion(id) {
   closeFS();
   var x = byId[id];
+  if (!x) return;
   var order = subjQs(x.subject, "").map(function (y) { return y.id; });
   S = { subject: x.subject, mode: "practice", tf: "", order: order, idx: order.indexOf(id),
-        picks: {}, graded: {}, started: Date.now(), dur: 0 };
+        picks: {}, graded: {}, text: {}, self: {}, started: Date.now(), dur: 0 };
   save();
   render();
   document.getElementById("quiz").classList.add("on");
@@ -1995,7 +2268,25 @@ var NUM_RE = /^\s*(\d{1,4})\s*[、.．)）]\s*([\s\S]*)$/;
 var QOPT_RE = /^\s*([A-G])\s*[、.．)）]\s*([\s\S]*)$/;
 var QOPT_LOOSE_RE = /^\s*([A-G])\s+(\S[\s\S]*)$/;
 var QANS_RE = /答\s*案\s*[:：]\s*([\s\S]*)/;
+/* 主观题常写「参考答案：」，必须排在 QANS_RE 前面判断，
+   否则「答案：」会在「参考答案：」里先命中，把「参考」两个字留在题干里 */
+var QREF_RE = /参\s*考\s*答\s*案\s*[:：]\s*([\s\S]*)/;
 var QEXPL_RE = /解\s*析\s*[:：]\s*([\s\S]*)/;
+/* 题型标记：（多选题）（填空题）（解答题）这类，方括号圆括号都认 */
+var QKIND_RE = /[（(【]\s*(单选题|多选题|判断题|填空题|解答题|简答题|问答题|填空|简答|问答|单选|多选|判断)\s*题?\s*[)）】]/;
+var QKIND_MAP = {
+  "单选题": "single", "单选": "single",
+  "多选题": "multi", "多选": "multi",
+  "判断题": "judge", "判断": "judge",
+  "填空题": "fill", "填空": "fill",
+  "解答题": "short", "简答题": "short", "问答题": "short", "简答": "short", "问答": "short"
+};
+/* 填空题的作答位：连续下划线，或一对空括号 */
+var BLANK_RE = /_{2,}|＿{2,}|[（(]\s*[)）]/;
+function kindOf(stem) {
+  var m = QKIND_RE.exec(stem);
+  return m ? (QKIND_MAP[m[1]] || "") : "";
+}
 var LET = "ABCDEFG";
 var OPT_INLINE_RE = [];
 for (var _i = 0; _i < 7; _i++) {
@@ -2057,16 +2348,22 @@ function parseBankText(text) {
   for (var li = 0; li < raw.length; li++) {
     var line = nz(raw[li]);
     if (!line) continue;
-    var head = line, answer = null, explain = null;
+    var head = line, answer = null, explain = null, ref = null;
     var me = QEXPL_RE.exec(head);
     if (me) { explain = me[1].trim(); head = nz(head.slice(0, me.index)); }
-    var ma = QANS_RE.exec(head);
-    if (ma) { answer = ma[1].trim(); head = nz(head.slice(0, ma.index)); }
+    /* 先认「参考答案：」再认「答案：」，顺序不能反 */
+    var mr = QREF_RE.exec(head);
+    if (mr) { ref = mr[1].trim(); head = nz(head.slice(0, mr.index)); }
+    else {
+      var ma = QANS_RE.exec(head);
+      if (ma) { answer = ma[1].trim(); head = nz(head.slice(0, ma.index)); }
+    }
 
     var mn = NUM_RE.exec(head);
     if (mn && +mn[1] >= expect && +mn[1] <= expect + 3) {
       close();
-      cur = { num: +mn[1], stem: [mn[2]], options: [], answer_text: "", explain: [], in_expl: false };
+      cur = { num: +mn[1], stem: [mn[2]], options: [], answer_text: "", ref_text: "",
+              explain: [], in_expl: false };
       expect = cur.num + 1;
     } else if (cur && head) {
       if (cur.in_expl) {
@@ -2102,6 +2399,7 @@ function parseBankText(text) {
     }
     if (cur) {
       if (answer !== null) cur.answer_text = nz(cur.answer_text + " " + answer);
+      if (ref !== null) cur.ref_text = nz(cur.ref_text + " " + ref);
       if (explain !== null) { cur.in_expl = true; cur.explain.push(explain); }
     }
   }
@@ -2114,33 +2412,55 @@ function parseBankText(text) {
     var letters = answerLetters(q.answer_text);
     var ans = letters.length ? letters : judgeLetters(q.answer_text);
     var type = "single";
-    if (!letters.length && ans.length) {
+    /* 显式题型标记优先级最高：写了「填空题」就是填空题，后面所有靠答案形态
+       猜出来的结论都不能把它改回客观题——那正是「把主观题伪装成自动对错」 */
+    var kind = kindOf(stem);
+    if (!letters.length && ans.length && kind !== "fill" && kind !== "short") {
       type = "judge";
       if (!opts.length) {
         opts = [["A", "正确"], ["B", "错误"]];
         stem = nz(stem.replace(/(\s*(正确|错误|对|错)){1,2}$/, ""));
       }
     }
-    if (ans.length > 1) type = "multi";
-    if (!ans.length) {
+    if (ans.length > 1 && kind !== "fill" && kind !== "short") type = "multi";
+    if (!ans.length && kind !== "fill" && kind !== "short") {
       var red = [];
       for (j = 0; j < q.options.length; j++) if (q.options[j][2] > 0.3) red.push(q.options[j][0]);
       if (red.length) { ans = red; type = red.length > 1 ? "multi" : "single"; }
     }
-    if (/[（(【]\s*多选/.test(stem)) type = "multi";
-    if (/[（(【]\s*单选/.test(stem)) type = "single";
+    if (/[（(【]\s*多选/.test(stem) && kind !== "fill" && kind !== "short") type = "multi";
+    if (/[（(【]\s*单选/.test(stem) && kind !== "fill" && kind !== "short") type = "single";
     if (type === "single" && opts.length === 2) {
       var pair = opts[0][1] + "|" + opts[1][1];
       if (pair === "正确|错误" || pair === "对|错") type = "judge";
+    }
+    if (kind === "fill" || kind === "short") {
+      /* 主观题：选项不是选项，是正文的一部分（有些题库会把「要点」排成 A/B/C） */
+      if (opts.length) {
+        var extra = opts.map(function (o) { return o[0] + "、" + o[1]; }).join(" ");
+        stem = nz(stem + " " + extra);
+        opts = [];
+      }
+      type = kind;
+      ans = [];
+    } else if (!opts.length && !ans.length && BLANK_RE.test(stem)) {
+      /* 没写题型标记，但题干里有作答横线：按填空题收，总比当成无答案的选择题丢掉好 */
+      type = "fill";
+    } else if (!opts.length && !ans.length && q.ref_text) {
+      /* 有参考答案、没选项、也没有可判的字母：这是解答题 */
+      type = "short";
     }
     ans = ans.filter(function (a) {
       for (var n = 0; n < opts.length; n++) if (opts[n][0] === a) return true;
       return false;
     }).sort();
+    var refText = plain(q.ref_text);
+    if ((type === "fill" || type === "short") && !refText) refText = plain(q.answer_text);
     out.push({
       num: q.num, pnum: q.num,
-      stem: plain(stem.replace(/[（(【]\s*(多选|单选|判断)[题]?\s*[)）】]/g, " ")),
+      stem: plain(stem.replace(/[（(【]\s*(多选|单选|判断|填空|解答|简答|问答)[题]?\s*[)）】]/g, " ")),
       type: type, options: opts, answer: ans, ans_raw: q.answer_text,
+      ref: (type === "fill" || type === "short") ? refText : "",
       explain: nz(q.explain.join(" ")), note: "", flag: ""
     });
   }
@@ -2163,10 +2483,11 @@ var importName = "";
 function openImport() {
   var sh = document.getElementById("sheet3");
   sh.innerHTML = '<div class="handle"></div><h2>导入题库</h2>' +
-    '<div class="sl-hint" style="margin:0 0 18px">支持 Word（.docx）和 txt / md。题目按「1、题干 / A、选项 / 答案：X / 解析：」识别，' +
+    '<div class="sl-hint" style="margin:0 0 18px">支持 PDF、Word（.docx）和 txt / md。题目按「1、题干 / A、选项 / 答案：X / 解析：」识别，' +
     '带解析的会一起导入；红字标答案的文档也能识别。</div>' +
     '<button class="sheet-act" onclick="pickFile()">选择文件导入</button>' +
-    '<div class="sl-hint" style="margin:14px 0 0">也可以在微信里长按文件 →「用其他应用打开」→ 选「GIme」。</div>' +
+    '<div class="sl-hint" style="margin:14px 0 0">PDF 需要有文字层：扫描件、图片版和加密文件读不出内容，会明确提示而不是当成导入成功。</div>' +
+    '<div class="sl-hint" style="margin:10px 0 0">也可以在微信里长按文件 →「用其他应用打开」→ 选「GIme」。</div>' +
     '<div id="impBar" style="display:none">' +
       '<div class="track" style="margin:22px 0 8px"><i id="impFill"></i></div>' +
       '<div class="sl-hint" id="impMsg" style="margin:0">准备中…</div>' +
@@ -2197,6 +2518,14 @@ window.importStage = importStage;
 /* 原生层出错时要能给用户一句提示，得有个挂到 window 上的入口 */
 window.toast = toast;
 
+/* 一道题能不能进题库：客观题要有答案且至少两个选项；
+   主观题只要有题干就行（参考答案缺失也收，界面会标「未提供参考答案」，
+   总比默默丢掉强）。判分与否交给 isObjective，不在这里一刀切。 */
+function usableQ(x) {
+  if (isSubjective(x.type)) return !!x.stem;
+  return x.answer.length > 0 && x.options.length >= 2;
+}
+
 window.onImportText = function (name, text) {
   importName = name || "未命名题库";
   importStage("parse");
@@ -2204,23 +2533,53 @@ window.onImportText = function (name, text) {
     var qs;
     try { qs = parseBankText(text); }
     catch (e) { onImportError("解析失败：" + e.message); return; }
-    var ok = qs.filter(function (x) { return x.answer.length && x.options.length >= 2; });
+    var ok = qs.filter(usableQ);
     if (!qs.length) { onImportError("没在文件里认出题目（题号要像 1、2、3 这样连续编号）"); return; }
     importStage("save");
     setTimeout(function () { finishImport(qs, ok); }, 30);
   }, 60);
 };
 /* 导入结果的统计口径统一在这里：无答案题必须在「原始解析结果」上数，
-   usable 已经把它滤掉了，在 usable 上数永远是 0。 */
+   usable 已经把它滤掉了，在 usable 上数永远是 0。主观题另算，不算「无答案」。 */
 function importReport(all, usable) {
-  var noans = all.filter(function (x) { return !x.answer.length; }).length;
+  var by = { single: 0, multi: 0, judge: 0, fill: 0, short: 0 };
+  var noRef = 0;
+  usable.forEach(function (x) {
+    if (by[x.type] !== undefined) by[x.type]++;
+    if (isSubjective(x.type) && !String(x.ref || "").trim()) noRef++;
+  });
+  var noans = all.filter(function (x) {
+    return !isSubjective(x.type) && !x.answer.length;
+  }).length;
   return {
     total: all.length,
     usable: usable.length,
     noans: noans,
     dropped: all.length - usable.length - noans,
+    noRef: noRef,
+    by: by,
     dup: (all.report && all.report.dup) || 0
   };
+}
+/* 结果页的统计行：分题型报数，主观题单列「参考答案缺失」，
+   这样用户能看出是文档格式问题还是真的没写答案，而不是只看到一句「缺选项 N」 */
+function importLine(rep) {
+  var b = rep.by || {};
+  var parts = [];
+  if (b.single) parts.push("单选 " + b.single);
+  if (b.multi) parts.push("多选 " + b.multi);
+  if (b.judge) parts.push("判断 " + b.judge);
+  if (b.fill) parts.push("填空 " + b.fill);
+  if (b.short) parts.push("解答 " + b.short);
+  var s = "认出 " + rep.total + " 题，收录 " + rep.usable + " 题";
+  if (parts.length) s += "（" + parts.join("、") + "）";
+  var bad = [];
+  if (rep.noans) bad.push("无答案 " + rep.noans);
+  if (rep.dropped) bad.push("缺选项 " + rep.dropped);
+  if (rep.noRef) bad.push("缺参考答案 " + rep.noRef);
+  if (rep.dup) bad.push("重复 " + rep.dup);
+  if (bad.length) s += "；未收录或待补：" + bad.join("、");
+  return esc(s);
 }
 function finishImport(all, usable) {
   var sid = "import_" + Date.now().toString(36);
@@ -2248,8 +2607,7 @@ function finishImport(all, usable) {
       '<div class="big">' + (saved ? usable.length : 0) + "</div>" +
       "<h2>" + (saved ? "导入成功" : "没能保存") + "</h2><p>" + esc(subj.name) + "　" +
       (saved ? "已存到本机" : "写文件失败，题库未加入列表，请检查存储空间后重试") + "</p></div>" +
-    '<div class="legend" style="margin:0 0 16px">认出 ' + rep.total + " 题，可判分 " + rep.usable +
-      " 题（无答案 " + rep.noans + "、缺选项 " + rep.dropped + "、重复 " + rep.dup + "）</div>" +
+    '<div class="legend" style="margin:0 0 16px">' + importLine(rep) + "</div>" +
     (saved
       ? '<button class="sheet-act" onclick="closeTop();goTab(&quot;bank&quot;)">去看这个题库</button>'
       : '<button class="sheet-act" onclick="openImport()">重新导入</button>');
@@ -2302,6 +2660,13 @@ function removeBank(sid) {
     delete prog[q.id];
     return false;
   });
+  /* 进行中的会话如果属于这个题库，题都没了留着只会渲染出空页，直接丢掉 */
+  if (S && S.subject === sid) {
+    S = null;
+    localStorage.removeItem(LS.j);
+    document.getElementById("quiz").classList.remove("on");
+  }
+  if (set.hidden) delete set.hidden[sid];
   save();
   renderAll();
   return true;
@@ -2309,23 +2674,11 @@ function removeBank(sid) {
 function askDeleteBank(sid) {
   var s = subjectOf(sid);
   if (!s) return;
-  if (s.custom) {
-    glass({ title: "删除「" + s.name + "」？",
-      desc: "这是导入的题库，删除后题目和它的做题记录一起清掉，无法恢复。",
-      ok: ["删除", function () { if (removeBank(sid)) toast("题库已删除"); }] });
-  } else {
-    glass({ title: "隐藏「" + s.name + "」？",
-      desc: "内置题库删不掉，只能从列表里隐藏；之后可以在「我的 → 恢复隐藏题库」找回来。",
-      ok: ["隐藏", function () {
-        set.hidden[sid] = 1; save(); renderAll(); toast("已隐藏，可在「我的」里恢复");
-      }] });
-  }
-}
-function restoreHidden() {
-  var ids = Object.keys(set.hidden || {});
-  if (!ids.length) { toast("没有隐藏的题库"); return; }
-  glass({ title: "恢复隐藏的题库？", desc: "当前隐藏了 " + ids.length + " 个内置题库。",
-    ok: ["全部恢复", function () { set.hidden = {}; save(); renderAll(); toast("已恢复"); }] });
+  /* 所有题库都是用户自己导入的，所以只有「删除」一种处理；
+     确认框里必须把连带影响说清楚：题目、进度、错题、收藏、进行中的会话 */
+  glass({ title: "删除「" + s.name + "」？",
+    desc: "这个题库的 " + stats(sid).total + " 道题会一起删掉，它们的做题记录、错题、收藏也会清空，无法恢复。",
+    ok: ["删除", function () { if (removeBank(sid)) toast("题库已删除"); }] });
 }
 
 /* 题库卡片左滑：露出删除/隐藏面板；竖向手势留给页面滚动，不抢 */

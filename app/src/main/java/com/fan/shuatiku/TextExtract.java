@@ -41,6 +41,23 @@ public final class TextExtract {
     public static String extract(Context ctx, InputStream in, String name) throws IOException {
         String lower = name == null ? "" : name.toLowerCase();
         String ext = extOf(lower);
+        /* 有些内容提供方（微信、网盘、部分文件管理器）给的 DISPLAY_NAME 干脆没有后缀，
+           只按名字判断会把好好的 PDF 当成「不支持的格式」拒掉。后缀缺失或陌生时，
+           退回按文件头认——PDF 是 %PDF-，docx 是 PK 开头的 zip。 */
+        if (!KNOWN_EXT.contains(ext)) {
+            java.io.ByteArrayOutputStream bos = new java.io.ByteArrayOutputStream();
+            byte[] buf = new byte[8192];
+            int n;
+            while ((n = in.read(buf)) > 0) {
+                bos.write(buf, 0, n);
+                if (bos.size() > MAX_BYTES) throw new Reject("文件太大（超过 20MB），请拆分后再导入");
+            }
+            byte[] head = bos.toByteArray();
+            String sniffed = sniff(head);
+            if (sniffed != null) return fromBytes(ctx, head, sniffed);
+            if (".doc".equals(ext)) throw new Reject("不支持 .doc 旧格式，请用 Word 另存为 .docx 后再导入");
+            throw new Reject("只支持 PDF、Word（.docx）和 txt / md，其他格式请先另存为 .docx");
+        }
         if (".docx".equals(ext)) {
             File tmp = File.createTempFile("import-", ".docx", ctx.getCacheDir());
             try {
@@ -50,11 +67,68 @@ public final class TextExtract {
                 if (!tmp.delete()) tmp.deleteOnExit();
             }
         }
+        /* PDF 必须落成临时文件：解析器要能随机访问整个文件（交叉引用表、对象流），
+           流式读不了。这也是唯一一个需要第三方库的格式。 */
+        if (".pdf".equals(ext)) {
+            File tmp = File.createTempFile("import-", ".pdf", ctx.getCacheDir());
+            try {
+                copy(in, tmp);
+                return PdfText.extract(ctx, tmp);
+            } finally {
+                if (!tmp.delete()) tmp.deleteOnExit();
+            }
+        }
         if (".txt".equals(ext) || ".md".equals(ext)) return plain(readAll(in));
         /* 老式 .doc 是 OLE 复合文档，不是 zip，本版本没有解析器；其余后缀一律拒绝，
            免得拿二进制当 UTF-8 读出一堆乱码再报「没认出题目」。 */
         if (".doc".equals(ext)) throw new Reject("不支持 .doc 旧格式，请用 Word 另存为 .docx 后再导入");
-        throw new Reject("只支持 .docx 和 txt / md，其他格式请先另存为 .docx");
+        throw new Reject("只支持 PDF、Word（.docx）和 txt / md，其他格式请先另存为 .docx");
+    }
+
+    /** 能按后缀直接分派的格式。不在这里的一律先嗅探文件头。 */
+    private static final java.util.Set<String> KNOWN_EXT =
+            new java.util.HashSet<>(java.util.Arrays.asList(".pdf", ".docx", ".txt", ".md", ".doc"));
+
+    /** 按文件头认格式；认不出返回 null（交给调用方按文本处理或拒绝）。 */
+    static String sniff(byte[] b) {
+        if (b == null || b.length < 4) return null;
+        /* PDF 规范允许 %PDF- 前面有少量垃圾字节，但绝大多数文件就是开头 */
+        if (b[0] == '%' && b[1] == 'P' && b[2] == 'D' && b[3] == 'F') return ".pdf";
+        if (b[0] == 'P' && b[1] == 'K' && b[2] == 3 && b[3] == 4) return ".docx";
+        return null;
+    }
+
+    /** 已经整份读进内存时的分派（只在嗅探路径上用）。 */
+    private static String fromBytes(Context ctx, byte[] raw, String ext) throws IOException {
+        if (".pdf".equals(ext)) {
+            File tmp = File.createTempFile("import-", ".pdf", ctx.getCacheDir());
+            try {
+                java.io.FileOutputStream os = new java.io.FileOutputStream(tmp);
+                try {
+                    os.write(raw);
+                } finally {
+                    os.close();
+                }
+                return PdfText.extract(ctx, tmp);
+            } finally {
+                if (!tmp.delete()) tmp.deleteOnExit();
+            }
+        }
+        if (".docx".equals(ext)) {
+            File tmp = File.createTempFile("import-", ".docx", ctx.getCacheDir());
+            try {
+                java.io.FileOutputStream os = new java.io.FileOutputStream(tmp);
+                try {
+                    os.write(raw);
+                } finally {
+                    os.close();
+                }
+                return docx(tmp);
+            } finally {
+                if (!tmp.delete()) tmp.deleteOnExit();
+            }
+        }
+        return plain(raw);
     }
 
     /** 取小写后缀（含点），没有后缀返回空串。 */
