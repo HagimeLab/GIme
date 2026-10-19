@@ -25,6 +25,9 @@ button:focus, input:focus { outline: none; }
   --line: #E1E3E8;
   --sh: -8px -8px 18px rgba(255,255,255,.9), 8px 8px 20px rgba(20,22,26,.07);
   --sh-sm: -4px -4px 10px rgba(255,255,255,.85), 4px 4px 10px rgba(20,22,26,.06);
+  /* 大圆角卡用的柔化投影：模糊半径必须远大于偏移，否则高光那圈圆角和卡片自己的
+     圆角不同心，左上会露出第二层"方角"轮廓（--sh-sm 的 10px 糊不住 20px 的角） */
+  --sh-soft: -3px -3px 16px rgba(255,255,255,.7), 5px 8px 18px rgba(20,22,26,.055);
   --sink: inset -4px -4px 9px rgba(255,255,255,.8), inset 5px 5px 11px rgba(20,22,26,.08);
   --r-card: 26px;
   --r-in: 20px;
@@ -49,6 +52,7 @@ button:focus, input:focus { outline: none; }
   --line: #2C2F35;
   --sh: -8px -8px 18px rgba(255,255,255,.04), 8px 8px 22px rgba(0,0,0,.55);
   --sh-sm: -4px -4px 10px rgba(255,255,255,.035), 4px 4px 10px rgba(0,0,0,.45);
+  --sh-soft: -3px -3px 16px rgba(255,255,255,.022), 6px 10px 24px rgba(0,0,0,.42);
   --sink: inset -4px -4px 9px rgba(255,255,255,.03), inset 5px 5px 11px rgba(0,0,0,.5);
 }
 
@@ -106,9 +110,10 @@ svg { display: block; }
 @media (min-width: 520px) { .cats { grid-template-columns: repeat(6, 1fr); } }
 .cat-wrap { min-width: 0; }
 .cat { display: block; width: 100%; text-align: center;
-       padding: 15px 4px 13px; border-radius: var(--r-in); background: var(--raise); box-shadow: var(--sh-sm);
-       transition: background .2s ease, color .2s ease, box-shadow .2s ease, transform .16s var(--ease); }
-.cat:active { box-shadow: var(--sink); transform: scale(.97); }
+       padding: 15px 4px 13px; border-radius: var(--r-in); background: var(--raise); box-shadow: var(--sh-soft);
+       transition: background .2s ease, color .2s ease, box-shadow .24s ease,
+                   transform .28s cubic-bezier(.34, 1.56, .64, 1); }
+.cat:active { box-shadow: var(--sink); transform: scale(.955); }
 .cat .ico { display: block; margin: 0 auto 8px; width: 21px; height: 21px; }
 .cat b { display: block; font-size: .75rem; font-weight: 600;
          white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -195,16 +200,28 @@ svg { display: block; }
          pointer-events: none; clip-path: circle(0px at 50% 50%); }
 
 /* ---------------- 答题页 ---------------- */
+/* 入场不再整页右滑（那是一刀硬切），改由共享元素幽灵铺满后淡出内容；
+   这里只留一个极短的不透明度过渡，给没有起点卡片的入口（背题/错题本/收藏）兜底，不硬切 */
 #quiz { position: fixed; top: 0; left: 0; right: 0; bottom: 0; z-index: 850;
         background: var(--paper); overflow-y: auto;
-        transform: translateX(100%); transition: transform .3s var(--ease); }
-#quiz.on { transform: translateX(0); }
+        opacity: 0; visibility: hidden;
+        transition: opacity .18s linear, visibility .18s linear; }
+#quiz.on { opacity: 1; visibility: visible; }
+/* 幽灵铺满的那一帧换层：底色同为 --paper，关掉过渡直接换才没有一帧空档 */
+#quiz.snap { transition: none; }
 .q-head { display: flex; align-items: center; padding: calc(var(--st) + 14px) 18px 6px; }
 .q-head .bk { flex: 0 0 46px; height: 42px; display: flex; align-items: center; }
 .q-head .ti { flex: 1; text-align: center; }
 .q-head .ti b { font-size: 1.0625rem; font-weight: 700; }
 .q-head .ti small { display: block; font-size: .6875rem; color: var(--ink-3); }
 .q-head .gr { flex: 0 0 46px; height: 42px; display: flex; align-items: center; justify-content: flex-end; }
+
+/* ---------- 卡片 → 答题页 共享元素转场 ----------
+   幽灵夹在列表和 #quiz(850) 之间：它铺满时正好等于 #quiz 的底色，换层看不出来。
+   飞行层压在幽灵上，只负责"跟着走"，不吃点击。 */
+.share-ghost { position: fixed; left: 0; top: 0; z-index: 800; transform-origin: 0 0;
+               pointer-events: none; background: var(--raise); }
+.share-fly { position: fixed; z-index: 810; pointer-events: none; white-space: nowrap; }
 
 .track { height: 4px; border-radius: 2px; background: var(--surface); box-shadow: var(--sink);
          margin: 10px 22px 0; overflow: hidden; }
@@ -780,7 +797,224 @@ function paperTitle() {
   return ids.map(function (i) { return subjName(i); }).join(" + ");
 }
 
-function startSession(mode, sid, tf) {
+/* ================= 卡片 → 答题页 共享元素转场 =================
+   一套 FLIP 走天下：First 量起点矩形 → 幽灵盒子直接摆成全屏、用 transform 反算回起点（Invert）
+   → Play 把变换去掉。两类入口只是"起点卡片"和"哪个文字飞到哪"不同，机制共用。
+   圆角要按 X/Y 两轴分别除以当时的缩放：卡片和全屏的宽高比差得远，非等比缩放会把圆角拉成椭圆。
+   Chrome 80 的 element.animate() 永远不触发 onfinish，所以时序全部用 setTimeout 串，
+   并且每个动画都留引用，中断时 cancel 掉——否则 fill:"forwards" 会把终值钉在元素上。 */
+var SH_IN = 350, SH_FLY = 300, SH_LAND = 200, SH_OUT = 300, SH_OUT_FADE = 150;
+var SH_EASE = "cubic-bezier(0.16,1,0.3,1)";
+var SH = null, SH_nodes = [], SH_back = [], SH_anim = [], SH_timer = [];
+
+function shRM() { return !!(window.matchMedia && matchMedia("(prefers-reduced-motion: reduce)").matches); }
+function shTok(n) { return getComputedStyle(document.documentElement).getPropertyValue(n).trim(); }
+function shAt(ms, fn) { SH_timer.push(setTimeout(fn, ms)); }
+function shAnim(el, frames, dur, delay) {
+  var a = el.animate(frames, { duration: dur, easing: SH_EASE, fill: "forwards", delay: delay || 0 });
+  SH_anim.push(a);
+  return a;
+}
+function shTrack(node) { SH_nodes.push(node); return node; }
+function shHold(fn) { SH_back.push(fn); }
+/* 中断/收尾都走这里：还原被我们藏起来的卡片、撤掉动画、删掉临时层，一样都不留 */
+function shAbort() {
+  var i;
+  for (i = 0; i < SH_timer.length; i++) clearTimeout(SH_timer[i]);
+  for (i = 0; i < SH_back.length; i++) { try { SH_back[i](); } catch (e) {} }
+  for (i = 0; i < SH_anim.length; i++) { try { SH_anim[i].cancel(); } catch (e) {} }
+  for (i = 0; i < SH_nodes.length; i++) if (SH_nodes[i].parentNode) SH_nodes[i].parentNode.removeChild(SH_nodes[i]);
+  SH_timer = []; SH_back = []; SH_anim = []; SH_nodes = [];
+}
+
+/* 起点卡片：入口 A 按 data-tf、入口 B 按 data-sid 找回用户真正点的那一张。
+   退出时列表已被 renderAll 重建，所以每次都重查重量。
+   用遍历而不是 [data-x="…"]：题库 id 来自用户导入的文件，不保证能当 CSS 标识符。 */
+function shCard() {
+  if (!SH) return null;
+  var cat = !!SH.tf, want = cat ? SH.tf : SH.sid;
+  var wraps = document.querySelectorAll(cat ? "#cats .cat-wrap" : "#bankList .swipe");
+  for (var i = 0; i < wraps.length; i++) {
+    if (wraps[i].getAttribute(cat ? "data-tf" : "data-sid") === want)
+      return wraps[i].querySelector(cat ? ".cat" : ".card.pad");
+  }
+  return null;
+}
+
+function shRadius(el) { return parseFloat(getComputedStyle(el).borderTopLeftRadius) || 0; }
+
+/* 幽灵：盒子固定为全屏，靠 transform 落在卡片矩形上；opening=true 则卡片→全屏。
+   刻意不给它任何 box-shadow——真机量过：在近全屏的缩放层上挂模糊阴影（不管是动画还是静态），
+   每次缩放都要重新光栅化，一次转场掉 4–9 帧、最差 54ms；去掉后 0 帧超 33ms、max 17.6ms。
+   幽灵铺满时外阴影本来就在视口外，所以"淡出"这个观感不需要真的去画它。 */
+function shGhost(r, rad, opening) {
+  var W = window.innerWidth, H = window.innerHeight;
+  var A = opening ? r : { left: 0, top: 0, width: W, height: H };
+  var B = opening ? { left: 0, top: 0, width: W, height: H } : r;
+  var bg0 = opening ? shTok("--raise") : shTok("--paper");
+  var bg1 = opening ? shTok("--paper") : shTok("--raise");
+  var kf = [], n = 8;
+  for (var i = 0; i <= n; i++) {
+    var p = i / n;
+    var w = A.width + (B.width - A.width) * p, h = A.height + (B.height - A.height) * p;
+    var sx = w / W, sy = h / H, rr = rad * (opening ? 1 - p : p);
+    var f = {
+      offset: p,
+      transform: "translate(" + (A.left + (B.left - A.left) * p) + "px,"
+                         + (A.top + (B.top - A.top) * p) + "px) scale(" + sx + "," + sy + ")",
+      borderRadius: (rr / sx) + "px / " + (rr / sy) + "px"
+    };
+    if (i === 0) { f.backgroundColor = bg0; }
+    if (i === n) { f.backgroundColor = bg1; }
+    kf.push(f);
+  }
+  var g = document.createElement("div");
+  g.className = "share-ghost";
+  g.style.width = W + "px";
+  g.style.height = H + "px";
+  document.body.appendChild(shTrack(g));
+  shAnim(g, kf, opening ? SH_IN : SH_OUT);
+}
+
+/* 文字飞进 .q-head：克隆体按"终点"的字体排版、摆在终点矩形，再用 transform 反推回起点，
+   缩放比 = 起点字号 / 终点字号，于是它出发时长得就跟原来一样大 */
+function shFlyLabel(src, dst) {
+  if (!src || !dst) return;
+  var a = src.getBoundingClientRect(), b = dst.getBoundingClientRect();
+  var cs = getComputedStyle(dst);
+  var k = (parseFloat(getComputedStyle(src).fontSize) || 16) / (parseFloat(cs.fontSize) || 16);
+  var el = document.createElement("div");
+  el.className = "share-fly";
+  el.textContent = src.textContent;
+  el.style.left = b.left + "px";
+  el.style.top = b.top + "px";
+  el.style.width = b.width + "px";
+  el.style.fontFamily = cs.fontFamily;
+  el.style.fontSize = cs.fontSize;
+  el.style.fontWeight = cs.fontWeight;
+  el.style.lineHeight = cs.lineHeight;
+  el.style.color = cs.color;
+  el.style.textAlign = cs.textAlign;
+  document.body.appendChild(shTrack(el));
+  shAnim(el, [
+    { transform: "translate(" + (a.left + a.width / 2 - b.left - b.width / 2) + "px,"
+                          + (a.top + a.height / 2 - b.top - b.height / 2) + "px) scale(" + k + ")",
+      opacity: 1 },
+    { transform: "translate(0,0) scale(1)", opacity: 1 }
+  ], SH_FLY);
+}
+
+/* 次要元素"随容器放大淡出"：幽灵是盖在列表上的纯色矩形，原元素开场就被压住，
+   所以克隆一份到飞行层上让它当着用户的面消失，而不是凭空没了。cloneNode 保住原有样式。
+   只用于 HTML 元素：内联 <svg> 的 className 是只读对象，改它会写坏 class。 */
+function shRider(el, dy, dur) {
+  if (!el) return;
+  var r = el.getBoundingClientRect();
+  var c = el.cloneNode(true);
+  c.setAttribute("class", (el.getAttribute("class") ? el.getAttribute("class") + " " : "") + "share-fly");
+  c.style.position = "fixed";
+  c.style.left = r.left + "px";
+  c.style.top = r.top + "px";
+  c.style.width = r.width + "px";
+  c.style.height = r.height + "px";
+  c.style.margin = "0";
+  document.body.appendChild(shTrack(c));
+  shAnim(c, [{ opacity: 1, transform: "translateY(0)" },
+             { opacity: 0, transform: "translateY(" + (dy || 0) + "px)" }], dur || 220);
+}
+
+function shOpen() {
+  var card = shCard();
+  if (!card) { shPlain(); return; }
+  var r = card.getBoundingClientRect(), rad = shRadius(card);
+  /* 矩形塌成 0（祖先被 display:none 藏掉）时，圆角补偿会除零，
+     Chrome 直接把那一帧判为非法整帧丢弃，转场会退化成硬切 —— 不如老老实实走淡入 */
+  if (!r.width || !r.height) { SH = null; shPlain(); return; }
+  card.style.opacity = "0";
+  shHold(function () { card.style.opacity = ""; });
+  shGhost(r, rad, true);
+  if (SH.tf) {
+    /* 入口 A：题型名飞进大标题；数量就地淡出，语义由进度条接替；
+       图标不单独处理——它就在卡片矩形上，幽灵一盖住就是"直接淡出" */
+    shFlyLabel(card.querySelector("b"), document.getElementById("qTitle"));
+    shRider(card.querySelector("i"));
+  } else {
+    /* 入口 B：题库名飞进副标题，大标题由 render() 填好的题型名自然浮出，不飞 */
+    shFlyLabel(card.querySelector(".bk-name"), document.getElementById("qSub"));
+    shRider(card.querySelector(".bk-pct"));
+    shRider(card.querySelector(".bk-sub"));
+    shRider(card.querySelector(".bk-acts"), 8);   /* 三个按钮整体下滑 8px 淡出 */
+  }
+  shAt(SH_IN, shLand);
+}
+
+/* 落位：幽灵铺满那一帧 #quiz 上位。两者此刻底色相同，所以关掉过渡直接换层看不出来。
+   大标题不淡入——飞行标签刚停在同一个位置，再淡一次就是闪。 */
+function shLand() {
+  var quiz = document.getElementById("quiz");
+  quiz.classList.add("snap", "on");
+  shAbort();
+  shContent();
+  shAt(SH_LAND + 300, function () { quiz.classList.remove("snap"); });
+}
+
+/* 没有起点卡片的入口（背题/错题本/收藏/交卷回看）：走 #quiz 自带的 180ms 淡入，同样不硬切 */
+function shPlain() {
+  document.getElementById("quiz").classList.add("on");
+  if (!shRM()) shContent();
+}
+
+function shUp(el, delay) {
+  if (el) shAnim(el, [{ opacity: 0, transform: "translateY(10px)" },
+                      { opacity: 1, transform: "translateY(0)" }], 180, delay);
+}
+
+function shContent() {
+  var quiz = document.getElementById("quiz");
+  shUp(quiz.querySelector(".track"), 40);
+  var bar = document.getElementById("qBar");
+  if (bar) {                                   /* 进度条从 0 长到当前进度 */
+    var w = bar.style.width;
+    bar.style.transition = "none";
+    bar.style.width = "0";
+    void bar.offsetWidth;
+    bar.style.transition = "";
+    bar.style.width = w;
+  }
+  shUp(quiz.querySelector(".stem-card"), 80);
+  var opts = quiz.querySelectorAll("#qbody .opt");
+  if (opts.length) {
+    for (var i = 0; i < opts.length; i++) shUp(opts[i], 120 + i * 40);   /* ABCD 错峰 40ms */
+  } else {
+    shUp(quiz.querySelector(".q-input"), 120);
+  }
+  shUp(quiz.querySelector(".q-foot"), 160);
+}
+
+/* 返回：内容先淡出让位，幽灵再从全屏缩回用户实际点的那张卡片，比进入略快 */
+function shClose() {
+  if (shRM() || !SH) return false;
+  var quiz = document.getElementById("quiz");
+  var card = shCard();
+  if (!card) { SH = null; return false; }
+  /* 还在飞就按了返回：这一趟压根没落地，撤干净停在列表就行 */
+  if (!quiz.classList.contains("on")) { SH = null; shAbort(); return true; }
+  var rad = shRadius(card);
+  shAnim(quiz, [{ opacity: 1 }, { opacity: 0 }], SH_OUT_FADE);
+  shAt(SH_OUT_FADE, function () {
+    quiz.classList.remove("on", "snap");
+    renderAll();
+    var c2 = shCard();
+    if (!c2) { SH = null; shAbort(); return; }
+    c2.style.opacity = "0";
+    shHold(function () { c2.style.opacity = ""; });
+    shGhost(c2.getBoundingClientRect(), rad, false);
+    shAt(SH_OUT, function () { SH = null; shAbort(); });
+  });
+  return true;
+}
+
+function startSession(mode, sid, tf, from) {
   var pool = subjQs(sid, tf === "exam" ? null : tf);
   if (mode === "wrong") {
     pool = pool.filter(inWrong);
@@ -811,7 +1045,11 @@ function startSession(mode, sid, tf) {
         started: Date.now(), dur: mode === "exam" ? examMin() * 60 : 0 };
   save();
   render();
-  document.getElementById("quiz").classList.add("on");
+  /* 上面任何一条数据检查不通过都会先 toast + return，幽灵压根不会创建，所以不存在残留 */
+  shAbort();
+  SH = (from && !shRM()) ? (from === "cat" ? { tf: tf } : { sid: sid }) : null;
+  if (SH && !shCard()) SH = null;
+  if (SH) shOpen(); else shPlain();
 }
 
 function q() { return byId[S.order[S.idx]]; }
@@ -840,8 +1078,10 @@ function exitQuiz() {
   /* 答题页左上角那个返回箭头也走这里，所以考试中必须同样拦一道，
      否则绕过返回键就能把计时丢在后台 */
   if (isExam() && !examDone()) { askExitExam(); return; }
-  document.getElementById("quiz").classList.remove("on");
   if (!isExam()) save();
+  if (shClose()) return;                       /* 有起点卡片：由它负责让位与 renderAll */
+  document.getElementById("quiz").classList.remove("on", "snap");
+  shAbort();
   renderAll();
 }
 
@@ -1550,8 +1790,8 @@ function toggleCats() {
   vibrate(10);
 }
 function catGo(tf) {
-  if (tf === "exam") { openExam("all"); return; }
-  startSession("practice", "all", tf);
+  if (tf === "exam") { openExam("all"); return; }   /* 模拟卷是另一套页面，不接本转场 */
+  startSession("practice", "all", tf, "cat");
 }
 
 /* 空题库时只留一张卡：标题说清楚「还没有题目」，副标题说清楚点进去做什么。
@@ -1654,13 +1894,13 @@ function renderBank() {
            '<div class="swipe-del" onclick="askDeleteBank(&quot;' + s.id + '&quot;)">删除</div>' +
            '<div class="card pad">' +
              '<div style="display:flex;align-items:center">' +
-               '<div style="flex:1"><b style="font-size:1rem">' + esc(s.name) + "</b>" +
-               "<em style='font-style:normal;display:block;font-size:.6875rem;color:var(--ink-3)'>" +
+               '<div style="flex:1"><b class="bk-name" style="font-size:1rem">' + esc(s.name) + "</b>" +
+               '<em class="bk-sub" style="font-style:normal;display:block;font-size:.6875rem;color:var(--ink-3)">' +
                t.total + " 题 · 已刷 " + t.seen + " · 错题 " + t.wrong + "</em></div>" +
-               '<div style="font-size:1.5rem;font-weight:800">' + t.rate + "%</div></div>" +
-             '<div style="display:flex;margin-top:16px">' +
+               '<div class="bk-pct" style="font-size:1.5rem;font-weight:800">' + t.rate + "%</div></div>" +
+             '<div class="bk-acts" style="display:flex;margin-top:16px">' +
                '<button style="flex:1;padding:12px 0;border-radius:16px;background:var(--ink);color:var(--paper);font-size:.8125rem;font-weight:700" ' +
-                 'onclick="startSession(&quot;practice&quot;,&quot;' + s.id + '&quot;,&quot;' + bankTf + '&quot;)">继续刷</button>' +
+                 'onclick="startSession(&quot;practice&quot;,&quot;' + s.id + '&quot;,&quot;' + bankTf + '&quot;,&quot;bank&quot;)">继续刷</button>' +
                '<button style="flex:1;margin-left:10px;padding:12px 0;border-radius:16px;background:var(--raise);box-shadow:var(--sh-sm);font-size:.8125rem;font-weight:600" ' +
                  'onclick="startSession(&quot;recite&quot;,&quot;' + s.id + '&quot;, &quot;' + bankTf + '&quot;)">背题</button>' +
                '<button style="flex:1;margin-left:10px;padding:12px 0;border-radius:16px;background:var(--raise);box-shadow:var(--sh-sm);font-size:.8125rem;font-weight:600" ' +
