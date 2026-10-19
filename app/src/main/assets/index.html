@@ -27,7 +27,7 @@ button:focus, input:focus { outline: none; }
   --sh-sm: -4px -4px 10px rgba(255,255,255,.85), 4px 4px 10px rgba(20,22,26,.06);
   /* 大圆角卡用的柔化投影：模糊半径必须远大于偏移，否则高光那圈圆角和卡片自己的
      圆角不同心，左上会露出第二层"方角"轮廓（--sh-sm 的 10px 糊不住 20px 的角） */
-  --sh-soft: -3px -3px 16px rgba(255,255,255,.7), 5px 8px 18px rgba(20,22,26,.055);
+  --sh-soft: -3px -3px 14px rgba(255,255,255,.6), 4px 6px 14px rgba(20,22,26,.045);
   --sink: inset -4px -4px 9px rgba(255,255,255,.8), inset 5px 5px 11px rgba(20,22,26,.08);
   --r-card: 26px;
   --r-in: 20px;
@@ -52,7 +52,11 @@ button:focus, input:focus { outline: none; }
   --line: #2C2F35;
   --sh: -8px -8px 18px rgba(255,255,255,.04), 8px 8px 22px rgba(0,0,0,.55);
   --sh-sm: -4px -4px 10px rgba(255,255,255,.035), 4px 4px 10px rgba(0,0,0,.45);
-  --sh-soft: -3px -3px 16px rgba(255,255,255,.022), 6px 10px 24px rgba(0,0,0,.42);
+  /* 大圆角卡用的柔化投影：模糊半径必须远大于偏移，否则高光那圈圆角和卡片自己的
+     圆角不同心，左上会露出第二层"方角"轮廓（--sh-sm 的 10px 糊不住 20px 的角）。
+     暗色这档特意收得比亮色狠：真机量过，6/10/24@.42 会把 10px 的网格间隙压暗 4.9 级
+     （间隙 19.1 vs 底色 24.0），收到 3/5/12@.24 只剩 2.1 级，悬浮感还在。 */
+  --sh-soft: -2px -2px 12px rgba(255,255,255,.018), 3px 5px 12px rgba(0,0,0,.24);
   --sink: inset -4px -4px 9px rgba(255,255,255,.03), inset 5px 5px 11px rgba(0,0,0,.5);
 }
 
@@ -807,7 +811,7 @@ function paperTitle() {
    圆角要按 X/Y 两轴分别除以当时的缩放：卡片和全屏的宽高比差得远，非等比缩放会把圆角拉成椭圆。
    Chrome 80 的 element.animate() 永远不触发 onfinish，所以时序全部用 setTimeout 串，
    并且每个动画都留引用，中断时 cancel 掉——否则 fill:"forwards" 会把终值钉在元素上。 */
-var SH_IN = 350, SH_FLY = 300, SH_LAND = 200, SH_OUT = 300, SH_OUT_FADE = 150;
+var SH_IN = 350, SH_FLY = 300, SH_LAND = 200, SH_OUT = 450, SH_OUT_FADE = 120;
 var SH_EASE = "cubic-bezier(0.16,1,0.3,1)";
 var SH = null, SH_nodes = [], SH_back = [], SH_anim = [], SH_timer = [];
 
@@ -815,7 +819,10 @@ function shRM() { return !!(window.matchMedia && matchMedia("(prefers-reduced-mo
 function shTok(n) { return getComputedStyle(document.documentElement).getPropertyValue(n).trim(); }
 function shAt(ms, fn) { SH_timer.push(setTimeout(fn, ms)); }
 function shAnim(el, frames, dur, delay) {
-  var a = el.animate(frames, { duration: dur, easing: SH_EASE, fill: "forwards", delay: delay || 0 });
+  /* fill 必须是 both：带 delay 的动画在等待期不套用起始帧，
+     只写 forwards 的话元素会先按 CSS 原样亮出来、再突然跳到 opacity:0 起步，
+     错峰越靠后闪得越明显——就是"卡片莫名抖一下"。 */
+  var a = el.animate(frames, { duration: dur, easing: SH_EASE, fill: "both", delay: delay || 0 });
   SH_anim.push(a);
   return a;
 }
@@ -880,13 +887,14 @@ function shGhost(r, rad, opening) {
   shAnim(g, kf, opening ? SH_IN : SH_OUT);
 }
 
-/* 文字飞进 .q-head：克隆体按"终点"的字体排版、摆在终点矩形，再用 transform 反推回起点，
-   缩放比 = 起点字号 / 终点字号，于是它出发时长得就跟原来一样大 */
+/* 文字飞进 .q-head：克隆体按"终点"排版摆在终点矩形，位置用 transform 平移回去，
+   字号则真的动画 font-size。
+   不用 scale 模拟字号变化：缩放是把文字按一个尺寸光栅化后再放大/缩小，逐帧取整会让
+   字形边界来回跳——矩形一动不动，看着却是"卡片在抖"。规格要的"字号渐变"本来也是这个意思。 */
 function shFlyLabel(src, dst) {
   if (!src || !dst) return;
   var a = src.getBoundingClientRect(), b = dst.getBoundingClientRect();
-  var cs = getComputedStyle(dst);
-  var k = (parseFloat(getComputedStyle(src).fontSize) || 16) / (parseFloat(cs.fontSize) || 16);
+  var cs = getComputedStyle(dst), ss = getComputedStyle(src);
   var el = document.createElement("div");
   el.className = "share-fly";
   el.textContent = src.textContent;
@@ -894,17 +902,15 @@ function shFlyLabel(src, dst) {
   el.style.top = b.top + "px";
   el.style.width = b.width + "px";
   el.style.fontFamily = cs.fontFamily;
-  el.style.fontSize = cs.fontSize;
   el.style.fontWeight = cs.fontWeight;
-  el.style.lineHeight = cs.lineHeight;
   el.style.color = cs.color;
   el.style.textAlign = cs.textAlign;
   document.body.appendChild(shTrack(el));
+  var dx = a.left + a.width / 2 - b.left - b.width / 2;
+  var dy = a.top + a.height / 2 - b.top - b.height / 2;
   shAnim(el, [
-    { transform: "translate(" + (a.left + a.width / 2 - b.left - b.width / 2) + "px,"
-                          + (a.top + a.height / 2 - b.top - b.height / 2) + "px) scale(" + k + ")",
-      opacity: 1 },
-    { transform: "translate(0,0) scale(1)", opacity: 1 }
+    { transform: "translate(" + dx + "px," + dy + "px)", fontSize: ss.fontSize, lineHeight: ss.lineHeight },
+    { transform: "translate(0,0)", fontSize: cs.fontSize, lineHeight: cs.lineHeight }
   ], SH_FLY);
 }
 
@@ -1003,18 +1009,23 @@ function shClose() {
   if (!card) { SH = null; return false; }
   /* 还在飞就按了返回：这一趟压根没落地，撤干净停在列表就行 */
   if (!quiz.classList.contains("on")) { SH = null; shAbort(); return true; }
-  var rad = shRadius(card);
+  var rad = shRadius(card), r = card.getBoundingClientRect();
+  if (!r.width || !r.height) { SH = null; return false; }
+  /* 幽灵在 t=0 就建好开始缩，内容淡出与它并行。原来先淡 150ms 再放手，
+     那 150ms 屏上什么都不动 —— 就是"退出后约 0.1 秒才看到缩回"。
+     幽灵夹在 #quiz 底下，淡出这一段正好把它盖住，不会提前露出缩小的矩形。 */
+  card.style.opacity = "0";
+  shHold(function () { card.style.opacity = ""; });
+  shGhost(r, rad, false);
   shAnim(quiz, [{ opacity: 1 }, { opacity: 0 }], SH_OUT_FADE);
   shAt(SH_OUT_FADE, function () {
     quiz.classList.remove("on", "snap");
     renderAll();
+    /* renderAll 会重建列表，新节点得再藏一次，否则它会隔着幽灵露出来 */
     var c2 = shCard();
-    if (!c2) { SH = null; shAbort(); return; }
-    c2.style.opacity = "0";
-    shHold(function () { c2.style.opacity = ""; });
-    shGhost(c2.getBoundingClientRect(), rad, false);
-    shAt(SH_OUT, function () { SH = null; shAbort(); });
+    if (c2) { c2.style.opacity = "0"; shHold(function () { c2.style.opacity = ""; }); }
   });
+  shAt(SH_OUT, function () { SH = null; shAbort(); });
   return true;
 }
 
@@ -1660,7 +1671,9 @@ function bootSplash() {
         if (d > last) last = d;
         bootAnims.push(els[m].animate([{ opacity: 0, transform: "translateY(16px)" },
                                        { opacity: 1, transform: "translateY(0)" }],
-                                      { duration: 300, delay: d, easing: BOUNCE, fill: "forwards" }));
+                                      /* both 不是笔误：这些元素 CSS 里本来就是可见的，
+                                         只写 forwards 的话 delay 期间会先亮出来再消失 */
+                                      { duration: 300, delay: d, easing: BOUNCE, fill: "both" }));
       }
     }
     setTimeout(function () {
