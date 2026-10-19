@@ -460,6 +460,8 @@ svg { display: block; }
 /* 老内核（Android WebView < 111）不支持 View Transitions：退化成自己裁一层快照，见 themedSnapshot */
 .reveal { position: fixed; top: 0; left: 0; right: 0; bottom: 0; z-index: 1200;
           pointer-events: none; overflow: hidden; background: var(--paper); color: var(--ink); }
+/* 换肤落定那一帧：掐掉所有元素自己的过渡，让真界面一次到位（原因见 setTheme 里 paint 的注释） */
+html.swap, html.swap * { transition: none !important; }
 /* 开关组联动：同组其他开关按距离错峰轻震 */
 @keyframes jig { 0%,100% { transform: translateX(0); } 25% { transform: translateX(-3px); }
                  50% { transform: translateX(3px); } 75% { transform: translateX(-2px); } }
@@ -2178,7 +2180,15 @@ function setTheme(next, x, y) {
   function paint() {
     if (my !== waveSeq || painted) return;
     painted = true;
+    /* 换色这一帧要掐掉元素自己的过渡。快照接着就要淡出，真界面如果还在 .2s 里往新色爬，
+       淡完露出来的是爬到一半的卡片——首页那六张分类卡闪深浅，栽的就是这一格
+       （.cat 上挂着 background/color .2s、box-shadow .24s，量到换色后 690→788ms 才爬到位）。
+       摘除放在两帧之后：rAF 回调跑在本帧样式计算之前，只等一帧等于什么都没掐住。 */
+    document.documentElement.classList.add("swap");
     applyTheme();
+    requestAnimationFrame(function () {
+      requestAnimationFrame(function () { document.documentElement.classList.remove("swap"); });
+    });
   }
   if (document.startViewTransition) {
     var st = document.documentElement.style;
