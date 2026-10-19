@@ -458,13 +458,7 @@ svg { display: block; }
 }
 /* 老内核（Android WebView < 111）没有 View Transitions：想在页面上裁出一个不断变大的圆，
    就得逐帧重绘一整层全屏快照。真机量过：420ms 的波里丢 6~9 帧，单帧最长 166ms，就是"明显的卡顿"。
-   改成让每个元素自己插值颜色：没有第二层、没有 clip，同一把尺下丢帧归零（33.3ms 封顶）。
-   只在换肤这一下挂上、动完就摘——常驻会让每个按钮的按压反馈慢 320ms。
-   不含 transform：滚动时的卡片堆叠、滑杆那些按位置写的 transform 一旦被接上过渡就会滞后。 */
-html.theming, html.theming * {
-  transition: background-color .32s linear, color .32s linear, border-color .32s linear, box-shadow .32s linear;
-}
-/* 触点荡开的环：给"变化是从开关这里出来的"留个方向感，只动 transform/opacity */
+   所以这里当场换色，只留一圈从触点荡开的环——环只动 transform/opacity，合成器包办，主线程零额外绘制。 */
 .wave { position: fixed; z-index: 1250; pointer-events: none; border-radius: 50%;
         border: 2px solid var(--ink-2); will-change: transform, opacity; }
 /* 开关组联动：同组其他开关按距离错峰轻震 */
@@ -2154,16 +2148,14 @@ function pointOf(ev) {
 }
 var waveSeq = 0, waveEl = null;
 /* 触点荡开的环：只写 transform/opacity，Chrome 80 也能整段交给合成器。
-   半径只取"触点到最远角"的六成——环走到那里已经淡干净了，没必要扫到角落；
-   层越小第一次光栅化越便宜，整屏那一档实测要多花一帧 50ms。 */
+   半径取触点到最远那个角的距离，所以 scale(1) 时这一圈刚好扫出屏幕外。 */
 function ripple(x, y, r) {
   if (waveEl) { waveEl.remove(); waveEl = null; }
-  var R = Math.round(r * .62);
   var g = document.createElement("div");
   g.className = "wave";
   g.setAttribute("aria-hidden", "true");
-  g.style.cssText = "left:" + x + "px;top:" + y + "px;width:" + 2 * R + "px;height:" + 2 * R +
-                    "px;margin:" + -R + "px 0 0 " + -R + "px";
+  g.style.cssText = "left:" + x + "px;top:" + y + "px;width:" + 2 * r + "px;height:" + 2 * r +
+                    "px;margin:" + -r + "px 0 0 " + -r + "px";
   document.body.appendChild(g);
   waveEl = g;
   if (!g.animate) { g.remove(); waveEl = null; return; }
@@ -2199,14 +2191,8 @@ function setTheme(next, x, y) {
     /* 兜底：某些 WebView 会把转场直接 skip，不能让配色卡在旧值上 */
     setTimeout(paint, 900);
   } else {
-    /* 过渡类要在翻配色之前挂上，这一帧的"起始色"才是旧主题。
-       摘除按本轮令牌走：连点两次时旧那一轮不许提前把第二轮的过渡拆掉。 */
-    document.documentElement.classList.add("theming");
     paint();
     ripple(x, y, r);
-    setTimeout(function () {
-      if (my === waveSeq) document.documentElement.classList.remove("theming");
-    }, 360);
   }
 }
 function onThemeTap(ev) {
