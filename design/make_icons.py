@@ -30,7 +30,6 @@ SWAP = (
     ('viewBox="0 0 24 24"', 'viewBox="0.6 1.1 23.6 23.6"'),
     ('stroke-width="1.5"', 'stroke-width="0.7"'),
     ('stroke="currentColor"', 'stroke="#401305"'),
-    ('fill="currentColor"', 'fill="#401305"'),
 )
 
 
