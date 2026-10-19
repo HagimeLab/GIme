@@ -18,6 +18,7 @@ import android.os.Bundle;
 import android.provider.OpenableColumns;
 import android.provider.Settings;
 import android.view.View;
+import android.view.ViewGroup;
 import android.view.Window;
 import android.view.WindowInsets;
 import android.view.WindowManager;
@@ -42,6 +43,21 @@ public class MainActivity extends Activity {
     private boolean pageReady;
     private boolean importing;
 
+    private static final String PREFS = "ui";
+    private static final String PREF_LIGHT = "light";
+
+    /**
+     * 关掉整棵子树的触摸反馈。setHapticFeedbackEnabled 不是继承属性，
+     * 而 Chrome 的内部视图是延迟挂上来的，所以 onCreate 里还要再 post 一次。
+     */
+    private static void killTouchHaptics(View v) {
+        v.setHapticFeedbackEnabled(false);
+        if (v instanceof ViewGroup) {
+            ViewGroup g = (ViewGroup) v;
+            for (int i = 0; i < g.getChildCount(); i++) killTouchHaptics(g.getChildAt(i));
+        }
+    }
+
     @Override
     protected void onCreate(Bundle saved) {
         super.onCreate(saved);
@@ -59,7 +75,19 @@ public class MainActivity extends Activity {
         s.setJavaScriptEnabled(true);
         s.setDomStorageEnabled(true);
         s.setTextZoom(100);
-        web.setBackgroundColor(0xFFEDEEF1);
+        /* 首帧之前 WebView 自己会刷一层底色。写死浅色等于深色主题用户每次冷启动
+           都先被闪一下浅纸底——启动页「不出现白屏」的要求在原生这一侧同样成立才算数。
+           上一次运行用的是哪套主题，themeHint 会存下来，这里照它取。 */
+        boolean lastLight = getSharedPreferences(PREFS, MODE_PRIVATE).getBoolean(PREF_LIGHT, true);
+        web.setBackgroundColor(lastLight ? 0xFFEDEEF1 : 0xFF17181B);
+        /* 「设置」里翻开关时那一下震动不是 App 发的：页面侧 navigator.vibrate 一次都没被调用，
+           它是框架替应用发的触摸反馈（dumpsys vibrator 里是 Usage=TOUCH / Virtual Key - Press）。
+           只能逐个 View 关掉，见 killTouchHaptics。 */
+        web.setHapticFeedbackEnabled(false);
+        killTouchHaptics(web);
+        web.post(new Runnable() {
+            @Override public void run() { killTouchHaptics(web); }
+        });
         web.addJavascriptInterface(new Bridge(), "Android");
         updater = new Updater(new Updater.Sink() {
             @Override public void toJs(String script) { js(script); }
@@ -314,6 +342,9 @@ public class MainActivity extends Activity {
         @JavascriptInterface
         public void themeHint(final boolean light) {
             applyBarAppearance(light);
+            /* 只多存一份：底色本身 applyBarAppearance 里已经在 UI 线程上设过了。
+               这份存的目的是下次冷启动——首帧之前 WebView 得知道用哪套纸色。 */
+            getSharedPreferences(PREFS, MODE_PRIVATE).edit().putBoolean(PREF_LIGHT, light).apply();
         }
 
         /** 当前版本号，页面拿来显示，也拿来和 Release 的 tag 比对。 */
