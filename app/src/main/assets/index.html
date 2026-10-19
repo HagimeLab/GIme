@@ -601,9 +601,10 @@ svg { display: block; }
 <!-- ============ 启动页 ============ -->
 <div id="splash">
   <div class="sp-logo" id="spLogo">
-    <!-- 应用图标「猫咪叼草」的黑白轮廓重描：24×24 网格、单线 currentColor。
-         左耳高尖、右耳缺口、两条横线眼、鼻尖一点、草从左下横过脸并在末端分叉；
-         底部按原图标留开口（两条颈线），不闭合成圆脸。 -->
+    <!-- 启动页 Logo 与应用图标是同一只猫（叼的那根草已去掉）；改完这里跑
+         design/make_icons.py 重出 mipmap-*/ic_launcher.png——别另存一份矢量、也别手改 PNG。
+         24×24 网格、单线 currentColor：左耳高尖、右耳缺口、两条横线眼、鼻尖一点；
+         底部留开口（两条颈线），不闭合成圆脸。 -->
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"
          stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
       <path d="M3.4 11.4c.8-4 2.8-7.4 5-9 1.9 1.4 3.6 3.4 4.4 5.2"/>
@@ -614,8 +615,6 @@ svg { display: block; }
       <path d="M7.6 19.6c-.6 1.6-.9 3-.8 3.8"/>
       <path d="M5.6 13.6h4.8"/>
       <path d="M14 13.6h4.6"/>
-      <path d="M1.4 22.2c3.8-2.4 7.6-4.4 10.6-5.8"/>
-      <path d="M2.8 21c-.7.5-1.2 1-1.4 1.2"/>
       <circle cx="12.6" cy="16.1" r=".7" fill="currentColor" stroke="none"/>
     </svg>
   </div>
