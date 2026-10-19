@@ -34,7 +34,8 @@ button:focus, input:focus { outline: none; }
   --ease: cubic-bezier(0.16, 1, 0.3, 1);
 }
 /* 系统栏高度是设备事实，不是主题色板的一部分，所以单独只挂在 :root 上。
-   写进上面那条规则的话，任何带 data-theme="light" 的非根元素都会顺手把 --sat/--sab 清零。 */
+   混进上面那条规则的话，带 data-theme="light" 的换肤快照会把 --sat/--sab 重置成 0，
+   快照内容比真界面高出一截，扩散时圆里圆外错开，看着就是界面在抖。 */
 :root {
   --sat: 0px;
   --sab: 0px;
@@ -456,11 +457,9 @@ svg { display: block; }
   from { clip-path: circle(0px at var(--vx, 50%) var(--vy, 50%)); }
   to   { clip-path: circle(var(--vr, 150%) at var(--vx, 50%) var(--vy, 50%)); }
 }
-/* 老内核（Android WebView < 111）没有 View Transitions：想在页面上裁出一个不断变大的圆，
-   就得逐帧重绘一整层全屏快照。真机量过：420ms 的波里丢 6~9 帧，单帧最长 166ms，就是"明显的卡顿"。
-   所以这里当场换色，只留一圈从触点荡开的环——环只动 transform/opacity，合成器包办，主线程零额外绘制。 */
-.wave { position: fixed; z-index: 1250; pointer-events: none; border-radius: 50%;
-        border: 2px solid var(--ink-2); will-change: transform, opacity; }
+/* 老内核（Android WebView < 111）不支持 View Transitions：退化成自己裁一层快照，见 themedSnapshot */
+.reveal { position: fixed; top: 0; left: 0; right: 0; bottom: 0; z-index: 1200;
+          pointer-events: none; overflow: hidden; background: var(--paper); color: var(--ink); }
 /* 开关组联动：同组其他开关按距离错峰轻震 */
 @keyframes jig { 0%,100% { transform: translateX(0); } 25% { transform: translateX(-3px); }
                  50% { transform: translateX(3px); } 75% { transform: translateX(-2px); } }
@@ -2062,7 +2061,7 @@ function renderMe() {
     "</div>";
 
   document.getElementById("meSet").innerHTML =
-    row("dark", set.theme === "dark" ? "深色模式" : "浅色模式", "从开关处扩散一圈换肤", true, set.theme === "dark") +
+    row("dark", set.theme === "dark" ? "深色模式" : "浅色模式", "从开关处圆形扩散换肤", true, set.theme === "dark") +
     row("haptics", "震动反馈", "答对短震、答错长震", true, set.haptics) +
     row("autoExp", "答完展开解析", "关闭后判分只给答案，解析自己点开", true, set.autoExp) +
     row("import", "导入题库", "PDF / Word / txt / md，带解析一起导", false) +
@@ -2146,25 +2145,24 @@ function pointOf(ev) {
   if (ev && ev.clientX) return { x: ev.clientX, y: ev.clientY };
   return { x: innerWidth / 2, y: 60 };
 }
-var waveSeq = 0, waveEl = null;
-/* 触点荡开的环：只写 transform/opacity，Chrome 80 也能整段交给合成器。
-   半径取触点到最远那个角的距离，所以 scale(1) 时这一圈刚好扫出屏幕外。 */
-function ripple(x, y, r) {
-  if (waveEl) { waveEl.remove(); waveEl = null; }
-  var g = document.createElement("div");
-  g.className = "wave";
-  g.setAttribute("aria-hidden", "true");
-  g.style.cssText = "left:" + x + "px;top:" + y + "px;width:" + 2 * r + "px;height:" + 2 * r +
-                    "px;margin:" + -r + "px 0 0 " + -r + "px";
-  document.body.appendChild(g);
-  waveEl = g;
-  if (!g.animate) { g.remove(); waveEl = null; return; }
-  g.animate([{ transform: "scale(.02)", opacity: .45 }, { transform: "scale(1)", opacity: 0 }],
-    { duration: 380, easing: "cubic-bezier(.4, 0, .2, 1)", fill: "forwards" });
-  /* Chrome 80 只把 playState 推到 finished、不派发 Animation.onfinish，收尾只能按时间走 */
-  setTimeout(function () {
-    if (waveEl === g) { g.remove(); waveEl = null; }
-  }, 440);
+var reveal = null, waveSeq = 0;
+/* 老内核没有 View Transitions，就自己造一份"换肤后的界面快照"：把当前 DOM 复制进一层容器，
+   容器挂上目标主题的变量。扩散波携带的是这份快照，圆扫过的地方看到的是新界面本身，
+   而不是一块把内容糊掉的纯色——上一版就是栽在这里。
+   代价先登记在案，别等下一轮又当新发现：真机 Chrome 80、停在「我的」页、暗↔亮各一次，
+   这条路径丢 6~9 帧、单帧最长 166.7ms；换成只动 transform/opacity 的动效可以一帧不丢。
+   保留它的理由是用户 2026-10-20 的裁定：不接受整页颜色插值（两套色板之间会路过一层发闷的灰）。 */
+function themedSnapshot(next) {
+  var l = document.createElement("div");
+  l.className = "reveal";
+  l.setAttribute("data-theme", next);
+  l.setAttribute("aria-hidden", "true");
+  var kids = document.body.children;
+  for (var i = 0; i < kids.length; i++) {
+    if (kids[i].tagName === "SCRIPT") continue;
+    l.appendChild(kids[i].cloneNode(true));
+  }
+  return l;
 }
 function setTheme(next, x, y) {
   if (next === set.theme) return;
@@ -2191,8 +2189,38 @@ function setTheme(next, x, y) {
     /* 兜底：某些 WebView 会把转场直接 skip，不能让配色卡在旧值上 */
     setTimeout(paint, 900);
   } else {
-    paint();
-    ripple(x, y, r);
+    /* 颜色由波携带着走：盖满整屏那一刻才真正换色，然后快照淡出露出真界面。 */
+    if (reveal) reveal.remove();
+    var o = themedSnapshot(next);            /* DOM 已是新状态：波里波外读到的标题一致 */
+    document.body.appendChild(o);
+    reveal = o;
+    o.scrollTop = window.pageYOffset || document.documentElement.scrollTop || 0;
+    var at = " at " + x + "px " + y + "px";
+    var WAVE = 420, FADE = 150;
+    if (o.animate) {
+      o.animate([{ clipPath: "circle(0px" + at + ")" }, { clipPath: "circle(" + r + "px" + at + ")" }],
+        { duration: WAVE, easing: "cubic-bezier(.4, 0, .2, 1)", fill: "forwards" });
+    } else {
+      o.style.clipPath = "circle(" + r + "px" + at + ")";
+    }
+    /* Chrome 80 只把 playState 推到 finished、不派发 Animation.onfinish，所以推进只能按时间走；
+       另加一道硬兜底，任何情况下都不允许快照层留在屏上糊住界面。 */
+    setTimeout(function () {
+      if (my !== waveSeq) return;
+      paint();                               /* 此刻整屏已被新界面盖住，换色看不见跳变 */
+      o.style.transition = "opacity " + FADE + "ms ease-out";
+      o.style.opacity = "0";
+      setTimeout(function () {
+        if (o.parentNode) o.remove();
+        if (reveal === o) reveal = null;
+      }, FADE + 60);
+    }, WAVE);
+    setTimeout(function () {
+      if (my !== waveSeq) { if (o.parentNode) o.remove(); return; }
+      paint();
+      if (o.parentNode) o.remove();
+      if (reveal === o) reveal = null;
+    }, 1400);
   }
 }
 function onThemeTap(ev) {
