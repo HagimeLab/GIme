@@ -26,6 +26,7 @@ import android.webkit.JavascriptInterface;
 import android.webkit.ValueCallback;
 import android.webkit.WebSettings;
 import android.webkit.WebView;
+import android.webkit.WebViewClient;
 
 /**
  * WebView 外壳 + 导入通道。
@@ -89,6 +90,11 @@ public class MainActivity extends Activity {
             @Override public void run() { killTouchHaptics(web); }
         });
         web.addJavascriptInterface(new Bridge(), "Android");
+        /* 这台 ROM 的 WebView 在没挂 WebViewClient 时，页面内导航会退化成
+           startActivity(file:///android_asset/index.html)，被 StrictMode 判成
+           FileUriExposed 直接崩掉进程（10-19 用 CDP 触发一次 location.reload() 就复现）。
+           页面里没有任何 <a href>，挂一个默认 client 只关这条崩溃路径，不改变现有行为。 */
+        web.setWebViewClient(new WebViewClient());
         updater = new Updater(new Updater.Sink() {
             @Override public void toJs(String script) { js(script); }
             @Override public Activity activity() { return MainActivity.this; }
