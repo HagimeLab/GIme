@@ -200,15 +200,18 @@ svg { display: block; }
          pointer-events: none; clip-path: circle(0px at 50% 50%); }
 
 /* ---------------- 答题页 ---------------- */
-/* 入场不再整页右滑（那是一刀硬切），改由共享元素幽灵铺满后淡出内容；
-   这里只留一个极短的不透明度过渡，给没有起点卡片的入口（背题/错题本/收藏）兜底，不硬切 */
+/* 答题页外壳改成 flex 列：只有 .q-body 滚，头部/进度条/操作条各占固定一格。
+   上一版把 .q-foot 做成 sticky 贴底，结果条子会把滚过来的选项从字中间切一半；
+   移出滚动区才是"主操作常驻可见"又不压内容的做法。
+   min-height:0 不能省——老 flexbox 里滚动项默认 min-height:auto，会被内容撑到无限高，滚动条直接失效。 */
 #quiz { position: fixed; top: 0; left: 0; right: 0; bottom: 0; z-index: 850;
-        background: var(--paper); overflow-y: auto;
+        background: var(--paper); display: flex; flex-direction: column;
         opacity: 0; visibility: hidden;
         transition: opacity .18s linear, visibility .18s linear; }
 #quiz.on { opacity: 1; visibility: visible; }
 /* 幽灵铺满的那一帧换层：底色同为 --paper，关掉过渡直接换才没有一帧空档 */
 #quiz.snap { transition: none; }
+.q-head, .track { flex: 0 0 auto; }
 .q-head { display: flex; align-items: center; padding: calc(var(--st) + 14px) 18px 6px; }
 .q-head .bk { flex: 0 0 46px; height: 42px; display: flex; align-items: center; }
 .q-head .ti { flex: 1; text-align: center; }
@@ -228,7 +231,8 @@ svg { display: block; }
 .track i { display: block; height: 100%; width: 0; background: var(--ink);
            transition: width .45s cubic-bezier(.34, 1.56, .64, 1); }   /* 超调后回弹 */
 
-.q-body { padding: 20px 22px 0; }
+.q-body { flex: 1 1 auto; min-height: 0; overflow-y: auto; -webkit-overflow-scrolling: touch;
+          padding: 20px 22px 22px; }
 .stem-card { padding: 22px; border-radius: var(--r-card); background: var(--raise); box-shadow: var(--sh); }
 .stem-card .tagrow { margin-bottom: 12px; }
 .tag { display: inline-block; padding: 4px 11px; border-radius: 999px; background: var(--surface);
@@ -307,7 +311,7 @@ svg { display: block; }
 .tools .ico { width: 17px; height: 17px; display: inline-block; vertical-align: -4px; margin-right: 6px; }
 .tools button.on { background: var(--ink); color: var(--paper); box-shadow: var(--sh-sm); }
 
-.q-foot { padding: 22px 22px calc(var(--sb) + 26px); }
+.q-foot { flex: 0 0 auto; padding: 22px 22px calc(var(--sb) + 26px); }
 .navrow { display: flex; width: 100%; }
 .navrow button { flex: 1; padding: 17px 0; border-radius: var(--r-in);
                  font-size: .9375rem; font-weight: 700; background: var(--raise); box-shadow: var(--sh-sm); }
@@ -3288,31 +3292,35 @@ function askDeleteBank(sid) {
 (function () {
   var sw = null;
   function cardOf(el) { return el && el.querySelector ? el.querySelector(".card") : null; }
+  /* 起点偏移记在 base 上，move 里只算不改：已打开的卡片要从 -92 往回算，
+     否则右滑的位移会被当成从 0 开始，收不回去（原来用 locked 直接禁掉，
+     结果就是删除区一旦打开，在这个页面里再也关不掉）。 */
   document.addEventListener("touchstart", function (e) {
     if (curTab !== "bank") { sw = null; return; }
     var t = e.touches[0];
     var host = e.target.closest ? e.target.closest(".swipe") : null;
-    sw = host ? { el: host, x0: t.clientX, y0: t.clientY, dx: 0, locked: host.classList.contains("open") } : null;
+    sw = host ? { el: host, x0: t.clientX, y0: t.clientY,
+                  base: host.classList.contains("open") ? -92 : 0, off: 0 } : null;
   }, { passive: true });
   document.addEventListener("touchmove", function (e) {
-    if (!sw || sw.locked) return;
+    if (!sw) return;
     var t = e.touches[0], dx = t.clientX - sw.x0, dy = t.clientY - sw.y0;
     if (Math.abs(dy) > Math.abs(dx)) { sw = null; return; }
     if (Math.abs(dx) < 8) return;
-    sw.dx = Math.max(-92, Math.min(0, dx));
+    sw.off = Math.max(-92, Math.min(0, sw.base + dx));
     var c = cardOf(sw.el);
     if (!c) return;
     c.style.transition = "none";
-    c.style.transform = "translateX(" + sw.dx + "px)";
+    c.style.transform = "translateX(" + sw.off + "px)";
   }, { passive: true });
   document.addEventListener("touchend", function () {
     if (!sw) return;
-    var el = sw.el, open = sw.dx < -40, c = cardOf(el);
+    var el = sw.el, open = sw.off < -40, c = cardOf(el);
     if (c) { c.style.transition = ""; c.style.transform = ""; }
     [].slice.call(document.querySelectorAll(".swipe.open")).forEach(function (o) {
       if (o !== el) o.classList.remove("open");
     });
-    if (!sw.locked) { if (open) el.classList.add("open"); else el.classList.remove("open"); }
+    if (open) el.classList.add("open"); else el.classList.remove("open");
     sw = null;
   });
   /* 被打断的横滑要把卡片弹回原位，否则它停在半开的位置上 */
