@@ -196,7 +196,13 @@ svg { display: block; }
 .sp-logo { width: 104px; height: 104px; border-radius: 50%; background: var(--raise);
            box-shadow: var(--sink); display: flex; align-items: center; justify-content: center;
            color: var(--ink); }
-.sp-logo svg { width: 62px; height: 62px; }
+/* 启动页这只猫是两张位图，一套主题一张；墨色不写死，由 design/make_icons.py 从上面的
+   --ink 令牌生成，改色板后重跑那个脚本即可。没走"一张图 + CSS mask 变色"：真机和桌面
+   headless 两边都量过，挂上 mask 之后整只猫被裁没了（headless 连一张已知正确的 alpha
+   圆点都画不出来），所以退回最笨但看得见的办法。 */
+.sp-cat { width: 62px; height: 62px; }
+.sp-cat-d, [data-theme="dark"] .sp-cat-l { display: none; }
+[data-theme="dark"] .sp-cat-d { display: block; }
 .sp-word { margin-top: 22px; font-size: 1.0625rem; font-weight: 800; letter-spacing: 1.6px;
            color: var(--ink); opacity: 0; }
 .sp-sub { margin-top: 7px; font-size: .75rem; letter-spacing: 2.5px; color: var(--ink-3); opacity: 0; }
@@ -628,21 +634,12 @@ html.swap, html.swap * { transition: none !important; }
 <!-- ============ 启动页 ============ -->
 <div id="splash">
   <div class="sp-logo" id="spLogo">
-    <!-- 启动页 Logo 与应用图标是同一只猫（草和鼻尖那个点都已去掉）；改完这里跑
-         design/make_icons.py 重出 mipmap-*/ic_launcher.png——别另存一份矢量、也别手改 PNG。
-         24×24 网格、单线 currentColor：左耳高尖、右耳缺口、两条横线眼；
-         底部留开口（两条颈线），不闭合成圆脸。 -->
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"
-         stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-      <path d="M3.4 11.4c.8-4 2.8-7.4 5-9 1.9 1.4 3.6 3.4 4.4 5.2"/>
-      <path d="M12.8 7.6c2.6-.4 5.4-1.4 7.2-2.8 1.6 2 1.9 5.2 1.4 7.8"/>
-      <path d="M21.4 12.6c-.2 3.6-1.8 6-4.2 7"/>
-      <path d="M3.4 11.4c-.5 4 1.2 7 4.2 8.2"/>
-      <path d="M17.2 19.6c.4 1.4.6 2.8.5 3.8"/>
-      <path d="M7.6 19.6c-.6 1.6-.9 3-.8 3.8"/>
-      <path d="M5.6 13.6h4.8"/>
-      <path d="M14 13.6h4.6"/>
-    </svg>
+    <!-- 启动页这只猫和应用图标同一只，同源于 design/cat-light.png / cat-dark.png
+         （一条线稿的黑墨、白墨两版，在仓库里）。改猫：换那两张原图 → 跑
+         python3 design/make_icons.py，它会重出 assets/cat-light.png、cat-dark.png
+         和各密度的 ic_launcher.png。别手改产物 PNG。 -->
+    <img class="sp-cat sp-cat-l" src="cat-light.png" alt="">
+    <img class="sp-cat sp-cat-d" src="cat-dark.png" alt="">
   </div>
   <div class="sp-word" id="spWord">GIme</div>
   <div class="sp-sub" id="spSub">刷好每一个题</div>
