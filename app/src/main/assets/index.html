@@ -545,6 +545,10 @@ html.swap, html.swap * { transition: none !important; }
               border-radius: var(--r-card); overflow: hidden; }
 .swipe-act { width: 92px; border: 0; background: var(--ink); color: var(--paper);
              font-family: inherit; font-size: .8125rem; font-weight: 700; }
+/* 两格之间的分隔线用文字色画，深浅主题下都靠对比度站住，不另配颜色 */
+.swipe-act + .swipe-act { position: relative; }
+.swipe-act + .swipe-act:before { content: ""; position: absolute; left: 0; top: 50%;
+  width: 1px; height: 22px; margin-top: -11px; background: currentColor; opacity: .22; }
 /* 面板实际多宽由里面几个按钮决定；JS 在 touchstart 时把 --swx 写成它的真实宽度，
    所以「删除」一格和「改名+删除」两格都能正好滑到位 */
 .swipe > .card, .swipe > .task { position: relative; z-index: 1; margin-bottom: 0; transition: transform .25s var(--ease); }
