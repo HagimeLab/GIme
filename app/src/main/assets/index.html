@@ -401,7 +401,7 @@ svg { display: block; }
               color: var(--ink-3); font-size: .8125rem; line-height: 1.7; }
 .msg { display: flex; align-items: flex-start; margin: 10px 0; gap: 8px; }
 .msg.me { justify-content: flex-end; }
-.msg .bubble { max-width: 76%; padding: 10px 13px; border-radius: 16px; font-size: .875rem; line-height: 1.65;
+.msg .bubble { max-width: 76%; padding: 10px 13px; border-radius: 16px; font-size: calc(.875rem * var(--chat-fs, 1)); line-height: 1.65;
                background: var(--raise); box-shadow: var(--sh-sm); word-break: break-word;
                -webkit-user-select: text; user-select: text; }
 .msg.ai .bubble { border-top-left-radius: 6px; }
@@ -413,7 +413,7 @@ svg { display: block; }
              align-items: flex-start; gap: 6px; }
 .msg .live .bubble { max-width: 100%; }
 .think { max-width: 100%; padding: 7px 11px; border-radius: 12px; background: var(--surface);
-         border: 1px solid var(--line); font-size: .75rem; line-height: 1.6; color: var(--ink-2); }
+         border: 1px solid var(--line); font-size: calc(.75rem * var(--chat-fs, 1)); line-height: 1.6; color: var(--ink-2); }
 /* 点击 summary 后 Android WebView 会留一圈默认橙色 focus 描边，难看，去掉了。
    可访问性不受影响：details 开合本身有箭头方向（▸/▾）提示。 */
 .think > summary { cursor: pointer; list-style: none; font-size: .6875rem; color: var(--ink-3);
@@ -689,6 +689,20 @@ html.swap, html.swap * { transition: none !important; }
 .ag-switch .ag-go { display: block; margin-top: 3px; font-size: .6875rem; color: var(--ink-2); }
 .ag-switch:active { box-shadow: var(--sh-sm); }
 .ag-ok { margin: 0 0 6px; font-size: .8125rem; font-weight: 700; color: var(--ok); }
+/* 对话字号：与上面的「接入方式切换」是两件事，用一根线明确隔开，避免被当成同一组开关 */
+.ag-sep { height: 1px; margin: 20px 0 18px; background: var(--line); }
+.ag-fs-h { display: flex; align-items: baseline; justify-content: space-between; margin: 0 0 10px; }
+.ag-fs-h b { font-size: .9375rem; }
+.ag-fs-v { font-size: .8125rem; color: var(--ink-3); }
+.ag-fs-row { display: flex; gap: 10px; }
+.ag-fs-b { flex: 1; padding: 12px 0; border: 0; border-radius: 14px; background: var(--surface);
+          box-shadow: var(--sink); font-family: inherit; font-size: .9375rem; font-weight: 700; color: var(--ink); }
+.ag-fs-b:active { box-shadow: none; }
+.ag-fs-b[disabled] { opacity: .35; }
+/* 实时预览：这里用的就是聊天气泡那套字号和行高，改完立刻能看到效果 */
+.ag-fs-demo { margin: 12px 0 0; padding: 10px 13px; border-radius: 14px; background: var(--raise);
+              box-shadow: var(--sh-sm); line-height: 1.65; color: var(--ink);
+              font-size: calc(.875rem * var(--chat-fs, 1)); }
 /* 格式举例正文：要能整段选中复制，所以不能靠默认的非可选中 */
 .sample-box { margin-top: 14px; padding: 18px; border-radius: var(--r-in); background: var(--surface);
               box-shadow: var(--sink); font-family: monospace; font-size: .8125rem; line-height: 1.8;
@@ -2375,6 +2389,7 @@ function cycleFont() {
 function applyTheme() {
   document.documentElement.setAttribute("data-theme", set.theme === "dark" ? "dark" : "light");
   document.documentElement.style.fontSize = (16 * set.fscale / 100) + "px";
+  applyChatFs();
   /* 状态栏/导航栏的图标深浅和窗口底色在原生层，换肤时要一起告诉它 */
   if (window.Android && Android.themeHint) { try { Android.themeHint(set.theme !== "dark"); } catch (e) {} }
 }
@@ -4290,6 +4305,44 @@ function dsLogoutNow() {
   chatRender();
   toast("已退出 DeepSeek 登录");
 }
+/* ---- 对话字号：只影响聊天区（气泡 + 思考链），不动 App 其它地方 ----
+   存的是一份百分比，默认 100。真正的字号用 CSS 变量 --chat-fs 乘在
+   原始的 rem 上，所以它还能叠加「我的 → 字号」那个全局缩放。 */
+var CHAT_FS_MIN = 80, CHAT_FS_MAX = 150, CHAT_FS_STEP = 10;
+function chatFs() {
+  var v = parseInt(set.chatFs, 10);
+  if (!isFinite(v)) v = 100;
+  v = Math.round(v / CHAT_FS_STEP) * CHAT_FS_STEP;
+  return Math.min(CHAT_FS_MAX, Math.max(CHAT_FS_MIN, v));
+}
+function applyChatFs() {
+  document.documentElement.style.setProperty("--chat-fs", chatFs() / 100);
+}
+/* 面板里 +/- 一下就能看到效果，不关面板、不重绘整个聊天区 */
+function chatFsStep(d) {
+  set.chatFs = Math.min(CHAT_FS_MAX, Math.max(CHAT_FS_MIN, chatFs() + d));
+  save();
+  applyChatFs();
+  var v = document.getElementById("agFsVal");
+  if (v) v.textContent = chatFs() + "%";
+  var lo = document.getElementById("agFsLo"), hi = document.getElementById("agFsHi");
+  if (lo) lo.disabled = chatFs() <= CHAT_FS_MIN;
+  if (hi) hi.disabled = chatFs() >= CHAT_FS_MAX;
+}
+function agFontHtml() {
+  var v = chatFs();
+  return '<div class="ag-sep"></div>' +
+    '<div class="ag-fs">' +
+      '<div class="ag-fs-h"><b>对话字号</b><span class="ag-fs-v" id="agFsVal">' + v + '%</span></div>' +
+      '<div class="ag-fs-row">' +
+        '<button class="ag-fs-b" id="agFsLo" onclick="chatFsStep(-' + CHAT_FS_STEP + ')"' +
+          (v <= CHAT_FS_MIN ? ' disabled' : '') + '>A−</button>' +
+        '<button class="ag-fs-b" id="agFsHi" onclick="chatFsStep(' + CHAT_FS_STEP + ')"' +
+          (v >= CHAT_FS_MAX ? ' disabled' : '') + '>A＋</button>' +
+      '</div>' +
+      '<div class="ag-fs-demo">这条消息就按现在的字号显示。</div>' +
+    '</div>';
+}
 /* 顶部的切换按钮：第一行是「现在」，第二行是「点下去会变成什么」。 */
 function agSwitchHtml() {
   var login = agentMode() === "login";
@@ -4311,7 +4364,8 @@ function openAgentCfg() {
         : '<div class="sl-hint" style="margin:0 0 10px">还没登录。用手机号登录一次，之后就能直接用，不需要 API Key。</div>' +
           '<button class="sheet-act" style="margin:0" onclick="dsLoginNow()">用手机号登录 DeepSeek</button>';
     sh.innerHTML = head + line +
-      '<div class="sl-hint" style="margin:18px 0 0">登录态只存在本机。换设备或过期后，重新登录一次即可。</div>';
+      '<div class="sl-hint" style="margin:18px 0 0">登录态只存在本机。换设备或过期后，重新登录一次即可。</div>' +
+      agFontHtml();
   } else {
     sh.innerHTML = head +
       '<div class="sl-hint" style="margin:0 0 10px">填任何 OpenAI 兼容接口，Key 只存在本机。</div>' +
@@ -4322,7 +4376,8 @@ function openAgentCfg() {
       '<div class="sl-hint" style="margin:14px 0 4px">API Key</div>' +
       '<input class="rn-box" id="agKey" type="password" value="' + esc(a.key || "") + '" placeholder="sk-...">' +
       '<button class="sheet-act" style="margin-top:18px" onclick="agentCfgSave()">保存</button>' +
-      '<div class="sl-hint" style="margin:16px 0 0">按标准 /chat/completions 调，Key 不会离开这台手机。</div>';
+      '<div class="sl-hint" style="margin:16px 0 0">按标准 /chat/completions 调，Key 不会离开这台手机。</div>' +
+      agFontHtml();
   }
   openLayer(sh);
 }

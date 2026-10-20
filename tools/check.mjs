@@ -41,7 +41,10 @@ try {
 /* ---------- 最小 DOM 桩 ---------- */
 function makeElement(id) {
   const cls = new Set();
-  const style = new Proxy({}, { get: (t, k) => t[k] ?? "", set: (t, k, v) => { t[k] = v; return true; } });
+  /* CSSStyleDeclaration 的两个口子：点属性（style.fontSize）和 setProperty（自定义属性 --x）。
+     页面靠 setProperty 传 --chat-fs，桩里缺这个就等于这行代码没被测到。 */
+  const style = new Proxy({ setProperty: (k, v) => { style[k] = String(v); } },
+    { get: (t, k) => t[k] ?? "", set: (t, k, v) => { t[k] = v; return true; } });
   const el = {
     id, style, innerHTML: "", textContent: "", value: "", disabled: false, onclick: null,
     offsetWidth: 0, offsetHeight: 0, scrollHeight: 0, children: [],
@@ -773,19 +776,19 @@ W.Android = {
   importSample: () => sampleSrc,
   saveImportSample: () => { dlCalls++; return "系统「下载」目录里的 GIme导入格式举例.md"; }
 };
-const fsHtml = () => String(W.document.getElementById("fs").innerHTML);
+const fsPanel = () => String(W.document.getElementById("fs").innerHTML);
 const PRE_OPEN = '<pre class="sample-box">';
 const preBody = (h) => {
   const a = h.indexOf(PRE_OPEN), b = h.indexOf("</pre>");
   return a < 0 || b < 0 ? null : h.slice(a + PRE_OPEN.length, b);
 };
 W.openFS("sample");
-ok("查看页标题是「导入格式举例」", fsHtml().indexOf("导入格式举例") >= 0);
-const viewed = preBody(fsHtml());
+ok("查看页标题是「导入格式举例」", fsPanel().indexOf("导入格式举例") >= 0);
+const viewed = preBody(fsPanel());
 ok("查看页给的是完整举例，不是截断摘要",
    viewed !== null && viewed.indexOf("第1题") >= 0 && viewed.indexOf(String(sampleSrc).trim().split("\n").pop()) >= 0,
    viewed === null ? "没有 sample-box 区块" : "少了结尾那题");
-ok("查看页里也能直接下载", fsHtml().indexOf("saveSample()") >= 0);
+ok("查看页里也能直接下载", fsPanel().indexOf("saveSample()") >= 0);
 W.saveSample();
 ok("下载走原生桥且把存放位置说清楚",
    dlCalls === 1 && toastTx().indexOf("系统「下载」目录") >= 0, dlCalls + "/" + toastTx());
@@ -799,13 +802,13 @@ ok("提示条压在全部浮层之上（举例页里点下载能看见反馈）"
 W.Android = { importSample: () => "第1题\n题目：<script>alert(1)</script>\n答案：A" };
 W.openFS("sample");
 ok("举例正文按文本展示，不会被当成 HTML 执行",
-   fsHtml().indexOf("<script>alert(1)</script>") < 0 && fsHtml().indexOf("&lt;script&gt;") >= 0,
-   String(preBody(fsHtml())));
+   fsPanel().indexOf("<script>alert(1)</script>") < 0 && fsPanel().indexOf("&lt;script&gt;") >= 0,
+   String(preBody(fsPanel())));
 W.closeTop();
 
 delete W.Android;
 W.openFS("sample");
-const noBridge = fsHtml();
+const noBridge = fsPanel();
 ok("读不到举例时给可照抄的写法，而不是仓库路径",
    noBridge.indexOf("docs/") < 0 && noBridge.indexOf("导入指南") < 0 && noBridge.indexOf("题号") >= 0,
    noBridge.slice(0, 200));
@@ -1346,9 +1349,92 @@ ok("保存后进入 Key 模式", W.agentMode() === "key" && W.set.agent.mode ===
    W.set.agent.mode);
 ok("保存时地址去掉尾斜杠", W.set.agent.base === "https://api.example.com/v2", W.set.agent.base);
 
+/* ---------- [20] 对话字号 ---------- */
+section("[20] 对话字号");
+
+/* CSS 层：气泡和思考链吃同一个变量，否则调了字号只有正文变、思维链不变 */
+ok("气泡字号用 --chat-fs 变量", /\.msg \.bubble \{[^}]*font-size: calc\(\.875rem \* var\(--chat-fs/.test(html));
+ok("思维链字号也跟随变量", /\.think \{[^}]*font-size: calc\(\.75rem \* var\(--chat-fs/.test(html));
+ok("输入框字号不跟着变（只调对话正文）",
+   !/\.chat-in textarea \{[^}]*--chat-fs/.test(html));
+ok("字号面板有独立分隔线", html.indexOf(".ag-sep {") >= 0);
+
+/* 默认值与边界 */
+delete W.set.chatFs;
+ok("没配过默认 100%", W.chatFs() === 100);
+W.set.chatFs = 110;
+ok("读回已存的字号", W.chatFs() === 110);
+W.set.chatFs = "abc";
+ok("脏值回落到 100%", W.chatFs() === 100);
+W.set.chatFs = 0;
+ok("过小的值被夹到下限", W.chatFs() === 80);
+W.set.chatFs = 999;
+ok("过大的值被夹到上限", W.chatFs() === 150);
+W.set.chatFs = 114;
+ok("非整十的值对齐到十位", W.chatFs() === 110, String(W.chatFs()));
+
+/* 加减会立刻改文档级变量，并且落盘 */
+W.set.chatFs = 100;
+W.applyChatFs();
+ok("CSS 变量按百分比换算成倍数",
+   String(W.document.documentElement.style["--chat-fs"]) === "1", 
+   String(W.document.documentElement.style["--chat-fs"]));
+W.chatFsStep(10);
+ok("点 A＋ 加一档", W.chatFs() === 110);
+ok("加一档后变量跟着变", String(W.document.documentElement.style["--chat-fs"]) === "1.1",
+   String(W.document.documentElement.style["--chat-fs"]));
+const fsSaved = JSON.parse(sandbox.localStorage.getItem("stk.settings.v2") || "{}");
+ok("字号写进了设置", fsSaved.chatFs === 110, String(fsSaved.chatFs));
+W.chatFsStep(-10);
+ok("点 A− 减一档", W.chatFs() === 100);
+
+/* 上下限：到顶就把按钮禁掉，别让用户一直点没反应 */
+W.set.chatFs = 150;
+W.openAgentCfg();
+let agPanel = String(W.document.getElementById("sheet3").innerHTML);
+ok("到上限时 A＋ 置灰", /id="agFsHi"[^>]*disabled/.test(agPanel));
+ok("到上限时 A− 可点", !/id="agFsLo"[^>]*disabled/.test(agPanel));
+ok("面板显示当前百分比", agPanel.indexOf("150%") >= 0);
+while (W.openLayers.length) W.closeTop();
+W.set.chatFs = 80;
+W.openAgentCfg();
+agPanel = String(W.document.getElementById("sheet3").innerHTML);
+ok("到下限时 A− 置灰", /id="agFsLo"[^>]*disabled/.test(agPanel));
+ok("到下限时 A＋ 可点", !/id="agFsHi"[^>]*disabled/.test(agPanel));
+ok("面板显示当前百分比（下限）", agPanel.indexOf("80%") >= 0);
+
+/* 它跟「接入方式切换」是两件事：有分隔线，且落在切换按钮之后 */
+const fsPos = agPanel.indexOf('class="ag-sep"');
+const swPos = agPanel.indexOf("agSwitchMode()");
+ok("分隔线在切换按钮之后", swPos >= 0 && fsPos > swPos, "sw=" + swPos + " sep=" + fsPos);
+ok("字号区不触发切换", agPanel.indexOf("chatFsStep(") >= 0);
+while (W.openLayers.length) W.closeTop();
+
+/* 两种接入方式下都要有字号入口（用户在哪一侧都该能调） */
+W.Android = { dsStatus: () => JSON.stringify({ loggedIn: true, mobile: "199******41" }) };
+W.set.agent = { base: "builtin://deepseek", model: "deepseek-web", key: "", mode: "login" };
+W.openAgentCfg();
+ok("登录模式也有字号", String(W.document.getElementById("sheet3").innerHTML).indexOf('id="agFsVal"') >= 0);
+while (W.openLayers.length) W.closeTop();
+W.set.agent = { base: "https://api.example.com/v1", model: "m1", key: "sk-test", mode: "key" };
+W.openAgentCfg();
+ok("Key 模式也有字号", String(W.document.getElementById("sheet3").innerHTML).indexOf('id="agFsVal"') >= 0);
+while (W.openLayers.length) W.closeTop();
+
+/* 动字号不能顺手把接入方式或消息改掉 */
+W.set.chatFs = 130;
+W.applyChatFs();
+ok("改字号不动接入方式", W.agentMode() === "key" && W.set.agent.key === "sk-test");
+ok("改字号不丢聊天记录",
+   sandbox.localStorage.getItem("stk.chat.v1") === null
+   || typeof sandbox.localStorage.getItem("stk.chat.v1") === "string");
+W.set.chatFs = 100;
+W.applyChatFs();
+
 /* 清理：不留 API Key / 会话 / 改写过的解析 */
 delete W.Android;
 delete W.set.agent;
+delete W.set.chatFs;
 W.chatMsgs = [];
 W.chatWait = {};
 W.chatLastId = "";
