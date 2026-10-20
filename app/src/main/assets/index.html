@@ -23,6 +23,8 @@ button:focus, input:focus { outline: none; }
   --ink-2: #6B7078;
   --ink-3: #A2A7AF;
   --line: #E1E3E8;
+  /* 「已登录」这类成功态文字用。暗色下要提亮，否则在深底上读不出来 */
+  --ok: #1F8A4C;
   --sh: -8px -8px 18px rgba(255,255,255,.9), 8px 8px 20px rgba(20,22,26,.07);
   --sh-sm: -4px -4px 10px rgba(255,255,255,.85), 4px 4px 10px rgba(20,22,26,.06);
   /* 大圆角卡用的柔化投影：模糊半径必须远大于偏移，否则高光那圈圆角和卡片自己的
@@ -50,6 +52,7 @@ button:focus, input:focus { outline: none; }
   --ink-2: #9BA1A9;
   --ink-3: #6A6F77;
   --line: #2C2F35;
+  --ok: #4ECB82;
   --sh: -8px -8px 18px rgba(255,255,255,.04), 8px 8px 22px rgba(0,0,0,.55);
   --sh-sm: -4px -4px 10px rgba(255,255,255,.035), 4px 4px 10px rgba(0,0,0,.45);
   /* 大圆角卡用的柔化投影：模糊半径必须远大于偏移，否则高光那圈圆角和卡片自己的
@@ -177,6 +180,17 @@ svg { display: block; }
 .tab span { display: block; font-size: .625rem; font-weight: 600; letter-spacing: .3px; }
 .tab.on { color: var(--ink); }
 .tab.on .ico { stroke-width: 2.2; }
+/* 中间那颗大肥鱼：和答题页用的是同一套线稿头像（agent-light/dark.png）。
+   它不是第五个页面，只是「打开对话」的入口，所以永远没有 .on，也不参与胶囊的选中态。 */
+.tab.ask-tab { flex: 0 0 46px; padding: 0; }
+.tab.ask-tab .ask-fish { width: 34px; height: 34px; margin: 0 auto; position: relative; }
+.tab.ask-tab .ask-fish img { width: 100%; height: 100%; object-fit: contain; display: none; }
+.tab.ask-tab .ask-fish .ag-l { display: block; }
+[data-theme="dark"] .tab.ask-tab .ask-fish .ag-l { display: none; }
+[data-theme="dark"] .tab.ask-tab .ask-fish .ag-d { display: block; }
+.tab.ask-tab .ask-dot { display: none; position: absolute; top: -1px; right: 0; width: 9px; height: 9px;
+                        border-radius: 50%; background: #E5484D; border: 2px solid var(--raise); }
+.tab.ask-tab.unread .ask-dot { display: block; }
 /* 选中态不再只是换字色：一枚按下去的凹槽在四个按钮之间流动。
    .tabs 是 fixed，它就是胶囊的包含块（无边框，所以按钮的 offsetLeft/Top 可直接当 left/top 用）；
    按钮要压在凹槽之上，所以按钮 z-index:1、胶囊 0。底色与阴影全部沿用主题令牌，不引入彩色。 */
@@ -242,7 +256,7 @@ svg { display: block; }
            transition: width .45s cubic-bezier(.34, 1.56, .64, 1); }   /* 超调后回弹 */
 
 .q-body { flex: 1 1 auto; min-height: 0; overflow-y: auto; -webkit-overflow-scrolling: touch;
-          padding: 20px 22px 22px; }
+          padding: 20px 22px calc(var(--sb) + 130px); }
 .stem-card { padding: 22px; border-radius: var(--r-card); background: var(--raise); box-shadow: var(--sh); }
 .stem-card .tagrow { margin-bottom: 12px; }
 .tag { display: inline-block; padding: 4px 11px; border-radius: 999px; background: var(--surface);
@@ -326,15 +340,105 @@ svg { display: block; }
 .tools .ico { width: 17px; height: 17px; display: inline-block; vertical-align: -4px; margin-right: 6px; }
 .tools button.on { background: var(--ink); color: var(--paper); box-shadow: var(--sh-sm); }
 
-.q-foot { flex: 0 0 auto; padding: 22px 22px calc(var(--sb) + 26px); }
-.navrow { display: flex; width: 100%; }
-.navrow button { flex: 1; padding: 17px 0; border-radius: var(--r-in);
-                 font-size: .9375rem; font-weight: 700; background: var(--raise); box-shadow: var(--sh-sm); }
+/* 悬浮操作条：不再占底部一整格，整块浮在题目上方；按钮、鱼和两行小字一起缩小 */
+.q-foot { position: absolute; left: 22px; right: 22px; bottom: calc(var(--sb) + 14px);
+          z-index: 6; padding: 8px 10px 10px; border-radius: 26px;
+          background: var(--paper); box-shadow: var(--sh); }
+.navrow { display: flex; align-items: center; width: 100%; }
+.navrow button { flex: 1; padding: 10px 0; border-radius: 999px;
+                 font-size: .875rem; font-weight: 700; background: var(--raise); box-shadow: var(--sh-sm); }
 .navrow button:active { box-shadow: var(--sink); }
-.navrow button + button { margin-left: 13px; }
+.navrow button + button { margin-left: 8px; }
 .navrow .main { background: var(--ink); color: var(--paper); }
 .navrow button[disabled] { opacity: .35; }
-.pill { margin-top: 16px; text-align: center; font-size: .6875rem; color: var(--ink-3); letter-spacing: .5px; }
+/* 答题页中间那颗「问大肥鱼」头像：和上/下题按钮同一排；方形、无底色，线稿直接落在页面上 */
+.navrow .ask { flex: 0 0 42px; padding: 0; border-radius: 14px; position: relative;
+               background: transparent; box-shadow: none; overflow: visible; }
+.navrow .ask img { width: 100%; height: 100%; object-fit: contain; display: none; }
+.navrow .ask .ag-l { display: block; }
+/* 深色：背景仍是深色（透明，露出页面），鱼本身换成白色线稿 */
+[data-theme="dark"] .navrow .ask .ag-l { display: none; }
+[data-theme="dark"] .navrow .ask .ag-d { display: block; }
+.navrow .ask .ask-dot { display: none; position: absolute; top: 1px; right: 1px; width: 9px; height: 9px;
+                        border-radius: 50%; background: #E5484D; border: 2px solid var(--paper); }
+.navrow .ask.unread .ask-dot { display: block; }
+/* 大肥鱼头像：浅色用图二、深色用图三 */
+.ava { flex: 0 0 30px; width: 30px; height: 30px; border-radius: 50%; overflow: hidden;
+       background: var(--raise); box-shadow: var(--sh-sm); }
+.ava img { width: 100%; height: 100%; object-fit: cover; display: none; }
+.ava .ag-l { display: block; }
+[data-theme="dark"] .ava .ag-l { display: none; }
+[data-theme="dark"] .ava .ag-d { display: block; }
+/* 大肥鱼对话：从底部上滑，消息区自己滚，输入条常驻 */
+.sheet.chat { height: 74vh; max-height: 74vh; overflow: hidden; display: flex; flex-direction: column;
+              padding: 0 18px calc(var(--sb) + 10px); z-index: 990; }
+.chat-head { display: flex; align-items: center; gap: 10px; padding: 4px 0 10px; }
+.chat-head .ava { width: 34px; height: 34px; flex-basis: 34px;
+                  background: transparent; box-shadow: none; }
+.chat-head b { flex: 1; font-size: 1rem; }
+.chat-head .chat-cfg { padding: 6px 10px; border-radius: 12px; background: var(--surface);
+                       box-shadow: var(--sink); font-size: .75rem; color: var(--ink-2); }
+/* 图标按钮（新建 / 历史）：比「设置」再窄一点，只放一颗线稿图标 */
+.chat-head .chat-cfg.chat-ico { padding: 6px 8px; display: inline-flex; align-items: center; }
+.chat-head .chat-cfg.chat-ico .ico { width: 16px; height: 16px; margin: 0; stroke: currentColor;
+                                     fill: none; stroke-width: 2; stroke-linecap: round; }
+/* 历史会话列表：一行一个会话，右侧垃圾桶单独一颗按钮 */
+.conv-list { margin: 4px 0 8px; }
+.conv-row { display: flex; align-items: stretch; gap: 8px; margin: 8px 0; }
+.conv-row.on .conv-main { box-shadow: inset 0 0 0 2px var(--ink-3); }
+.conv-main { flex: 1; min-width: 0; text-align: left; padding: 12px 14px; border-radius: var(--r-in);
+             background: var(--surface); box-shadow: var(--sink); }
+.conv-main b { display: block; font-size: .875rem; font-weight: 600; color: var(--ink);
+               overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.conv-main small { display: block; margin-top: 3px; font-size: .6875rem; color: var(--ink-3); }
+.conv-del { flex: 0 0 44px; display: flex; align-items: center; justify-content: center;
+            border-radius: var(--r-in); background: var(--surface); box-shadow: var(--sink);
+            color: var(--ink-3); }
+.conv-del .ico { width: 17px; height: 17px; stroke: currentColor; fill: none;
+                 stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+.chat-list { flex: 1; overflow-y: auto; -webkit-overflow-scrolling: touch; padding: 4px 0 8px; }
+.chat-empty { margin: 18px 6px; padding: 16px; border-radius: var(--r-in); border: 1.5px dashed var(--ink-3);
+              color: var(--ink-3); font-size: .8125rem; line-height: 1.7; }
+.msg { display: flex; align-items: flex-start; margin: 10px 0; gap: 8px; }
+.msg.me { justify-content: flex-end; }
+.msg .bubble { max-width: 76%; padding: 10px 13px; border-radius: 16px; font-size: .875rem; line-height: 1.65;
+               background: var(--raise); box-shadow: var(--sh-sm); word-break: break-word;
+               -webkit-user-select: text; user-select: text; }
+.msg.ai .bubble { border-top-left-radius: 6px; }
+.msg.me .bubble { background: var(--ink); color: var(--paper); border-top-right-radius: 6px; }
+.msg .ava { width: 28px; height: 28px; flex-basis: 28px; margin-top: 2px; }
+.msg .bubble.typing { color: var(--ink-3); }
+/* 流式回答：思考链在上、正文在下，同一个气泡列里长出来 */
+.msg .live { flex: 1; min-width: 0; max-width: 78%; display: flex; flex-direction: column;
+             align-items: flex-start; gap: 6px; }
+.msg .live .bubble { max-width: 100%; }
+.think { max-width: 100%; padding: 7px 11px; border-radius: 12px; background: var(--surface);
+         border: 1px solid var(--line); font-size: .75rem; line-height: 1.6; color: var(--ink-2); }
+/* 点击 summary 后 Android WebView 会留一圈默认橙色 focus 描边，难看，去掉了。
+   可访问性不受影响：details 开合本身有箭头方向（▸/▾）提示。 */
+.think > summary { cursor: pointer; list-style: none; font-size: .6875rem; color: var(--ink-3);
+                   letter-spacing: .3px; outline: none; -webkit-tap-highlight-color: transparent; }
+.think > summary:focus, .think > summary:focus-visible { outline: none; }
+.think:focus, .think:focus-within { outline: none; }
+.think > summary::-webkit-details-marker { display: none; }
+.think > summary::before { content: "▸ "; }
+.think[open] > summary::before { content: "▾ "; }
+.think-body { margin-top: 6px; max-height: 190px; overflow-y: auto; white-space: pre-wrap;
+              word-break: break-word; }
+.chat-note { margin: 8px 4px; text-align: center; font-size: .6875rem; color: var(--ink-3); }
+.chat-hint { font-size: .6875rem; color: var(--ink-3); padding: 2px 2px 8px; line-height: 1.5; }
+.chat-in { display: flex; align-items: flex-end; gap: 10px; padding-top: 6px; }
+.chat-in textarea { flex: 1; min-height: 44px; max-height: 96px; resize: none; padding: 12px 14px;
+                    border-radius: 16px; border: 1.5px solid var(--line); background: var(--raise);
+                    font-family: inherit; font-size: .875rem; color: var(--ink); line-height: 1.4; }
+.chat-in textarea:focus { border-color: var(--ink-3); outline: none; }
+.chat-send { flex: 0 0 64px; padding: 12px 0; border-radius: 16px; background: var(--ink); color: var(--paper);
+             font-size: .8125rem; font-weight: 700; box-shadow: var(--sh-sm); }
+.chat-send[disabled] { opacity: .4; }
+/* 忙的时候这颗变成「停止」：换个低调的描边样式，避免被当成主操作误点 */
+.chat-send.stop { background: var(--surface); color: var(--ink); box-shadow: var(--sink); }
+.pill { margin-top: 8px; text-align: center; font-size: .625rem; color: var(--ink-3); letter-spacing: .5px; }
+.ask-hint { margin-top: 8px; text-align: center; font-size: .625rem; color: var(--ink-3); line-height: 1.4; }
 
 /* ---------------- 遮罩 / 底部弹层 / 居中弹窗 / Toast ---------------- */
 .overlay { position: fixed; top: 0; left: 0; right: 0; bottom: 0; z-index: 900;
@@ -576,6 +680,15 @@ html.swap, html.swap * { transition: none !important; }
               background: var(--surface); color: var(--ink); box-shadow: var(--sink);
               font-family: inherit; font-size: .875rem; font-weight: 600; }
 .sheet-act2:first-child { margin-left: 0; }
+/* 接入方式切换：一个按钮同时说清「现在用的是什么」和「点下去会换成什么」，
+   两行字而不是两套配置并排，免得用户以为要同时填登录和 Key */
+.ag-switch { display: block; width: 100%; margin: 0 0 16px; padding: 13px 16px; border: 0;
+             border-radius: var(--r-in); background: var(--surface); box-shadow: var(--sink);
+             font-family: inherit; text-align: left; }
+.ag-switch .ag-now { display: block; font-size: .875rem; font-weight: 700; color: var(--ink); }
+.ag-switch .ag-go { display: block; margin-top: 3px; font-size: .6875rem; color: var(--ink-2); }
+.ag-switch:active { box-shadow: var(--sh-sm); }
+.ag-ok { margin: 0 0 6px; font-size: .8125rem; font-weight: 700; color: var(--ok); }
 /* 格式举例正文：要能整段选中复制，所以不能靠默认的非可选中 */
 .sample-box { margin-top: 14px; padding: 18px; border-radius: var(--r-in); background: var(--surface);
               box-shadow: var(--sink); font-family: monospace; font-size: .8125rem; line-height: 1.8;
@@ -672,10 +785,17 @@ html.swap, html.swap * { transition: none !important; }
 
 <div class="tabs" id="tabs">
   <i class="tab-pill" id="tabPill" aria-hidden="true"></i>
-  <button class="tab on" onclick="tabTap('home')"><svg class="ico" viewBox="0 0 24 24"><path d="M4 11l8-6 8 6v8a1 1 0 0 1-1 1h-5v-6h-4v6H5a1 1 0 0 1-1-1z"/></svg><span>首页</span></button>
-  <button class="tab" onclick="tabTap('bank')"><svg class="ico" viewBox="0 0 24 24"><path d="M5 4h9a3 3 0 0 1 3 3v13H8a3 3 0 0 1-3-3z"/><path d="M17 7h2v13H8"/></svg><span>题库</span></button>
-  <button class="tab" onclick="tabTap('wrong')"><svg class="ico" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8"/><path d="M9 9l6 6M15 9l-6 6"/></svg><span>错题本</span></button>
-  <button class="tab" onclick="tabTap('me')"><svg class="ico" viewBox="0 0 24 24"><circle cx="12" cy="8.5" r="3.5"/><path d="M5 20c1.2-3.6 3.8-5 7-5s5.8 1.4 7 5"/></svg><span>我的</span></button>
+  <button class="tab on" data-tab="home" onclick="tabTap('home')"><svg class="ico" viewBox="0 0 24 24"><path d="M4 11l8-6 8 6v8a1 1 0 0 1-1 1h-5v-6h-4v6H5a1 1 0 0 1-1-1z"/></svg><span>首页</span></button>
+  <button class="tab" data-tab="bank" onclick="tabTap('bank')"><svg class="ico" viewBox="0 0 24 24"><path d="M5 4h9a3 3 0 0 1 3 3v13H8a3 3 0 0 1-3-3z"/><path d="M17 7h2v13H8"/></svg><span>题库</span></button>
+  <button class="tab ask-tab" id="tabAsk" onclick="openChatTab()" aria-label="问大肥鱼">
+    <span class="ask-fish">
+      <img class="ag-l" src="agent-light.png" alt="">
+      <img class="ag-d" src="agent-dark.png" alt="">
+      <i class="ask-dot"></i>
+    </span>
+  </button>
+  <button class="tab" data-tab="wrong" onclick="tabTap('wrong')"><svg class="ico" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8"/><path d="M9 9l6 6M15 9l-6 6"/></svg><span>错题本</span></button>
+  <button class="tab" data-tab="me" onclick="tabTap('me')"><svg class="ico" viewBox="0 0 24 24"><circle cx="12" cy="8.5" r="3.5"/><path d="M5 20c1.2-3.6 3.8-5 7-5s5.8 1.4 7 5"/></svg><span>我的</span></button>
 </div>
 
 <!-- ============ 答题页 ============ -->
@@ -690,8 +810,14 @@ html.swap, html.swap * { transition: none !important; }
   <div class="q-foot">
     <div class="navrow">
       <button id="btnPrev" onclick="go(-1)">上一题</button>
+      <button class="ask" id="btnAsk" onclick="openChat()" aria-label="问大肥鱼">
+        <img class="ag-l" src="agent-light.png" alt="">
+        <img class="ag-d" src="agent-dark.png" alt="">
+        <i class="ask-dot"></i>
+      </button>
       <button id="btnAct" class="main" onclick="act()">下一题</button>
     </div>
+    <div class="ask-hint">有什么不懂就点大肥鱼哦！</div>
     <div class="pill" id="qPill"></div>
   </div>
 </div>
@@ -706,6 +832,27 @@ html.swap, html.swap * { transition: none !important; }
 </div>
 <div class="sheet" id="sheet2"></div>
 <div class="sheet" id="sheet3"></div>
+<div class="sheet chat" id="chat">
+  <div class="handle"></div>
+  <div class="chat-head">
+    <span class="ava"><img class="ag-l" src="agent-light.png" alt=""><img class="ag-d" src="agent-dark.png" alt=""></span>
+    <b id="chatTitle">蓝色大肥鱼</b>
+    <button class="chat-cfg chat-ico" onclick="chatNewConv()" aria-label="新建会话" title="新建会话">
+      <svg class="ico" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>
+    </button>
+    <button class="chat-cfg chat-ico" onclick="openConvList()" aria-label="历史会话" title="历史会话">
+      <svg class="ico" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8"/><path d="M12 8v4l3 2"/></svg>
+    </button>
+    <button class="chat-cfg" onclick="openAgentCfg()">设置</button>
+  </div>
+  <div class="chat-list" id="chatList"></div>
+  <div class="chat-hint" id="chatHint"></div>
+  <div class="chat-in">
+    <textarea id="chatText" rows="1" placeholder="问大肥鱼这道题…"
+      onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();chatSend()}"></textarea>
+    <button class="chat-send" id="chatSend" onclick="chatSend()">发送</button>
+  </div>
+</div>
 <div class="glass" id="glass"></div>
 <div class="toast" id="toast"></div>
 <div class="fs" id="fs"></div>
@@ -716,7 +863,7 @@ html.swap, html.swap * { transition: none !important; }
 
 /* ================= 数据与持久化 ================= */
 var BANK = window.BANK || { subjects: [], questions: [] };
-var LS = { p: "stk.progress.v2", s: "stk.settings.v2", j: "stk.session.v2", u: "stk.update.v1" };
+var LS = { p: "stk.progress.v2", s: "stk.settings.v2", j: "stk.session.v2", u: "stk.update.v1", c: "stk.chat.v1" };
 var store = {
   read: function (k, d) { try { var v = localStorage.getItem(k); return v ? JSON.parse(v) : d; } catch (e) { return d; } },
   write: function (k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) {} }
@@ -1764,11 +1911,13 @@ function goTab(which) {
   var from = document.querySelector(".page.on");
   var to = document.getElementById("tab-" + which);
   curTab = which;
-  /* 遍历的是 #tabs .tab，不能遍历 children：里面还有一颗流动胶囊，
-     它不是按钮，被顺手写上 class="tab" 就会跟着变色变形 */
+  /* 按 data-tab 认按钮，不按序号：中间插了一颗大肥鱼，序号已经对不上 TAB_ORDER 了。
+     大肥鱼那颗没有 data-tab，所以永远不会被标成选中态。 */
   var tabs = document.querySelectorAll("#tabs .tab");
   for (var i = 0; i < tabs.length; i++) {
-    tabs[i].className = "tab" + (TAB_ORDER[i] === which ? " on" : "");
+    var k = tabs[i].getAttribute("data-tab");
+    tabs[i].className = "tab" + (k === which ? " on" : "") +
+                        (k ? "" : " ask-tab");
   }
   moveTabPill(true);          /* 胶囊当场就走，切页的 200ms 淡出期间它就是反馈 */
   swapPage(from, to, which);
@@ -2149,11 +2298,18 @@ function renderMe() {
       '<div class="metric"><b>' + cover + "</b><i>覆盖率</i></div>" +
     "</div>";
 
+  var mc = mcpStatus();
+  var mcSub = (!window.Android || !Android.mcpStatus) ? "仅手机版可用"
+    : (mc.enabled ? (mc.running ? "运行中 · 127.0.0.1:" + mc.port : "启动失败 · " + (mc.error || "未知"))
+                  : "给 agent 调用题库与解析");
+
   document.getElementById("meSet").innerHTML =
     row("dark", set.theme === "dark" ? "深色模式" : "浅色模式", "从开关处圆形扩散换肤", true, set.theme === "dark") +
     row("haptics", "震动反馈", "答对短震、答错长震", true, set.haptics) +
     row("autoExp", "答完展开解析", "关闭后判分只给答案，解析自己点开", true, set.autoExp) +
     row("import", "导入题库", "PDF / Word / txt / md，带解析一起导", false) +
+    row("mcp", "MCP 接口", mcSub, false) +
+    row("agent", "大肥鱼", agentSub(), false) +
     row("font", "字号", "当前 " + set.fscale + "%，点击循环切换", false) +
     row("update", "检查更新", "当前 v" + APP_VER + " 版本", false, false, upd.hasNew) +
     row("clear", "清空进度", "做题记录、错题、收藏全部删除", false);
@@ -2166,6 +2322,8 @@ function row(k, title, sub, sw, on, mark) {
          : k === "autoExp" ? "toggleSet('autoExp', event)"
          : k === "font" ? "cycleFont()"
          : k === "import" ? "openImport()"
+         : k === "mcp" ? "openMcp()"
+         : k === "agent" ? "openAgentCfg()"
          : k === "update" ? "checkUpdate(true)" : "askClear()";
   return '<div class="row" data-k="' + k + '" onclick="' + fn + '"><span>' + title +
          (mark ? '<i class="dot"></i>' : "") +
@@ -2344,7 +2502,7 @@ function askClear() {
 }
 
 /* ================= 检查更新 ================= */
-var APP_VER = "1.0.5";
+var APP_VER = "1.0.6";
 try { if (window.Android && Android.appVersion) APP_VER = Android.appVersion() || APP_VER; } catch (e) {}
 var updInfo = null;
 /* 更新状态拆成三份，别混在一个布尔里：
@@ -3610,6 +3768,931 @@ function renameBank(sid, name) {
     sw = null;
   });
 })();
+
+/* ================= MCP 工具层 =================
+   原生层只做 HTTP 与口令（McpServer），JSON-RPC 与工具都在这里：
+   导入沿用 parseBankText，题库落盘走 Android.saveBank，改解析复用同一份题库对象。
+   这样 agent 看到的题和 App 里刷的是同一份，不会出现两套解析口径。 */
+var MCP_PROTO = "2025-03-26";
+var MCP_TOOLS = [
+  { name: "list_banks",
+    description: "列出本机当前题库：id、显示名、题量。",
+    inputSchema: { type: "object", properties: {}, additionalProperties: false } },
+  { name: "import_bank",
+    description: "把一段题库文本按 App 的导入格式解析成新题库并保存。text 必填；dryRun=true 只解析不保存。",
+    inputSchema: { type: "object", properties: {
+      name: { type: "string", description: "题库显示名，缺省「MCP 导入」" },
+      text: { type: "string", description: "题库正文，格式与 App 内导入一致" },
+      dryRun: { type: "boolean", description: "只返回识别统计与前三题预览，不保存" }
+    }, required: ["text"], additionalProperties: false } },
+  { name: "list_questions",
+    description: "提取一个题库里的题目与选项。ids 指定单题或多题；不给 ids 时按 offset/limit 分页。",
+    inputSchema: { type: "object", properties: {
+      bank: { type: "string", description: "题库 id 或显示名" },
+      ids: { type: "array", items: { type: "string" }, description: "题目 id 列表" },
+      offset: { type: "integer", minimum: 0 },
+      limit: { type: "integer", minimum: 1, maximum: 100 },
+      type: { type: "string", description: "single / multi / judge / fill / short" },
+      query: { type: "string", description: "题干包含的文字" }
+    }, required: ["bank"], additionalProperties: false } },
+  { name: "write_explanations",
+    description: "修改或撰写题目解析（explain）与主观题参考答案（ref）。items 可只给一条；mode=replace 覆盖，append 追加。",
+    inputSchema: { type: "object", properties: {
+      bank: { type: "string", description: "题库 id 或显示名" },
+      items: { type: "array", items: { type: "object", properties: {
+        id: { type: "string" }, explain: { type: "string" }, ref: { type: "string" }
+      }, required: ["id"], additionalProperties: false } },
+      mode: { type: "string", enum: ["replace", "append"] }
+    }, required: ["bank", "items"], additionalProperties: false } }
+];
+function mcpBankArg(v) {
+  var want = String(v == null ? "" : v).trim();
+  if (!want) throw new Error("bank 不能为空");
+  var i;
+  for (i = 0; i < BANK.subjects.length; i++) if (BANK.subjects[i].id === want) return BANK.subjects[i];
+  var hits = BANK.subjects.filter(function (s) { return s.name === want; });
+  if (!hits.length) hits = BANK.subjects.filter(function (s) { return s.name.toLowerCase() === want.toLowerCase(); });
+  if (hits.length === 1) return hits[0];
+  if (!hits.length) throw new Error("找不到题库：" + want);
+  throw new Error("题库名不唯一，请改用 id：" + hits.map(function (s) { return s.id; }).join(", "));
+}
+function mcpQ(q) {
+  return { id: q.id, num: q.num, type: q.type, stem: q.stem,
+           options: (q.options || []).map(function (o) { return { key: o[0], text: o[1] }; }),
+           answer: (q.answer || []).slice(), explain: q.explain || "", ref: q.ref || "",
+           source: q.source || "", flag: q.flag || "" };
+}
+function mcpImport(args) {
+  var text = typeof args.text === "string" ? args.text : "";
+  if (!text.trim()) throw new Error("text 不能为空");
+  var all = parseBankText(text), usable = all.filter(usableQ), rep = importReport(all, usable);
+  if (args.dryRun === true) return { dryRun: true, report: rep, preview: usable.slice(0, 3).map(mcpQ) };
+  if (!usable.length) throw new Error("没有可收录的题目：认出 " + rep.total + " 题，可用 0 题（缺选项/答案）");
+  if (!window.Android || !Android.saveBank) throw new Error("当前环境不能保存题库");
+  var name = String(args.name == null ? "" : args.name).trim() || "MCP 导入";
+  if (name.length > 30) name = name.slice(0, 30);
+  var sid, n = 0;
+  do { sid = "import_" + (Date.now() + n).toString(36); n++; } while (subjectOf(sid));
+  var subj = { id: sid, name: name, file: "mcp.txt", count: usable.length, custom: true };
+  usable.forEach(function (x, i) {
+    x.num = i + 1; x.pnum = i + 1; x.id = sid + "-" + i; x.subject = sid; x.source = "MCP";
+  });
+  var saved = false;
+  try { saved = Android.saveBank(sid, JSON.stringify({ subject: subj, questions: usable })); } catch (e) { saved = false; }
+  if (!saved) throw new Error("题库写盘失败，没有导入");
+  BANK.subjects.push(subj);
+  usable.forEach(function (x) { byId[x.id] = x; });
+  BANK.questions = BANK.questions.concat(usable);
+  renderAll();
+  toast("agent 导入了「" + name + "」· " + usable.length + " 题");
+  return { bank: { id: sid, name: name, count: usable.length }, report: rep };
+}
+function mcpListQuestions(args) {
+  var bank = mcpBankArg(args.bank);
+  var all = BANK.questions.filter(function (q) { return q.subject === bank.id; });
+  if (Array.isArray(args.ids)) {
+    var map = {}, picked = [], missing = [];
+    all.forEach(function (q) { map[q.id] = q; });
+    args.ids.forEach(function (id) {
+      var q = map[String(id)];
+      if (q) picked.push(q); else missing.push(String(id));
+    });
+    return { bank: { id: bank.id, name: bank.name }, total: picked.length,
+             questions: picked.map(mcpQ), missing: missing };
+  }
+  if (args.type) all = all.filter(function (q) { return q.type === args.type; });
+  if (args.query) {
+    var qq = String(args.query).toLowerCase();
+    all = all.filter(function (q) { return String(q.stem || "").toLowerCase().indexOf(qq) >= 0; });
+  }
+  var off = Math.max(0, parseInt(args.offset, 10) || 0);
+  var lim = Math.min(100, Math.max(1, parseInt(args.limit, 10) || 20));
+  return { bank: { id: bank.id, name: bank.name }, total: all.length, offset: off, limit: lim,
+           questions: all.slice(off, off + lim).map(mcpQ) };
+}
+function mcpWriteExplanations(args) {
+  var bank = mcpBankArg(args.bank);
+  var items = Array.isArray(args.items) ? args.items : [];
+  if (!items.length) throw new Error("items 不能为空");
+  var mode = args.mode === "append" ? "append" : "replace";
+  var qs = BANK.questions.filter(function (q) { return q.subject === bank.id; });
+  var map = {}, missing = [], changes = [];
+  qs.forEach(function (q) { map[q.id] = q; });
+  items.forEach(function (it) {
+    var id = it && it.id != null ? String(it.id) : "";
+    var q = map[id];
+    if (!q) { missing.push(id); return; }
+    var hasEx = typeof it.explain === "string", hasRef = typeof it.ref === "string";
+    if (!hasEx && !hasRef) { missing.push(id); return; }
+    if (hasEx && it.explain.length > 20000) throw new Error("解析过长：" + id);
+    if (hasRef && it.ref.length > 20000) throw new Error("参考答案过长：" + id);
+    var addEx = hasEx ? it.explain.trim() : "";
+    var addRef = hasRef ? it.ref.trim() : "";
+    var nextEx = hasEx ? (mode === "append" ? (addEx ? (q.explain ? q.explain + "\n\n" + addEx : addEx) : q.explain) : addEx) : null;
+    var nextRef = hasRef ? (mode === "append" ? (addRef ? (q.ref ? q.ref + "\n\n" + addRef : addRef) : q.ref) : addRef) : null;
+    changes.push({ q: q, ex: nextEx, rf: nextRef, hasEx: hasEx, hasRef: hasRef });
+  });
+  if (!changes.length) return { updated: 0, missing: missing };
+  if (!window.Android || !Android.saveBank) throw new Error("当前环境不能保存题库");
+  var clone = {};
+  qs.forEach(function (q) { clone[q.id] = Object.assign({}, q); });
+  changes.forEach(function (c) {
+    if (c.hasEx) clone[c.q.id].explain = c.ex;
+    if (c.hasRef) clone[c.q.id].ref = c.rf;
+  });
+  var payload = { subject: bank, questions: qs.map(function (q) { return clone[q.id]; }) };
+  var saved = false;
+  try { saved = Android.saveBank(bank.id, JSON.stringify(payload)); } catch (e) { saved = false; }
+  if (!saved) throw new Error("题库写盘失败，解析没有改动");
+  changes.forEach(function (c) {
+    if (c.hasEx) c.q.explain = c.ex;
+    if (c.hasRef) c.q.ref = c.rf;
+  });
+  toast("agent 更新了 " + changes.length + " 条解析");
+  return { updated: changes.length, missing: missing };
+}
+function mcpErr(id, code, msg) {
+  return { jsonrpc: "2.0", id: id === undefined ? null : id,
+           error: { code: code, message: String(msg) } };
+}
+function mcpOk(id, result) {
+  return { jsonrpc: "2.0", id: id === undefined ? null : id, result: result };
+}
+function mcpToolResult(data) {
+  return { content: [{ type: "text", text: JSON.stringify(data) }], structuredContent: data };
+}
+function mcpToolError(msg) {
+  return { content: [{ type: "text", text: String(msg) }], isError: true };
+}
+/* 同步的纯分发：原生 HTTP 线程把请求塞进来，回包由 __mcpHandle 交回；
+   check.mjs 直接调它测工具，不经过网络。 */
+function mcpDispatch(req) {
+  if (!req || typeof req !== "object") return mcpErr(null, -32700, "Parse error");
+  var id = req.id === undefined ? null : req.id;
+  if (req.jsonrpc !== "2.0" || typeof req.method !== "string") return mcpErr(id, -32600, "Invalid Request");
+  var m = req.method;
+  if (m.indexOf("notifications/") === 0) return null;
+  if (m === "initialize") {
+    var known = { "2024-11-05": 1, "2025-03-26": 1, "2025-06-18": 1 };
+    var pv = req.params && known[req.params.protocolVersion] ? req.params.protocolVersion : MCP_PROTO;
+    return mcpOk(id, {
+      protocolVersion: pv,
+      capabilities: { tools: {} },
+      serverInfo: { name: "gime", version: APP_VER },
+      instructions: "GIme 题库工具：list_banks 看题库；import_bank 导入文本；list_questions 取题与选项；write_explanations 写或改解析。"
+    });
+  }
+  if (m === "ping") return mcpOk(id, {});
+  if (m === "tools/list") return mcpOk(id, { tools: MCP_TOOLS });
+  if (m === "tools/call") {
+    var p = req.params || {}, args = p.arguments || {}, data;
+    try {
+      if (p.name === "list_banks") {
+        data = { banks: BANK.subjects.map(function (s) {
+          return { id: s.id, name: s.name, count: stats(s.id).total, file: s.file || "" };
+        }) };
+      } else if (p.name === "import_bank") data = mcpImport(args);
+      else if (p.name === "list_questions") data = mcpListQuestions(args);
+      else if (p.name === "write_explanations") data = mcpWriteExplanations(args);
+      else return mcpOk(id, mcpToolError("未知工具：" + p.name));
+      return mcpOk(id, mcpToolResult(data));
+    } catch (e) {
+      return mcpOk(id, mcpToolError(e && e.message ? e.message : String(e)));
+    }
+  }
+  return mcpErr(id, -32601, "Method not found: " + m);
+}
+window.__mcpHandle = function (rid, reqJson) {
+  var resp = null;
+  try { resp = mcpDispatch(JSON.parse(reqJson)); }
+  catch (e) { resp = mcpErr(null, -32700, "Parse error"); }
+  try {
+    if (window.Android && Android.mcpReply) {
+      Android.mcpReply(String(rid), resp == null ? "" : JSON.stringify(resp));
+    }
+  } catch (e) {}
+};
+function mcpStatus() {
+  if (!window.Android || !Android.mcpStatus) {
+    return { enabled: false, running: false, port: 8765, token: "", error: "仅手机版可用" };
+  }
+  try { return JSON.parse(Android.mcpStatus()); }
+  catch (e) { return { enabled: false, running: false, port: 8765, token: "", error: "读取状态失败" }; }
+}
+function openMcp() {
+  var st = mcpStatus();
+  var sh = document.getElementById("sheet3");
+  var h = '<div class="handle"></div><h2>MCP 接口</h2>';
+  if (st.enabled && !st.running && st.error) {
+    h += '<div class="note" style="margin:0 0 14px">启动失败：' + esc(st.error) + "</div>";
+  }
+  if (st.enabled && st.running) {
+    h += '<div class="note" style="word-break:break-all">地址<br><b>http://127.0.0.1:' + st.port + '/mcp</b></div>' +
+         '<div class="note" style="word-break:break-all;margin-top:10px">口令（请求头 Authorization: Bearer …）<br><b>' +
+           esc(st.token || "（还没生成）") + "</b></div>" +
+         '<button class="sheet-act" style="margin-top:16px" onclick="mcpCopy(&quot;url&quot;)">复制地址</button>' +
+         '<button class="sheet-act" style="margin-top:10px" onclick="mcpCopy(&quot;token&quot;)">复制口令</button>' +
+         '<button class="sheet-act" style="margin-top:10px" onclick="mcpRotate()">重新生成口令</button>' +
+         '<div class="sl-hint" style="margin:14px 0 0">同一台手机的 agent 连 127.0.0.1；电脑上先 ' +
+           'adb forward tcp:' + st.port + ' tcp:' + st.port + '。工具：list_banks / import_bank / ' +
+           'list_questions / write_explanations。</div>';
+  } else {
+    h += '<div class="note">服务没开。打开后 agent 才能读题库、导入和写解析；只在 127.0.0.1 上监听，' +
+         '每次请求要带口令。</div>';
+  }
+  h += '<button class="sheet-act" style="margin-top:18px" onclick="mcpToggle()">' +
+       (st.enabled ? "关闭 MCP 服务" : "开启 MCP 服务") + "</button>";
+  sh.innerHTML = h;
+  openLayer(sh);
+}
+function mcpToggle() {
+  if (!window.Android || !Android.mcpSetEnabled) { toast("仅手机版可用"); return; }
+  var st = mcpStatus(), next = null;
+  try { next = JSON.parse(Android.mcpSetEnabled(!st.enabled)); }
+  catch (e) { toast("切换失败"); return; }
+  toast(next.enabled
+    ? (next.running ? "MCP 已开启 · 127.0.0.1:" + next.port : "开启失败：" + (next.error || "未知"))
+    : "MCP 已关闭");
+  renderAll();
+  openMcp();
+}
+function mcpRotate() {
+  if (!window.Android || !Android.mcpRotateToken) { toast("仅手机版可用"); return; }
+  try { Android.mcpRotateToken(); toast("口令已更新，旧口令失效"); }
+  catch (e) { toast("更新失败"); return; }
+  openMcp();
+}
+function mcpCopy(which) {
+  var st = mcpStatus();
+  var text = which === "url" ? "http://127.0.0.1:" + st.port + "/mcp" : st.token;
+  if (!text) { toast("还没有口令"); return; }
+  var ok = false;
+  try { ok = !!(window.Android && Android.copyText && Android.copyText(text)); } catch (e) { ok = false; }
+  toast(ok ? "已复制" : "复制失败，长按文字手动复制");
+}
+
+/* ================= 大肥鱼对话 =================
+   页面是 file:// 源，直接 fetch 外部 API 会被 CORS 拦；请求走原生 Android.chatApi，
+   结果由 window.onChatApi 异步交回。工具调用复用 MCP 那套题库函数，口径只有一份。 */
+var CHAT_TOOLS = [
+  { type: "function", function: { name: "get_current_question",
+    description: "读取当前答题页的题目、选项、用户选择与答案。",
+    parameters: { type: "object", properties: {}, additionalProperties: false } } },
+  { type: "function", function: { name: "list_questions",
+    description: "按题库 id 或名称取题与选项；bank 省略时用当前题库。",
+    parameters: { type: "object", properties: {
+      bank: { type: "string" }, ids: { type: "array", items: { type: "string" } },
+      offset: { type: "integer" }, limit: { type: "integer" },
+      type: { type: "string" }, query: { type: "string" }
+    }, additionalProperties: false } } },
+  { type: "function", function: { name: "write_explanations",
+    description: "把解析（explain）或主观题参考答案（ref）写回题库；bank 省略时用当前题库。",
+    parameters: { type: "object", properties: {
+      bank: { type: "string" },
+      items: { type: "array", items: { type: "object", properties: {
+        id: { type: "string" }, explain: { type: "string" }, ref: { type: "string" }
+      }, required: ["id"], additionalProperties: false } },
+      mode: { type: "string", enum: ["replace", "append"] }
+    }, required: ["items"], additionalProperties: false } } }
+];
+var chatMsgs = [], chatBusy = false, chatUnread = false, chatSeq = 0;
+var chatWait = {};
+var chatLastId = "", chatGuard = 0;
+/* ---- 会话（历史对话）----
+   一个会话 = {id, title, at, msgs[]}。当前会话的 id 存在 LS.cv 里，
+   旧的单会话数据（LS.c 里只有 messages）在首次加载时自动收编成第一个会话，
+   这样升级上来的人不会丢掉之前的聊天记录。 */
+var chatConvs = [], chatCurId = "";
+var LS_CV = "stk.convs.v1";
+function chatConvSave() {
+  var keep = chatConvs.slice(0, 60);   /* 最多留 60 个会话，再多就砍最旧的 */
+  chatConvs = keep;
+  store.write(LS_CV, { cur: chatCurId, list: keep.map(function (c) {
+    return { id: c.id, title: c.title, at: c.at, msgs: c.msgs.slice(-200) };
+  }) });
+}
+function chatCurConv() {
+  for (var i = 0; i < chatConvs.length; i++) {
+    if (chatConvs[i].id === chatCurId) return chatConvs[i];
+  }
+  return null;
+}
+/* 把当前 chatMsgs 同步进所属会话；标题取第一条用户消息。 */
+function chatSyncConv() {
+  var c = chatCurConv();
+  if (!c) return;
+  c.msgs = chatMsgs.slice(-200);
+  c.at = Date.now();
+  if (!c.title) {
+    for (var i = 0; i < chatMsgs.length; i++) {
+      if (chatMsgs[i].role === "user" && chatMsgs[i].text) {
+        c.title = String(chatMsgs[i].text).replace(/\s+/g, " ").slice(0, 24);
+        break;
+      }
+    }
+  }
+}
+function chatLoadConv(id) {
+  var target = null;
+  for (var i = 0; i < chatConvs.length; i++) if (chatConvs[i].id === id) target = chatConvs[i];
+  if (!target) return;
+  chatCurId = target.id;
+  chatMsgs = (target.msgs || []).slice(-200);
+  chatSave();
+  chatConvSave();
+  chatRender();
+}
+function chatNewConv() {
+  if (chatBusy) { toast("等这轮答完再开新会话"); return; }
+  chatSyncConv();
+  var c = { id: "cv_" + Date.now().toString(36) + "_" + (++chatSeq), title: "", at: Date.now(), msgs: [] };
+  chatConvs.unshift(c);
+  chatCurId = c.id;
+  chatMsgs = [];
+  chatSave();
+  chatConvSave();
+  chatRender();
+  closeTop();
+  toast("新会话已开");
+}
+function openConvList() {
+  if (chatBusy) { toast("等这轮答完再看历史"); return; }
+  chatSyncConv();
+  chatConvSave();
+  var sh = document.getElementById("sheet3");
+  var h = '<div class="handle"></div><h2>历史会话</h2>';
+  if (!chatConvs.length) {
+    h += '<div class="chat-empty">还没有会话。点右上角「+」开一个。</div>';
+  } else {
+    h += '<div class="conv-list">';
+    chatConvs.forEach(function (c) {
+      var n = (c.msgs || []).length;
+      var t = c.title || "新会话";
+      var d = c.at ? new Date(c.at) : null;
+      var when = d ? (d.getMonth() + 1) + "/" + d.getDate() + " " +
+                     ("0" + d.getHours()).slice(-2) + ":" + ("0" + d.getMinutes()).slice(-2) : "";
+      h += '<div class="conv-row' + (c.id === chatCurId ? " on" : "") + '">' +
+           '<button class="conv-main" onclick="convPick(\'' + c.id + '\')">' +
+           '<b>' + esc(t) + "</b>" +
+           '<small>' + when + " · " + n + " 条</small></button>" +
+           '<button class="conv-del" onclick="convDel(\'' + c.id + '\')" aria-label="删除">' +
+           '<svg class="ico" viewBox="0 0 24 24"><path d="M6 7h12M9 7V5h6v2M8 7l1 12h6l1-12"/></svg>' +
+           "</button></div>";
+    });
+    h += "</div>";
+  }
+  sh.innerHTML = h;
+  openLayer(sh);
+}
+function convPick(id) {
+  closeTop();
+  chatLoadConv(id);
+  toast("已切到该会话");
+}
+function convDel(id) {
+  var i;
+  for (i = 0; i < chatConvs.length; i++) {
+    if (chatConvs[i].id === id) { chatConvs.splice(i, 1); break; }
+  }
+  if (chatCurId === id) {
+    /* 删的正是当前会话：有别的就切到最新的，没有就开一个空的 */
+    if (chatConvs.length) {
+      chatCurId = chatConvs[0].id;
+      chatMsgs = (chatConvs[0].msgs || []).slice(-200);
+    } else {
+      chatNewConv();
+      return;
+    }
+    chatSave();
+  }
+  chatConvSave();
+  closeTop();
+  chatRender();
+  toast("已删除");
+}
+(function () {
+  var s = store.read(LS.c, null);
+  var cv = store.read(LS_CV, null);
+  if (cv && Array.isArray(cv.list) && cv.list.length) {
+    chatConvs = cv.list;
+    chatCurId = cv.cur && cv.list.some(function (c) { return c.id === cv.cur; })
+      ? cv.cur : cv.list[0].id;
+    var c0 = chatCurConv();
+    chatMsgs = (c0 && c0.msgs ? c0.msgs : []).slice(-200);
+  } else {
+    /* 老版本只有一份聊天记录：收编成一个会话，标题留给 chatSyncConv 补 */
+    var old = (s && Array.isArray(s.messages)) ? s.messages.slice(-200) : [];
+    var c = { id: "cv_legacy", title: "", at: Date.now(), msgs: old };
+    chatConvs = [c];
+    chatCurId = c.id;
+    chatMsgs = old.slice();
+    chatSyncConv();
+    chatConvSave();
+  }
+})();
+function chatSave() {
+  store.write(LS.c, { messages: chatMsgs.slice(-200) });
+  chatSyncConv();
+  chatConvSave();
+}
+/* 内置通道：不用 API Key，走 App 里存的 DeepSeek 手机号登录态。
+   地址填 builtin://deepseek 即可，原生侧会把它分流到 DeepSeekBridge。 */
+var BUILTIN_BASE = "builtin://deepseek";
+function dsStatus() {
+  try { return window.Android && Android.dsStatus ? JSON.parse(Android.dsStatus() || "{}") : null; }
+  catch (e) { return null; }
+}
+function isBuiltin(a) {
+  return String((a && a.base) || "").replace(/\/+$/, "") === BUILTIN_BASE;
+}
+/* 接入方式是二选一，不是两套配置并存：
+   mode="login" 走 App 内置的 DeepSeek 登录态（手机号），mode="key" 走用户自己的 API Key。
+   老数据没有 mode 字段，按地址是不是 builtin:// 推断，行为跟升级前一致。 */
+function agentMode() {
+  var a = set.agent || {};
+  if (a.mode === "login" || a.mode === "key") return a.mode;
+  return isBuiltin(a) ? "login" : "key";
+}
+/* 「我的」里那一行的小字：两种接入各看各的齐备程度。 */
+function agentSub() {
+  if (agentMode() === "login") {
+    var st = dsStatus();
+    if (!st) return "仅手机版可用";
+    return st.loggedIn ? "手机号登录 · 已登录 DeepSeek" : "手机号登录 · 未登录，点这里登录";
+  }
+  var a = set.agent || {};
+  return agentCfg() ? "API Key · " + (a.model || "") : "API Key · 未配置，点这里填";
+}
+function agentCfg() {
+  var a = set.agent || {};
+  var model = String(a.model || "").trim();
+  var key = String(a.key || "").trim();
+  /* 登录模式：地址恒为内置通道，页面上根本没有 Key 这个概念。 */
+  if (agentMode() === "login") {
+    if (!model || model === "deepseek-chat") model = "deepseek-web";
+    return { base: BUILTIN_BASE, model: model, key: "",
+             url: BUILTIN_BASE + "/chat/completions", builtin: true };
+  }
+  var base = String(a.base || "").trim().replace(/\/+$/, "");
+  if (!base || !model || !key) return null;
+  return { base: base, model: model, key: key,
+           url: /\/chat\/completions$/.test(base) ? base : base + "/chat/completions" };
+}
+/* 用户在面板里换接入方式：只换 mode，另一套的输入值原样留着，
+   换回来时不用重新填。 */
+/* 切换接入方式：只翻 mode，另一套的地址/模型/Key 原样收进 saved，
+   切回来时还原，用户不用重填自己那套接口。 */
+function agSwitchMode() {
+  var a = set.agent || {};
+  var to = agentMode() === "login" ? "key" : "login";
+  var next;
+  if (to === "login") {
+    /* 离开 Key 模式：把当前这套存起来，登录模式自己只关心 model */
+    next = { base: BUILTIN_BASE, model: "deepseek-web", key: "",
+             mode: "login",
+             saved: { base: a.base || "", model: a.model || "", key: a.key || "" } };
+  } else {
+    var s = a.saved || {};
+    var base = String(s.base || "").trim();
+    var model = String(s.model || "").trim();
+    if (!base || /^builtin:\/\//i.test(base)) base = "https://api.deepseek.com/v1";
+    if (!model || model === "deepseek-web") model = "deepseek-chat";
+    next = { base: base, model: model, key: String(s.key || ""), mode: "key" };
+  }
+  set.agent = next;
+  save();
+  openAgentCfg();
+  renderAll();
+  chatRender();
+}
+/* 用户点「登录」：确保是登录模式，再拉起手机号登录页。 */
+function dsLoginNow() {
+  var a = set.agent || {};
+  var next = { base: BUILTIN_BASE, model: "deepseek-web", key: "", mode: "login" };
+  /* 从 Key 模式点进来时，把那套配置留着，退出登录后还能切回去 */
+  if (agentMode() === "key") {
+    next.saved = { base: a.base || "", model: a.model || "", key: a.key || "" };
+  } else if (a.saved) {
+    next.saved = a.saved;
+  }
+  set.agent = next;
+  save();
+  try { if (window.Android && Android.dsLogin) Android.dsLogin(); }
+  catch (e) { toast("仅手机版可用"); return; }
+  closeTop();
+  renderAll();
+  chatRender();
+}
+function dsLogoutNow() {
+  try { if (window.Android && Android.dsLogout) Android.dsLogout(); } catch (e) { }
+  openAgentCfg();
+  renderAll();
+  chatRender();
+  toast("已退出 DeepSeek 登录");
+}
+/* 顶部的切换按钮：第一行是「现在」，第二行是「点下去会变成什么」。 */
+function agSwitchHtml() {
+  var login = agentMode() === "login";
+  return '<button class="ag-switch" onclick="agSwitchMode()">' +
+    '<span class="ag-now">当前：' + (login ? "手机号登录" : "API Key") + "</span>" +
+    '<span class="ag-go">点这里换成 ' + (login ? "API Key" : "手机号登录") + " ›</span></button>";
+}
+function openAgentCfg() {
+  var a = set.agent || {};
+  var sh = document.getElementById("sheet3");
+  var head = '<div class="handle"></div><h2>大肥鱼</h2>' + agSwitchHtml();
+  if (agentMode() === "login") {
+    var st = dsStatus();
+    var line = !st ? '<div class="sl-hint">仅手机版可用。</div>'
+      : st.loggedIn
+        ? '<div class="ag-ok">已登录 DeepSeek' + (st.mobile ? " · " + esc(st.mobile) : "") +
+          " ✔ 不用填 Key，直接问就行。</div>" +
+          '<button class="sheet-act2" style="width:100%;margin:10px 0 0" onclick="dsLogoutNow()">退出登录</button>'
+        : '<div class="sl-hint" style="margin:0 0 10px">还没登录。用手机号登录一次，之后就能直接用，不需要 API Key。</div>' +
+          '<button class="sheet-act" style="margin:0" onclick="dsLoginNow()">用手机号登录 DeepSeek</button>';
+    sh.innerHTML = head + line +
+      '<div class="sl-hint" style="margin:18px 0 0">登录态只存在本机。换设备或过期后，重新登录一次即可。</div>';
+  } else {
+    sh.innerHTML = head +
+      '<div class="sl-hint" style="margin:0 0 10px">填任何 OpenAI 兼容接口，Key 只存在本机。</div>' +
+      '<div class="sl-hint" style="margin:0 0 4px">接口地址</div>' +
+      '<input class="rn-box" id="agBase" value="' + esc(a.base || "https://api.deepseek.com/v1") + '" placeholder="https://api.deepseek.com/v1">' +
+      '<div class="sl-hint" style="margin:14px 0 4px">模型</div>' +
+      '<input class="rn-box" id="agModel" value="' + esc(a.model || "deepseek-chat") + '" placeholder="deepseek-chat">' +
+      '<div class="sl-hint" style="margin:14px 0 4px">API Key</div>' +
+      '<input class="rn-box" id="agKey" type="password" value="' + esc(a.key || "") + '" placeholder="sk-...">' +
+      '<button class="sheet-act" style="margin-top:18px" onclick="agentCfgSave()">保存</button>' +
+      '<div class="sl-hint" style="margin:16px 0 0">按标准 /chat/completions 调，Key 不会离开这台手机。</div>';
+  }
+  openLayer(sh);
+}
+function agentCfgSave() {
+  var base = String(document.getElementById("agBase").value || "").trim();
+  var model = String(document.getElementById("agModel").value || "").trim();
+  var key = String(document.getElementById("agKey").value || "").trim();
+  if (!/^https?:\/\//i.test(base)) { toast("接口地址要以 http(s):// 开头"); return; }
+  if (!model) { toast("填个模型名"); return; }
+  if (!key) { toast("填个 API Key"); return; }
+  set.agent = { base: base.replace(/\/+$/, ""), model: model, key: key, mode: "key" };
+  save();
+  closeTop();
+  renderAll();
+  chatRender();
+  toast("大肥鱼 API 已保存");
+}
+function chatQuestionCtx() {
+  if (!S || !S.order || !S.order.length) return null;
+  var cur = q();
+  if (!cur) return null;
+  var bank = subjectOf(cur.subject) || { id: cur.subject, name: cur.subject };
+  var out = mcpQ(cur);
+  out.bank = { id: bank.id, name: bank.name };
+  out.userPick = (S.picks && S.picks[cur.id] ? S.picks[cur.id] : []).slice();
+  out.graded = !!(S.graded && S.graded[cur.id] !== undefined);
+  out.mode = S.mode || "";
+  out.userText = S.text && S.text[cur.id] ? String(S.text[cur.id]) : "";
+  return out;
+}
+function chatPush(m, quiet) {
+  m.id = "chat_" + Date.now().toString(36) + "_" + (++chatSeq);
+  m.t = Date.now();
+  chatMsgs.push(m);
+  if (chatMsgs.length > 200) chatMsgs = chatMsgs.slice(-200);
+  if (!quiet) chatSave();
+  return m;
+}
+/* 丢掉一条还没落盘的气泡（工具调用轮次里临时建的流式消息）。 */
+function chatDrop(m) {
+  if (!m) return;
+  var i = chatMsgs.indexOf(m);
+  if (i >= 0) chatMsgs.splice(i, 1);
+}
+function chatHasLive() {
+  for (var i = chatMsgs.length - 1; i >= 0; i--) if (chatMsgs[i].live) return true;
+  return false;
+}
+/* 用户手动展开/收起思考链：只记状态，不重画（重画会把 details 复位）。 */
+function chatThinkToggle(id, open) {
+  for (var i = 0; i < chatMsgs.length; i++) {
+    if (chatMsgs[i].id === id) { chatMsgs[i].thinkOpen = !!open; chatSave(); return; }
+  }
+}
+/* 流式气泡的内部结构：思考链在上、正文在下。纯函数，回归测试直接调。 */
+function chatLiveHtml(m) {
+  var think = String((m && m.reasoning) || "");
+  var text = String((m && m.text) || "");
+  /* 工具轮次里上游吐的是 <tool_call>{...}，那是给解析器看的，别亮给用户。
+     这一轮的气泡最后会被丢掉，但流式期间不能闪一串 JSON。 */
+  var tooling = /^\s*<tool_call/.test(text);
+  if (tooling) text = "";
+  var out = "";
+  if (think) {
+    /* 默认展开（「把思考链显示出来」），用户点一下就收起，收起后记住不再自动弹开。
+       .think-body 有 190px 上限 + 内部滚动，长思维链不会把回答挤到屏幕外。 */
+    var open = m.thinkOpen !== false;
+    var label = m.live ? (text ? "思考过程" : "正在思考…")
+                       : "思考过程 · " + think.length + " 字";
+    /* 用 click 而不是 ontoggle：details 插入时若带 open，浏览器也会派发 toggle，
+       那会把「用户没点过」误记成「用户点开了」，导致答完还是展开的。
+       click 时父节点的 open 还是点击前的值，取反就是点击后的状态。 */
+    out += '<details class="think"' + (open ? " open" : "") + ">" +
+           '<summary onclick="chatThinkToggle(\'' + m.id + '\', !this.parentNode.open)">' +
+           label + "</summary>" +
+           '<div class="think-body">' + esc(think).replace(/\n/g, "<br>") + "</div></details>";
+  }
+  if (text) out += '<div class="bubble">' + esc(text).replace(/\n/g, "<br>") + "</div>";
+  if (!out) {
+    out = '<div class="bubble typing">' + (tooling ? "正在调用工具…" : "大肥鱼正在想…") + "</div>";
+  }
+  return out;
+}
+/* 只重画这一条流式气泡：整列表重画会丢滚动位置，也太费。 */
+function chatLivePaint(m) {
+  if (!m || !m.id) return;
+  var list = document.getElementById("chatList");
+  if (!list || !list.querySelector) { chatRender(); return; }
+  var box = list.querySelector('.msg[data-mid="' + m.id + '"]');
+  var live = box && box.querySelector ? box.querySelector(".live") : null;
+  if (!live) { chatRender(); return; }
+  live.innerHTML = chatLiveHtml(m);
+  list.scrollTop = list.scrollHeight;
+}
+function agentAvaHtml() {
+  return '<span class="ava"><img class="ag-l" src="agent-light.png" alt=""><img class="ag-d" src="agent-dark.png" alt=""></span>';
+}
+function syncAskDot() {
+  var b = document.getElementById("btnAsk");
+  if (b) b.classList.toggle("unread", !!chatUnread);
+  var t = document.getElementById("tabAsk");
+  if (t) t.classList.toggle("unread", !!chatUnread);
+}
+function chatRender() {
+  var list = document.getElementById("chatList");
+  if (!list) return;
+  var ttl = document.getElementById("chatTitle");
+  if (ttl) {
+    var cc = chatCurConv();
+    ttl.textContent = (cc && cc.title) ? cc.title : "蓝色大肥鱼";
+  }
+  var h = "";
+  if (!chatMsgs.length) {
+    h += '<div class="chat-empty">问大肥鱼这道题。它会读取当前题目和题库来回答；' +
+         '需要时还能把解析写回题库。</div>';
+  }
+  chatMsgs.forEach(function (m) {
+    if (m.role === "error" || m.role === "note") {
+      h += '<div class="chat-note">' + esc(m.text) + "</div>";
+      return;
+    }
+    var me = m.role === "user";
+    /* 有思考链就渲染成可折叠块：流式期间默认展开（跟着字一起长），
+       回答结束后默认收起（想看再点开，不占地方）。用户手动点过就按用户的选择。 */
+    var inner = (m.live || m.reasoning)
+      ? '<div class="live">' + chatLiveHtml(m) + "</div>"
+      : '<div class="bubble">' + esc(m.text).replace(/\n/g, "<br>") + "</div>";
+    h += '<div class="msg' + (me ? " me" : " ai") + '" data-mid="' + esc(m.id || "") + '">' +
+         (me ? "" : agentAvaHtml()) + inner + "</div>";
+  });
+  if (chatBusy && !chatHasLive()) {
+    h += '<div class="msg ai">' + agentAvaHtml() + '<div class="bubble typing">大肥鱼正在想…</div></div>';
+  }
+  list.innerHTML = h;
+  var send = document.getElementById("chatSend");
+  if (send) {
+    /* 忙的时候「发送」变成「停止」：网络卡住时用户至少能自己脱身，
+       不用干等看门狗。 */
+    send.disabled = false;
+    send.textContent = chatBusy ? "停止" : "发送";
+    send.className = "chat-send" + (chatBusy ? " stop" : "");
+    send.onclick = chatBusy ? chatStop : chatSend;
+  }
+  var hint = document.getElementById("chatHint");
+  if (hint) {
+    hint.textContent = agentCfg()
+      ? "内容由大肥鱼生成，可能有误；以题库解析为准。"
+      : (agentMode() === "login"
+          ? "还没登录：点右上角「设置」用手机号登录一次。"
+          : "还没配置 API：点右上角「设置」填地址、模型和 Key。");
+  }
+  list.scrollTop = list.scrollHeight;
+  syncAskDot();
+}
+function openChat() {
+  if (!S) { toast("先进一道题再问"); return; }
+  chatUnread = false;
+  var ch = document.getElementById("chat");
+  chatRender();
+  openLayer(ch);
+  setTimeout(function () {
+    var l = document.getElementById("chatList");
+    if (l) l.scrollTop = l.scrollHeight;
+  }, 280);
+}
+/* 底部导航中间那颗大肥鱼：不要求「先进一道题」，随时能开。
+   没有当前题目时上下文是 null，大肥鱼仍然能聊（只是读不到题目）。 */
+function openChatTab() {
+  chatUnread = false;
+  var ch = document.getElementById("chat");
+  chatRender();
+  openLayer(ch);
+  setTimeout(function () {
+    var l = document.getElementById("chatList");
+    if (l) l.scrollTop = l.scrollHeight;
+  }, 280);
+}
+async function chatSend() {
+  if (chatBusy) return;
+  var el = document.getElementById("chatText");
+  var text = String(el && el.value || "").trim();
+  if (!text) return;
+  var cfg = agentCfg();
+  if (!cfg) { toast(agentMode() === "login" ? "先登录 DeepSeek" : "先填 API Key"); openAgentCfg(); return; }
+  /* 内置通道但没登录：直接把人送到登录页，别让他先发一条再吃报错。 */
+  if (cfg.builtin) {
+    var st = dsStatus();
+    if (st && !st.loggedIn) { toast("先登录 DeepSeek"); dsLoginNow(); return; }
+  }
+  el.value = "";
+  chatPush({ role: "user", text: text, ctx: chatQuestionCtx() });
+  chatBusy = true;
+  chatRender();
+  try {
+    await chatRun(cfg);
+  } catch (e) {
+    var em = e && e.message ? e.message : String(e);
+    /* 重试提示是临时灰字，报错时留着只会让对话更乱；一并清掉。 */
+    chatMsgs = chatMsgs.filter(function (m) { return m.role !== "note"; });
+    chatPush({ role: "error", text: em === "已停止" ? "已停止这次回答。" : "大肥鱼没答上来：" + em });
+  }
+  chatBusy = false;
+  chatRender();
+  if (openLayers.indexOf(document.getElementById("chat")) < 0) {
+    chatUnread = true;
+    syncAskDot();
+  }
+}
+async function chatRun(cfg) {
+  var ctx = chatQuestionCtx();
+  var messages = [{ role: "system", content: chatSystem(ctx) }];
+  chatMsgs.slice(-12).forEach(function (m) {
+    if (m.role === "user" || m.role === "assistant") messages.push({ role: m.role, content: m.text });
+  });
+  for (var round = 0; round < 4; round++) {
+    /* 内置通道走流式：先摆一个空气泡，边收边往里填。
+       外部接口保持原来的一次性返回（不是所有兼容实现都真的支持 SSE）。 */
+    var live = cfg.builtin ? chatPush({ role: "assistant", text: "", reasoning: "", live: true }, true) : null;
+    var onDelta = live ? function (kind, chunk) {
+      if (kind === "think") live.reasoning += chunk;
+      else live.text += chunk;
+      chatLivePaint(live);
+    } : null;
+    var data;
+    try {
+      data = await chatRequest(cfg, {
+        model: cfg.model, messages: messages, tools: CHAT_TOOLS,
+        tool_choice: "auto", temperature: 0.3
+      }, onDelta);
+    } catch (e) {
+      if (live) chatDrop(live);
+      throw e;
+    }
+    var msg = data && data.choices && data.choices[0] && data.choices[0].message;
+    if (!msg) { if (live) chatDrop(live); throw new Error("API 返回里没有 choices[0].message"); }
+    var calls = msg.tool_calls || [];
+    if (calls.length) {
+      /* 这一轮只是在调工具，不是给用户看的回答：把流式气泡收掉，别留一串工具 JSON。 */
+      if (live) chatDrop(live);
+      messages.push({ role: "assistant", content: msg.content || "", tool_calls: calls });
+      for (var i = 0; i < calls.length; i++) {
+        var call = calls[i], fn = call.function || {}, args = {};
+        if (fn.arguments && typeof fn.arguments === "object") args = fn.arguments;
+        else if (typeof fn.arguments === "string") {
+          try { args = JSON.parse(fn.arguments); } catch (e) { args = {}; }
+        }
+        var out;
+        try { out = chatTool(fn.name, args); }
+        catch (e) { out = { error: e && e.message ? e.message : String(e) }; }
+        var payload = JSON.stringify(out);
+        if (payload.length > 12000) payload = payload.slice(0, 12000) + "…(截断)";
+        messages.push({ role: "tool", tool_call_id: call.id, content: payload });
+        if (fn.name === "write_explanations" && out && out.updated) {
+          chatPush({ role: "note", text: "已把 " + out.updated + " 条解析写回题库" });
+        }
+      }
+      chatRender();
+      continue;
+    }
+    var answer = String(msg.content || "").trim();
+    if (live) {
+      /* 流式已经把正文填进去了；工具调用轮次之后正文可能没流全，用最终值兜底。
+         只在真的拿到正文时才覆盖 —— 否则上游「只调工具不回答」时会把已流出的字擦掉。 */
+      live.live = false;
+      if (answer) live.text = answer;
+      else if (!live.text) live.text = "（大肥鱼没有返回文字）";
+      if (!live.reasoning) live.reasoning = String(msg.reasoning_content || "");
+      chatSave();
+      chatRender();
+    } else {
+      chatPush({ role: "assistant", text: answer || "（大肥鱼没有返回文字）",
+                 reasoning: String(msg.reasoning_content || "") });
+      chatRender();
+    }
+    return;
+  }
+  throw new Error("工具调用轮次过多，先停在这里");
+}
+function chatSystem(ctx) {
+  return "你是 GIme 答题页里的答疑助手「蓝色大肥鱼」。用中文回答：先给结论，再讲依据；" +
+         "简洁但把关键步骤说清，不要编造题库里没有的内容。你可以调用工具读取题库、查题、" +
+         "把解析或参考答案写回题库。当前题目上下文（JSON）：" + JSON.stringify(ctx);
+}
+function chatTool(name, args) {
+  if (name === "get_current_question") return chatQuestionCtx();
+  var cur = S && S.order && S.order.length ? q() : null;
+  var bank = args.bank || (cur && cur.subject) || "";
+  if (!bank) throw new Error("当前没有题库");
+  if (name === "list_questions") {
+    return mcpListQuestions({ bank: bank, ids: args.ids, offset: args.offset,
+                              limit: args.limit, type: args.type, query: args.query });
+  }
+  if (name === "write_explanations") {
+    var r = mcpWriteExplanations({ bank: bank, items: args.items, mode: args.mode });
+    if (cur && Array.isArray(args.items) && args.items.some(function (it) { return it.id === cur.id; })
+        && document.getElementById("quiz").classList.contains("on")) {
+      render();
+    }
+    return r;
+  }
+  throw new Error("未知工具：" + name);
+}
+function chatRequest(cfg, body, onDelta) {
+  return new Promise(function (resolve, reject) {
+    if (!window.Android || !Android.chatApi) { reject(new Error("仅手机版可用")); return; }
+    var id = "c" + (++chatSeq);
+    chatWait[id] = { resolve: resolve, reject: reject, onDelta: onDelta || null };
+    chatLastId = id;
+    /* 只提示、不终止：原生侧本来就有 30s 首帧看门狗和 180s 读超时，
+       这里再硬超时反而会误杀「真的在长思考」的合法回答。
+       作用只是把「一直转圈」变成「你可以点停止」。 */
+    chatGuard = setTimeout(function () {
+      if (!chatWait[id] || !chatBusy) return;
+      var hint = document.getElementById("chatHint");
+      if (hint) hint.textContent = "等得有点久了。可以点「停止」重发，或者检查一下网络。";
+    }, 45000);
+    try { Android.chatApi(id, cfg.url, JSON.stringify(body), cfg.key); }
+    catch (e) {
+      delete chatWait[id];
+      clearTimeout(chatGuard);
+      reject(new Error(e && e.message ? e.message : String(e)));
+    }
+  });
+}
+/* 用户点「停止」：先掐原生连接，再让页面立刻收手（不等原生回包）。 */
+function chatStop() {
+  if (!chatBusy) return;
+  var id = chatLastId;
+  chatLastId = "";
+  clearTimeout(chatGuard);
+  chatGuard = 0;
+  if (id) {
+    var w = chatWait[id];
+    delete chatWait[id];
+    if (w) w.reject(new Error("已停止"));
+    try { if (window.Android && Android.dsCancel) Android.dsCancel(id); } catch (e) { }
+  }
+  chatBusy = false;
+  chatRender();
+  toast("已停止");
+}
+/* 原生侧网络抖动自动重试时，把「正在重试 n/2」插进对话里，别让用户以为死了。 */
+window.onChatRetry = function (id, n, note) {
+  if (!chatWait[id]) return;
+  chatPush({ role: "note", text: String(note || ("正在重试 " + n)) }, true);
+  chatRender();
+};
+/* 流式增量：原生侧边收上游边推过来，kind 是 "think"（思考链）或 "text"（正文）。 */
+window.onChatStream = function (id, kind, text) {
+  var w = chatWait[id];
+  if (!w || !w.onDelta) return;
+  try { w.onDelta(kind, String(text == null ? "" : text)); } catch (e) { }
+};
+window.onChatApi = function (id, status, text) {
+  var w = chatWait[id];
+  if (!w) return;
+  delete chatWait[id];
+  if (id === chatLastId) { chatLastId = ""; clearTimeout(chatGuard); chatGuard = 0; }
+  if (status >= 200 && status < 300) {
+    try { w.resolve(JSON.parse(text)); }
+    catch (e) { w.reject(new Error("API 返回不是 JSON")); }
+    return;
+  }
+  var msg = String(text == null ? "" : text).slice(0, 300);
+  try {
+    var j = JSON.parse(text);
+    if (j && j.error && j.error.message) msg = String(j.error.message);
+  } catch (e) { }
+  w.reject(new Error((status === 0 ? "连不上 API" : "API HTTP " + status) + (msg ? "：" + msg : "")));
+};
 
 /* ================= 启动 ================= */
 applyTheme();

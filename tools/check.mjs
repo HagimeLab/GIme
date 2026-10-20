@@ -904,6 +904,460 @@ ok("删除题库后可选列表同步收缩",
    W.paperBanks().every((s) => s.id !== "empty1"));
 delete W.Android;
 
+/* ---------- 14. v1.0.6：MCP 工具层 ----------
+   原生层只做 HTTP 与口令；这里直接调页面里的 mcpDispatch，
+   把 initialize / tools/list / 四个工具 / 错误路径都走真实现。 */
+section("[14] v1.0.6：MCP 工具层");
+const mcp = (id, method, params) => W.mcpDispatch({ jsonrpc: "2.0", id, method, params });
+const mcpInit = mcp(1, "initialize", { protocolVersion: "2025-03-26" });
+ok("initialize 声明 tools 能力", !!(mcpInit.result && mcpInit.result.capabilities
+   && mcpInit.result.capabilities.tools));
+ok("未知协议版本回退到本机支持的版本",
+   mcp(2, "initialize", { protocolVersion: "1999-01-01" }).result.protocolVersion === W.MCP_PROTO,
+   mcp(2, "initialize", { protocolVersion: "1999-01-01" }).result.protocolVersion);
+const mcpList = mcp(3, "tools/list");
+const toolNames = mcpList.result.tools.map((t) => t.name);
+ok("tools/list 给出四个工具",
+   ["list_banks", "import_bank", "list_questions", "write_explanations"].every((n) => toolNames.indexOf(n) >= 0),
+   toolNames.join(","));
+ok("每个工具都有 object 类 inputSchema",
+   mcpList.result.tools.every((t) => t.inputSchema && t.inputSchema.type === "object"));
+ok("通知不回包", mcp(null, "notifications/initialized") === null);
+ok("未知方法报 -32601", mcp(4, "no/such").error.code === -32601);
+
+const mcpLb = mcp(5, "tools/call", { name: "list_banks", arguments: {} }).result.structuredContent;
+ok("list_banks 列出当前题库", mcpLb.banks.some((b) => b.id === "nb1" && b.name === "改过的名字" && b.count === 2),
+   JSON.stringify(mcpLb.banks));
+
+let mcpSaved = null;
+W.Android = { saveBank: (id, json) => { mcpSaved = [id, JSON.parse(json)]; return true; } };
+const dry = mcp(6, "tools/call", { name: "import_bank", arguments: { text: sampleSrc, dryRun: true } })
+  .result.structuredContent;
+ok("dryRun 返回识别统计", dry.report.usable === 7 && dry.report.total === 8, JSON.stringify(dry.report));
+ok("dryRun 不写盘", mcpSaved === null);
+ok("dryRun 给前三题预览", dry.preview.length === 3 && dry.preview[0].options.length > 0);
+
+const imp = mcp(7, "tools/call", { name: "import_bank", arguments: { name: "MCP测试库", text: sampleSrc } })
+  .result.structuredContent;
+ok("导入写盘一次且带完整题",
+   mcpSaved && mcpSaved[0] === imp.bank.id && mcpSaved[1].questions.length === 7,
+   mcpSaved && mcpSaved[1].questions.length);
+ok("导入后题库出现在 BANK",
+   W.subjectOf(imp.bank.id) && W.subjectOf(imp.bank.id).name === "MCP测试库");
+ok("导入的单选题都带选项",
+   mcpSaved[1].questions.filter((q) => q.type === "single" || q.type === "multi")
+     .every((q) => q.options.length > 0));
+ok("导入的题 id 唯一且以 sid 开头",
+   mcpSaved[1].questions.every((q, i) => q.id === imp.bank.id + "-" + i));
+
+const qid = imp.bank.id + "-0";
+const single = mcp(8, "tools/call", { name: "list_questions", arguments: { bank: imp.bank.id, ids: [qid] } })
+  .result.structuredContent;
+ok("按 id 提取单题并带选项", single.questions.length === 1 && single.questions[0].options.length > 0);
+ok("单题结果带答案与解析字段",
+   Array.isArray(single.questions[0].answer) && typeof single.questions[0].explain === "string");
+const many = mcp(9, "tools/call", { name: "list_questions", arguments: { bank: "MCP测试库", limit: 2, offset: 1 } })
+  .result.structuredContent;
+ok("按名称分页提取", many.total === 7 && many.questions.length === 2, many.total + "/" + many.questions.length);
+
+mcpSaved = null;
+const w1 = mcp(10, "tools/call", { name: "write_explanations", arguments: {
+  bank: imp.bank.id, items: [{ id: qid, explain: "第一版解析" },
+                             { id: imp.bank.id + "-1", explain: "另一题解析" }] } }).result.structuredContent;
+ok("写入两条解析", w1.updated === 2 && mcpSaved && mcpSaved[1].questions.filter((q) => q.explain === "第一版解析").length === 1,
+   JSON.stringify(w1));
+ok("写盘后内存对象同步", W.byId[qid].explain === "第一版解析", W.byId[qid].explain);
+mcp(11, "tools/call", { name: "write_explanations", arguments: {
+  bank: imp.bank.id, mode: "append", items: [{ id: qid, explain: "补充一句" }] } });
+ok("append 追加到原解析", W.byId[qid].explain === "第一版解析\n\n补充一句", W.byId[qid].explain);
+const w3 = mcp(12, "tools/call", { name: "write_explanations", arguments: {
+  bank: imp.bank.id, items: [{ id: "no-such-q", explain: "x" }] } }).result.structuredContent;
+ok("不存在的题进 missing、不写盘",
+   w3.updated === 0 && w3.missing.indexOf("no-such-q") >= 0, JSON.stringify(w3));
+
+W.Android = { saveBank: () => false };
+const w4 = mcp(13, "tools/call", { name: "write_explanations", arguments: {
+  bank: imp.bank.id, items: [{ id: qid, explain: "不该落盘" }] } }).result;
+ok("写盘失败返回 isError", w4.isError === true, JSON.stringify(w4));
+ok("写盘失败不改内存", W.byId[qid].explain === "第一版解析\n\n补充一句", W.byId[qid].explain);
+ok("未知工具返回工具错误",
+   mcp(14, "tools/call", { name: "nope", arguments: {} }).result.isError === true);
+
+/* 清理测试库：不碰 nb1，也不留题目/索引 */
+delete W.Android;
+W.BANK.subjects = W.BANK.subjects.filter((s) => s.id !== imp.bank.id);
+W.BANK.questions = W.BANK.questions.filter((q) => q.subject !== imp.bank.id);
+Object.keys(W.byId).forEach((k) => { if (k.indexOf(imp.bank.id) === 0) delete W.byId[k]; });
+
+/* ---------- 15. v1.0.6：大肥鱼对话 ----------
+   API 请求走原生 chatApi；这里用桩把两轮响应塞回来，
+   验配置归一、题目上下文、工具循环写回解析、最终回答和 401 错误。 */
+section("[15] v1.0.6：大肥鱼对话");
+const chatQ0 = W.BANK.questions.find((q) => q.id === "nb1-0");
+const chatQ1 = W.BANK.questions.find((q) => q.id === "nb1-1");
+W.byId["nb1-0"] = chatQ0;
+W.byId["nb1-1"] = chatQ1;
+W.S = { subject: "nb1", mode: "practice", order: ["nb1-0", "nb1-1"], idx: 0,
+        picks: { "nb1-0": ["A"] }, graded: { "nb1-0": 1 }, text: {}, self: {},
+        state: "", title: "", dur: 0 };
+const chatCtxT = W.chatQuestionCtx();
+ok("对话上下文带题目与选项", chatCtxT && chatCtxT.id === "nb1-0" && chatCtxT.options.length === 2);
+ok("对话上下文带用户选择与判分", chatCtxT.userPick[0] === "A" && chatCtxT.graded === true);
+ok("对话上下文带题库名", chatCtxT.bank && chatCtxT.bank.id === "nb1" && chatCtxT.bank.name === "改过的名字");
+
+delete W.set.agent;
+ok("没 Key 时视为未配置", W.agentCfg() === null);
+W.set.agent = { base: "https://api.example.com/v1/", model: "m1", key: "sk-test" };
+const chatCfgT = W.agentCfg();
+ok("接口地址归一为 /chat/completions", chatCfgT && chatCfgT.url === "https://api.example.com/v1/chat/completions",
+   chatCfgT && chatCfgT.url);
+W.set.agent.base = "https://api.example.com/v1/chat/completions";
+ok("完整端点不再重复拼", W.agentCfg().url === "https://api.example.com/v1/chat/completions");
+W.set.agent.base = "https://api.example.com/v1";
+
+/* 内置通道：地址是 builtin://deepseek 时不要 Key，靠原生侧登录态 */
+W.set.agent = { base: "builtin://deepseek", model: "deepseek-web", key: "" };
+const chatCfgB = W.agentCfg();
+ok("内置通道不需要 Key", chatCfgB !== null && chatCfgB.builtin === true);
+ok("内置通道地址归一", chatCfgB.url === "builtin://deepseek/chat/completions", chatCfgB.url);
+ok("内置通道识别", W.isBuiltin(W.set.agent) === true);
+W.set.agent = { base: "builtin://deepseek/", model: "", key: "" };
+ok("内置通道尾斜杠也能识别", W.agentCfg().builtin === true && W.agentCfg().model === "deepseek-web");
+/* 外部接口仍然要 Key，不能被内置通道的放宽规则带跑 */
+W.set.agent = { base: "https://api.example.com/v1", model: "m1", key: "" };
+ok("外部接口没 Key 仍然算未配置", W.agentCfg() === null);
+W.set.agent = { base: "https://api.example.com/v1", model: "m1", key: "sk-test" };
+
+let chatReqs = [], chatBankSave = null;
+const chatReplies = [
+  { choices: [{ message: { role: "assistant", content: "", tool_calls: [{
+      id: "t1", type: "function", function: { name: "write_explanations",
+      arguments: JSON.stringify({ items: [{ id: "nb1-0", explain: "agent 写的新解析" }] }) } }] } }] },
+  { choices: [{ message: { role: "assistant", content: "选 A：甲就是正确答案。" } }] }
+];
+W.Android = {
+  chatApi: (id, url, body, key) => {
+    chatReqs.push({ url: url, key: key, body: JSON.parse(body) });
+    W.onChatApi(id, 200, JSON.stringify(chatReplies.shift()));
+  },
+  saveBank: (id, json) => { chatBankSave = [id, JSON.parse(json)]; return true; }
+};
+W.chatMsgs = [];
+W.chatBusy = false;
+W.chatPush({ role: "user", text: "这题为什么选 A？", ctx: W.chatQuestionCtx() });
+await W.chatRun(W.agentCfg());
+ok("工具调用写回题库", chatBankSave && chatBankSave[0] === "nb1"
+   && chatBankSave[1].questions.some((q) => q.explain === "agent 写的新解析"),
+   chatBankSave && chatBankSave[0]);
+ok("工具结果同步到内存", W.byId["nb1-0"].explain === "agent 写的新解析", W.byId["nb1-0"].explain);
+const chatLast = W.chatMsgs[W.chatMsgs.length - 1];
+ok("最终回答进入对话", chatLast && chatLast.role === "assistant"
+   && chatLast.text.indexOf("选 A") >= 0, JSON.stringify(chatLast));
+ok("请求带模型、Key 与工具", chatReqs.length === 2 && chatReqs[0].key === "sk-test"
+   && chatReqs[0].body.model === "m1"
+   && chatReqs[0].body.tools.some((t) => t.function.name === "write_explanations"),
+   JSON.stringify(chatReqs[0] && { model: chatReqs[0].body.model, key: chatReqs[0].key }));
+ok("系统消息带上当前题上下文", chatReqs[0].body.messages[0].content.indexOf("甲题") >= 0
+   && chatReqs[0].body.messages[0].content.indexOf("当前题目上下文") >= 0);
+ok("工具结果作为 tool 消息回填", chatReqs[1].body.messages.some((m) => m.role === "tool"
+   && String(m.content).indexOf("\"updated\":1") >= 0));
+
+W.Android = { chatApi: (id) => W.onChatApi(id, 401, JSON.stringify({ error: { message: "invalid api key" } })) };
+let chatErr = null;
+try { await W.chatRun(W.agentCfg()); } catch (e) { chatErr = e; }
+ok("401 抛出可读错误", chatErr && chatErr.message.indexOf("401") >= 0
+   && chatErr.message.indexOf("invalid api key") >= 0, chatErr && chatErr.message);
+ok("错误工具名会抛错", (() => { try { W.chatTool("nope", {}); return false; } catch (e) { return true; } })());
+
+/* ---------- 16. 流式输出 + 思考链 ----------
+   内置通道走 SSE：原生侧边收边推 window.onChatStream，
+   页面把思考链和正文分别累进同一条气泡。 */
+section("[16] 流式输出与思考链");
+ok("空消息渲染成「正在想」", W.chatLiveHtml({ id: "m1", text: "", reasoning: "" })
+   .indexOf("大肥鱼正在想") >= 0);
+const thinkHtml = W.chatLiveHtml({ id: "m1", text: "答案选 A。", reasoning: "先看题干" });
+ok("思考链渲染成可折叠块", thinkHtml.indexOf('<details class="think"') >= 0
+   && thinkHtml.indexOf("先看题干") >= 0);
+ok("答完后思考链默认展开", thinkHtml.indexOf(" open") >= 0);
+ok("流式中思考链默认展开",
+   W.chatLiveHtml({ id: "m1", text: "x", reasoning: "y", live: true }).indexOf(" open") >= 0);
+ok("用户展开后保持展开",
+   W.chatLiveHtml({ id: "m1", text: "x", reasoning: "y", thinkOpen: true }).indexOf(" open") >= 0);
+ok("用户收起后保持收起",
+   W.chatLiveHtml({ id: "m1", text: "x", reasoning: "y", thinkOpen: false }).indexOf(" open") < 0);
+ok("折叠标题带思考字数", thinkHtml.indexOf("思考过程 · 4 字") >= 0, thinkHtml.slice(0, 120));
+ok("正文单独成气泡", thinkHtml.indexOf('<div class="bubble">答案选 A。</div>') >= 0);
+
+/* 内置通道：桩在回包之前先推增量，模拟真实流式 */
+W.set.agent = { base: "builtin://deepseek", model: "deepseek-web", key: "" };
+let streamCalls = [];
+W.Android = {
+  chatApi: (id, url, body) => {
+    W.onChatStream(id, "think", "先读题。");
+    W.onChatStream(id, "think", "再排除 B。");
+    W.onChatStream(id, "text", "选 A：");
+    W.onChatStream(id, "text", "甲就是正确答案。");
+    W.onChatApi(id, 200, JSON.stringify({ choices: [{ message: {
+      role: "assistant", content: "选 A：甲就是正确答案。", reasoning_content: "先读题。再排除 B。" } }] }));
+  }
+};
+W.chatMsgs = [];
+W.chatPush({ role: "user", text: "这题为什么选 A？" });
+await W.chatRun(W.agentCfg());
+const liveMsg = W.chatMsgs[W.chatMsgs.length - 1];
+ok("流式增量进了气泡", liveMsg && liveMsg.text === "选 A：甲就是正确答案。", liveMsg && liveMsg.text);
+ok("思考链与正文分通道", liveMsg && liveMsg.reasoning === "先读题。再排除 B。", liveMsg && liveMsg.reasoning);
+ok("流式结束后不再标 live", liveMsg && liveMsg.live === false);
+ok("答完后思考链仍在（不随 live 消失）", liveMsg && liveMsg.reasoning
+   && W.chatLiveHtml(liveMsg).indexOf('<details class="think"') >= 0);
+ok("答完后思考链仍展开", W.chatLiveHtml(liveMsg).indexOf(" open") >= 0);
+ok("流式只留一条助手气泡",
+   W.chatMsgs.filter((m) => m.role === "assistant").length === 1, W.chatMsgs.length);
+ok("流式消息已落盘", (() => {
+  const raw = sandbox.localStorage.getItem("stk.chat.v1");
+  return raw && JSON.parse(raw).messages.some((m) => m.text === "选 A：甲就是正确答案。");
+})());
+
+/* 工具调用轮次：临时流式气泡要收掉，别把工具 JSON 留给用户看 */
+let toolRound = 0;
+W.Android = {
+  chatApi: (id) => {
+    toolRound++;
+    if (toolRound === 1) {
+      const tc = '<tool_call>{"name":"get_current_question","arguments":{}}</tool_call>';
+      W.onChatStream(id, "text", tc);
+      W.onChatApi(id, 200, JSON.stringify({ choices: [{ message: { role: "assistant",
+        content: "", tool_calls: [{ id: "t1", type: "function",
+          function: { name: "get_current_question", arguments: "{}" } }] } }] }));
+    } else {
+      W.onChatStream(id, "text", "这题问的是甲。");
+      W.onChatApi(id, 200, JSON.stringify({ choices: [{ message: {
+        role: "assistant", content: "这题问的是甲。" } }] }));
+    }
+  }
+};
+W.chatMsgs = [];
+W.chatPush({ role: "user", text: "看看这题" });
+await W.chatRun(W.agentCfg());
+const toolMsgs = W.chatMsgs.filter((m) => m.role === "assistant");
+ok("工具轮次的流式气泡被丢弃", toolMsgs.length === 1 && toolMsgs[0].text === "这题问的是甲。",
+   JSON.stringify(toolMsgs.map((m) => m.text)));
+ok("没有残留 tool_call 文本", W.chatMsgs.every((m) => String(m.text || "").indexOf("<tool_call>") < 0));
+/* 流式期间上游吐 tool_call 时，气泡显示「正在调用工具」而不是一串 JSON */
+ok("工具调用时气泡不亮 JSON",
+   W.chatLiveHtml({ id: "m2", text: '<tool_call>{"name":"x"}', reasoning: "" }).indexOf("正在调用工具") >= 0);
+
+/* 外部接口不流式：没有 onDelta 时推增量不能炸 */
+W.set.agent = { base: "https://api.example.com/v1", model: "m1", key: "sk-test" };
+W.Android = { chatApi: (id) => W.onChatApi(id, 200,
+  JSON.stringify({ choices: [{ message: { role: "assistant", content: "外部接口回答" } }] })) };
+let extOk = true;
+W.chatMsgs = [];
+W.chatPush({ role: "user", text: "问一句" });
+try { await W.chatRun(W.agentCfg()); } catch (e) { extOk = false; }
+ok("外部接口仍按一次性返回", extOk
+   && W.chatMsgs[W.chatMsgs.length - 1].text === "外部接口回答");
+ok("没有订阅时推增量不报错", (() => {
+  try { W.onChatStream("nope", "text", "x"); return true; } catch (e) { return false; }
+})());
+
+/* ---------- 17. 会话（新建 / 历史 / 删除） ---------- */
+section("[17] 大肥鱼会话：新建 / 切换 / 删除");
+/* 上一段把 chatMsgs 清空了，这里先把会话状态摆回干净的一档 */
+W.chatConvs = [{ id: "cv_a", title: "", at: Date.now(), msgs: [] }];
+W.chatCurId = "cv_a";
+W.chatMsgs = [];
+W.chatSave();
+W.chatPush({ role: "user", text: "第一个会话里问的这道题怎么解" });
+W.chatPush({ role: "assistant", text: "选 A，因为甲。" });
+W.chatSave();
+ok("首条用户消息成为会话标题",
+   W.chatCurConv().title.indexOf("第一个会话") === 0, W.chatCurConv().title);
+ok("会话落了盘", (() => {
+  const s = W.store.read("stk.convs.v1", null);
+  return s && s.list && s.list.length === 1 && s.list[0].msgs.length === 2;
+})());
+
+W.chatNewConv();
+ok("新建会话后消息清空", W.chatMsgs.length === 0);
+ok("新建会话后当前会话换了", W.chatCurId !== "cv_a", W.chatCurId);
+ok("新建会话后列表有两个", W.chatConvs.length === 2, "实际 " + W.chatConvs.length);
+const newId = W.chatCurId;
+W.chatPush({ role: "user", text: "第二个会话的问题" });
+W.chatSave();
+
+W.chatLoadConv("cv_a");
+ok("切回旧会话能看到旧消息", W.chatMsgs.length === 2 && W.chatMsgs[0].text.indexOf("第一个会话") === 0);
+ok("切换后当前会话 id 正确", W.chatCurId === "cv_a", W.chatCurId);
+ok("两个会话的内容互不污染",
+   W.chatConvs.filter((c) => c.id === newId)[0].msgs[0].text === "第二个会话的问题");
+
+W.chatLoadConv("cv_a");
+W.chatNewConv();
+ok("连续新建不重复用 id", W.chatConvs.length === 3);
+const beforeDel = W.chatConvs.length;
+W.chatCurId = W.chatConvs[1].id;
+W.chatMsgs = (W.chatCurConv().msgs || []).slice();
+W.convDel(W.chatConvs[1].id);
+ok("删除会话后列表少一个", W.chatConvs.length === beforeDel - 1, "实际 " + W.chatConvs.length);
+ok("删掉当前会话后自动切到别的", !!W.chatCurConv() && W.chatCurId !== W.chatConvs[1].id);
+
+/* 删到只剩一个再删：应该留下一个空会话，而不是变成零会话 */
+while (W.chatConvs.length > 1) W.chatConvs.pop();
+W.chatCurId = W.chatConvs[0].id;
+W.chatMsgs = [];
+W.chatSave();
+W.convDel(W.chatConvs[0].id);
+ok("删光后自动留一个空会话", W.chatConvs.length === 1 && W.chatCurConv() !== null);
+
+/* 底部导航：大肥鱼那颗不能有 data-tab（否则会被 goTab 标成选中态） */
+ok("大肥鱼 tab 有独立 id", /id="tabAsk"/.test(html));
+ok("大肥鱼 tab 没有 data-tab", !/id="tabAsk"[^>]*data-tab/.test(html));
+ok("大肥鱼 tab 用答题页同款头像",
+   /class="tab ask-tab"[^]*?agent-light\.png[^]*?agent-dark\.png/.test(html));
+ok("大肥鱼 tab 在题库与错题本之间",
+   html.indexOf('data-tab="bank"') < html.indexOf('id="tabAsk"')
+   && html.indexOf('id="tabAsk"') < html.indexOf('data-tab="wrong"'));
+
+/* ---------- 18. 卡死 / 重试 / 停止 ---------- */
+section("[18] 大肥鱼：重试提示 / 停止 / 超时兜底");
+W.chatMsgs = [];
+W.chatWait = {};
+W.chatLastId = "";
+W.chatGuard = 0;
+W.chatBusy = false;
+W.set.agent = { base: "builtin://deepseek", model: "deepseek-web", key: "" };
+W.Android = { dsStatus: () => JSON.stringify({ loggedIn: true, mobile: "199******41" }) };
+
+/* 重试提示：原生侧推 onChatRetry 时要落一条灰字，且不进对话历史 */
+W.chatMsgs = [];
+W.chatWait = { c1: { resolve: () => {}, reject: () => {}, onDelta: null } };
+W.onChatRetry("c1", 1, "网络不稳定（timeout），正在重试 1/2");
+ok("重试提示进了对话", W.chatMsgs.some((m) => m.role === "note"
+   && String(m.text).indexOf("正在重试") >= 0), JSON.stringify(W.chatMsgs.map((m) => m.role)));
+ok("重试提示不写进会话存档", (() => {
+  const s = W.store.read("stk.convs.v1", null);
+  return !s || !s.list.some((c) => (c.msgs || []).some((m) => String(m.text).indexOf("正在重试") >= 0));
+})());
+/* 没有对应请求时的重试提示不能凭空插一条 */
+const beforeOrphan = W.chatMsgs.length;
+W.onChatRetry("nope", 2, "x");
+ok("无主请求的重试提示被忽略", W.chatMsgs.length === beforeOrphan);
+
+/* 停止：忙的时候「发送」按钮变成「停止」，点了要立刻收手 */
+W.chatMsgs = [];
+W.chatBusy = true;
+W.chatLastId = "c9";
+let cancelled = "";
+W.Android.dsCancel = (id) => { cancelled = id; };
+let rejected = "";
+W.chatWait = { c9: { resolve: () => {}, reject: (e) => { rejected = e.message; }, onDelta: null } };
+W.chatRender();
+const sendEl = W.document.getElementById("chatSend");
+ok("忙时发送按钮变「停止」", sendEl.textContent === "停止", sendEl.textContent);
+ok("停止按钮带独立样式", String(sendEl.className).indexOf("stop") >= 0, sendEl.className);
+W.chatStop();
+ok("停止后不再忙", W.chatBusy === false);
+ok("停止会掐掉原生连接", cancelled === "c9", cancelled);
+ok("停止会立刻让等待中的请求失败", rejected === "已停止", rejected);
+ok("停止后按钮回到「发送」", sendEl.textContent === "发送", sendEl.textContent);
+
+/* 长等待：页面只提示、不硬超时（硬超时会误杀真的在长思考的合法回答） */
+W.chatMsgs = [];
+W.chatBusy = true;
+W.chatWait = {};
+W.Android.chatApi = () => {};      // 原生侧收下了请求，但一直不回包
+W.document.getElementById("chatHint").textContent = "原提示";
+let guardRejected = false;
+W.chatRequest(W.agentCfg(), { messages: [] }, null).catch(() => { guardRejected = true; });
+ok("等太久不硬超时（不误杀长回答）", guardRejected === false);
+ok("等太久给的是「可以停止」提示",
+   W.document.getElementById("chatHint").textContent.indexOf("停止") >= 0,
+   W.document.getElementById("chatHint").textContent);
+W.chatBusy = false;
+
+/* ---------- 19. 大肥鱼接入方式：手机号 / API Key 二选一 ---------- */
+section("[19] 接入方式二选一");
+delete W.set.agent;
+ok("没配过时默认是 API Key 模式", W.agentMode() === "key");
+W.set.agent = { base: "builtin://deepseek", model: "deepseek-web", key: "" };
+ok("老数据（内置地址无 mode）推断为登录模式", W.agentMode() === "login");
+W.set.agent = { base: "https://api.example.com/v1", model: "m1", key: "sk-test" };
+ok("老数据（外部地址无 mode）推断为 Key 模式", W.agentMode() === "key");
+
+/* 切到登录：地址换成内置通道，原来的 Key 留着备用但不参与 */
+W.agSwitchMode();
+ok("切到登录模式", W.agentMode() === "login" && W.agentCfg().builtin === true);
+ok("切到登录后不需要 Key", W.agentCfg().key === "");
+ok("切到登录后模型改成 deepseek-web", W.agentCfg().model === "deepseek-web");
+ok("切到登录把原来的配置存进 saved", W.set.agent.saved && W.set.agent.saved.key === "sk-test"
+   && W.set.agent.saved.base === "https://api.example.com/v1",
+   JSON.stringify(W.set.agent.saved));
+
+/* 切回 Key：不能把 builtin:// 留在地址里，否则又变成登录模式 */
+W.agSwitchMode();
+ok("切回 Key 模式", W.agentMode() === "key");
+ok("切回 Key 后地址不再是内置通道", !W.isBuiltin(W.set.agent), W.set.agent.base);
+ok("切回 Key 后模型不是 deepseek-web", W.set.agent.model !== "deepseek-web", W.set.agent.model);
+ok("切回 Key 后还原原来的地址", W.set.agent.base === "https://api.example.com/v1", W.set.agent.base);
+ok("切回 Key 后原来的 Key 还在", W.set.agent.key === "sk-test");
+ok("切回 Key 后能直接对话", W.agentCfg() !== null);
+
+/* 自定义接口地址必须能原样往返，不能被默认值覆盖掉 */
+W.set.agent = { base: "https://my-own.example.com/v3", model: "my-model", key: "sk-own", mode: "key" };
+W.agSwitchMode();
+W.agSwitchMode();
+ok("自定义地址切换后原样还原", W.set.agent.base === "https://my-own.example.com/v3", W.set.agent.base);
+ok("自定义模型切换后原样还原", W.set.agent.model === "my-model", W.set.agent.model);
+ok("自定义 Key 切换后原样还原", W.set.agent.key === "sk-own", W.set.agent.key);
+
+/* 面板只显示当前那一种，不并排两套 */
+W.Android = {
+  dsStatus: () => JSON.stringify({ loggedIn: true, mobile: "199******41",
+                                   base: "builtin://deepseek", model: "deepseek-web" })
+};
+W.set.agent = { base: "builtin://deepseek", model: "deepseek-web", key: "", mode: "login" };
+W.openAgentCfg();
+const loginHtml = String(W.document.getElementById("sheet3").innerHTML);
+ok("登录模式不显示接口地址输入框", loginHtml.indexOf('id="agBase"') < 0);
+ok("登录模式不显示 API Key 输入框", loginHtml.indexOf('id="agKey"') < 0);
+ok("登录模式显示手机号", loginHtml.indexOf("199******41") >= 0);
+ok("登录模式显示切换按钮", loginHtml.indexOf("agSwitchMode()") >= 0);
+ok("切换按钮写明当前是手机号登录", loginHtml.indexOf("当前：手机号登录") >= 0);
+ok("切换按钮写明点击后换成 API Key", loginHtml.indexOf("点这里换成 API Key") >= 0);
+while (W.openLayers.length) W.closeTop();
+
+W.set.agent = { base: "https://api.example.com/v1", model: "m1", key: "sk-test", mode: "key" };
+W.openAgentCfg();
+const keyHtml = String(W.document.getElementById("sheet3").innerHTML);
+ok("Key 模式不显示登录按钮", keyHtml.indexOf("dsLoginNow()") < 0);
+ok("Key 模式显示三个输入框", keyHtml.indexOf('id="agBase"') >= 0
+   && keyHtml.indexOf('id="agModel"') >= 0 && keyHtml.indexOf('id="agKey"') >= 0);
+ok("Key 模式切换按钮写明点击后换成手机号登录",
+   keyHtml.indexOf("当前：API Key") >= 0 && keyHtml.indexOf("点这里换成 手机号登录") >= 0);
+while (W.openLayers.length) W.closeTop();
+
+/* 保存：走 Key 模式时要落 mode，不能留在登录模式 */
+W.document.getElementById("agBase").value = "https://api.example.com/v2/";
+W.document.getElementById("agModel").value = "m2";
+W.document.getElementById("agKey").value = "sk-2";
+W.agentCfgSave();
+ok("保存后进入 Key 模式", W.agentMode() === "key" && W.set.agent.mode === "key",
+   W.set.agent.mode);
+ok("保存时地址去掉尾斜杠", W.set.agent.base === "https://api.example.com/v2", W.set.agent.base);
+
+/* 清理：不留 API Key / 会话 / 改写过的解析 */
+delete W.Android;
+delete W.set.agent;
+W.chatMsgs = [];
+W.chatWait = {};
+W.chatLastId = "";
+W.chatGuard = 0;
+W.chatConvs = [];
+W.chatCurId = "";
+W.S = null;
+W.byId["nb1-0"].explain = "";
+
 /* ---------- 结果 ---------- */
 console.log("\n" + "=".repeat(46));
 if (fails.length) {

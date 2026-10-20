@@ -62,6 +62,36 @@ goto afterSniff
 echo   [SKIP] android.jar or pdfbox classes.jar not found; sniff test skipped
 :afterSniff
 echo.
+echo === deepseek hash (Keccak-23 + pow solve) ===
+rem android.jar ships org.json but the desktop JDK does not. Cache one copy so
+rem these checks stay offline after the first successful run.
+set "JSON_JAR=%~dp0..\build\test-libs\json-20240303.jar"
+if not exist "%JSON_JAR%" (
+  if not exist "%~dp0..\build\test-libs" mkdir "%~dp0..\build\test-libs"
+  powershell -NoProfile -ExecutionPolicy Bypass -Command "try { Invoke-WebRequest -Uri 'https://repo1.maven.org/maven2/org/json/json/20240303/json-20240303.jar' -OutFile '%JSON_JAR%' -UseBasicParsing -TimeoutSec 60 } catch { }"
+)
+if not exist "%JSON_JAR%" goto nojson
+javac -encoding UTF-8 -cp "%JSON_JAR%" -d "%OUT%" "%~dp0..\app\src\main\java\com\fan\shuatiku\DeepSeekHashV1.java" "%~dp0..\app\src\main\java\com\fan\shuatiku\DeepSeekClient.java" "%~dp0..\app\src\main\java\com\fan\shuatiku\DeepSeekWeb.java" "%~dp0DeepSeekHashTest.java"
+if errorlevel 1 goto fail
+java "-Dfile.encoding=UTF-8" -cp "%OUT%;%JSON_JAR%" com.fan.shuatiku.DeepSeekHashTest
+if errorlevel 1 goto fail
+echo.
+echo === deepseek client (prompt flatten / tool_call / sse dialect) ===
+javac -encoding UTF-8 -cp "%JSON_JAR%" -d "%OUT%" "%~dp0..\app\src\main\java\com\fan\shuatiku\DeepSeekHashV1.java" "%~dp0..\app\src\main\java\com\fan\shuatiku\DeepSeekClient.java" "%~dp0..\app\src\main\java\com\fan\shuatiku\DeepSeekWeb.java" "%~dp0DeepSeekClientTest.java"
+if errorlevel 1 goto fail
+java "-Dfile.encoding=UTF-8" -cp "%OUT%;%JSON_JAR%" com.fan.shuatiku.DeepSeekClientTest
+if errorlevel 1 goto fail
+goto afterJson
+:nojson
+echo   [SKIP] org.json jar unavailable (no network on first run); deepseek checks skipped
+:afterJson
+echo.
+echo === mcp server (loopback / token / 202) ===
+javac -encoding UTF-8 -d "%OUT%" "%~dp0..\app\src\main\java\com\fan\shuatiku\McpServer.java" "%~dp0McpServerTest.java"
+if errorlevel 1 goto fail
+java -cp "%OUT%" McpServerTest
+if errorlevel 1 goto fail
+echo.
 echo === release manifest (version/apk name single source of truth) ===
 javac -encoding UTF-8 -d "%OUT%" "%~dp0..\app\src\main\java\com\fan\shuatiku\DownloadSources.java" "%~dp0..\app\src\main\java\com\fan\shuatiku\ReleaseManifest.java" "%~dp0ReleaseManifestTest.java"
 if errorlevel 1 goto fail

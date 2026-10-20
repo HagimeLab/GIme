@@ -6,12 +6,16 @@ import java.io.FileInputStream;
 import java.io.FileOutputStream;
 import java.io.InputStream;
 import java.io.OutputStream;
+import java.net.HttpURLConnection;
+import java.net.URL;
 import java.util.ArrayDeque;
 
 import org.json.JSONArray;
 import org.json.JSONObject;
 
 import android.app.Activity;
+import android.content.ClipData;
+import android.content.ClipboardManager;
 import android.content.ContentValues;
 import android.content.Intent;
 import android.database.Cursor;
@@ -49,11 +53,28 @@ public class MainActivity extends Activity {
 
     /** 页面报告 ready 之前收到的导入请求排队等它，ready 后按序消费，每条只消费一次。 */
     private final ArrayDeque<Uri> pendingImports = new ArrayDeque<Uri>();
-    private boolean pageReady;
+    private volatile boolean pageReady;
     private boolean importing;
 
     private static final String PREFS = "ui";
     private static final String PREF_LIGHT = "light";
+    private static final String PREFS_MCP = "mcp";
+    private static final String PREF_MCP_ON = "on";
+    private static final String PREF_MCP_TOKEN = "token";
+
+    private volatile McpServer mcp;
+    private volatile String mcpError = "";
+    private long mcpSeq;
+    private final java.util.concurrent.ConcurrentHashMap<String, McpWait> mcpWait =
+            new java.util.concurrent.ConcurrentHashMap<String, McpWait>();
+
+    /** 大肥鱼的后端：走 App 内置的 DeepSeek 反代，不需要 API Key。 */
+    private DeepSeekBridge dsBridge;
+
+    private static final class McpWait {
+        final java.util.concurrent.CountDownLatch latch = new java.util.concurrent.CountDownLatch(1);
+        volatile String response;
+    }
 
     /**
      * 关掉整棵子树的触摸反馈。setHapticFeedbackEnabled 不是继承属性，
@@ -106,6 +127,11 @@ public class MainActivity extends Activity {
         updater = new Updater(new Updater.Sink() {
             @Override public void toJs(String script) { js(script); }
             @Override public Activity activity() { return MainActivity.this; }
+        });
+        /* 大肥鱼改走 App 内置通道：页面发请求 → 这里直连 DeepSeek 网页协议。
+           用户只需要用官方手机号登录一次，不再需要 API Key 或外部反代服务。 */
+        dsBridge = new DeepSeekBridge(this, new DeepSeekBridge.Sink() {
+            @Override public void toJs(String script) { js(script); }
         });
         web.loadUrl("file:///android_asset/index.html");
         setContentView(web);
@@ -339,6 +365,99 @@ public class MainActivity extends Activity {
         }
     }
 
+    /* ---------------- MCP 服务 ----------------
+       HTTP 只绑 127.0.0.1；口令存在 SharedPreferences 里，页面只负责显示与复制。
+       工具分发在页面 JS（mcpDispatch），这里把请求推进 WebView、等它回包。 */
+
+    private synchronized void mcpStartIfEnabled() {
+        android.content.SharedPreferences p = getSharedPreferences(PREFS_MCP, MODE_PRIVATE);
+        if (!p.getBoolean(PREF_MCP_ON, false)) return;
+        if (mcp != null && mcp.isRunning()) return;
+        if (web == null || !pageReady) return;
+        String token = p.getString(PREF_MCP_TOKEN, "");
+        if (token == null || token.isEmpty()) {
+            token = McpServer.randomHex(24);
+            p.edit().putString(PREF_MCP_TOKEN, token).apply();
+        }
+        McpServer s = new McpServer(McpServer.PORT, token, new McpServer.Handler() {
+            @Override public String handle(String requestJson) { return mcpHandle(requestJson); }
+        });
+        if (s.start()) {
+            mcp = s;
+            mcpError = "";
+        } else {
+            mcp = null;
+            mcpError = s.error();
+        }
+    }
+
+    private synchronized String mcpStatusJson() {
+        android.content.SharedPreferences p = getSharedPreferences(PREFS_MCP, MODE_PRIVATE);
+        boolean on = p.getBoolean(PREF_MCP_ON, false);
+        if (on) mcpStartIfEnabled();
+        String token = p.getString(PREF_MCP_TOKEN, "");
+        boolean running = mcp != null && mcp.isRunning();
+        try {
+            return new JSONObject()
+                    .put("enabled", on)
+                    .put("running", running)
+                    .put("port", McpServer.PORT)
+                    .put("token", token == null ? "" : token)
+                    .put("error", running ? "" : (mcpError == null ? "" : mcpError))
+                    .toString();
+        } catch (Exception e) {
+            return "{\"enabled\":false,\"running\":false,\"port\":" + McpServer.PORT
+                    + ",\"token\":\"\",\"error\":\"status failed\"}";
+        }
+    }
+
+    private synchronized String mcpSetEnabled(boolean on) {
+        getSharedPreferences(PREFS_MCP, MODE_PRIVATE).edit().putBoolean(PREF_MCP_ON, on).apply();
+        if (on) {
+            mcpStartIfEnabled();
+        } else {
+            if (mcp != null) { mcp.stop(); mcp = null; }
+            mcpError = "";
+        }
+        return mcpStatusJson();
+    }
+
+    private synchronized String mcpRotateToken() {
+        String t = McpServer.randomHex(24);
+        getSharedPreferences(PREFS_MCP, MODE_PRIVATE).edit().putString(PREF_MCP_TOKEN, t).apply();
+        if (mcp != null) mcp.setToken(t);
+        return mcpStatusJson();
+    }
+
+    /** HTTP 线程调用；把请求塞给页面并等回包，页面通过 Android.mcpReply 交回。 */
+    private String mcpHandle(String json) {
+        if (web == null || !pageReady) {
+            return "{\"jsonrpc\":\"2.0\",\"id\":null,\"error\":{\"code\":-32002,\"message\":\"page not ready\"}}";
+        }
+        final String id;
+        synchronized (this) { id = "mcp" + (++mcpSeq); }
+        McpWait w = new McpWait();
+        mcpWait.put(id, w);
+        js("window.__mcpHandle(" + quote(id) + "," + quote(json) + ")");
+        try {
+            w.latch.await(20, java.util.concurrent.TimeUnit.SECONDS);
+        } catch (InterruptedException ignored) {
+        }
+        mcpWait.remove(id);
+        return w.response == null
+                ? "{\"jsonrpc\":\"2.0\",\"id\":null,\"error\":{\"code\":-32603,\"message\":\"no response within 20s\"}}"
+                : w.response;
+    }
+
+    @Override
+    protected void onDestroy() {
+        synchronized (this) {
+            if (mcp != null) { mcp.stop(); mcp = null; }
+        }
+        if (dsBridge != null) { dsBridge.shutdown(); dsBridge = null; }
+        super.onDestroy();
+    }
+
     private class Bridge {
 
         /** 页面把脚本跑完、事件函数都挂上之后调这里，之后才开始放行排队的导入。 */
@@ -348,8 +467,145 @@ public class MainActivity extends Activity {
                 @Override public void run() {
                     pageReady = true;
                     pumpImports();
+                    mcpStartIfEnabled();
                 }
             });
+        }
+
+        /** MCP 服务的开关、状态与口令；页面设置页用。 */
+        @JavascriptInterface
+        public String mcpStatus() {
+            return mcpStatusJson();
+        }
+
+        @JavascriptInterface
+        public String mcpSetEnabled(boolean on) {
+            return MainActivity.this.mcpSetEnabled(on);
+        }
+
+        @JavascriptInterface
+        public String mcpRotateToken() {
+            return MainActivity.this.mcpRotateToken();
+        }
+
+        /** 页面把工具执行结果交回 HTTP 线程。 */
+        @JavascriptInterface
+        public void mcpReply(String id, String json) {
+            McpWait w = mcpWait.get(id);
+            if (w == null) return;
+            w.response = json == null ? "" : json;
+            w.latch.countDown();
+        }
+
+        /** 设置页复制地址 / 口令。 */
+        @JavascriptInterface
+        public boolean copyText(String text) {
+            try {
+                ClipboardManager cm = (ClipboardManager) getSystemService(CLIPBOARD_SERVICE);
+                if (cm == null) return false;
+                cm.setPrimaryClip(ClipData.newPlainText("GIme", text == null ? "" : text));
+                return true;
+            } catch (Exception e) {
+                return false;
+            }
+        }
+
+        /**
+         * 大肥鱼对话的 HTTP 出口。
+         * 页面是 file:// 源，WebView 里直接 fetch 外部 API 会被 CORS 拦；
+         * 这里用原生 HTTP，结果异步回抛给页面（window.onChatApi）。
+         */
+        @JavascriptInterface
+        public void chatApi(final String id, final String url, final String body, final String key) {
+            /* 内置通道：页面把接口地址填成 builtin://deepseek 就走到这里。
+               这条路不需要 API Key —— 用的是 App 里存的 DeepSeek 登录态。 */
+            if (url != null && url.startsWith("builtin://")) {
+                if (dsBridge == null) {
+                    js("window.onChatApi(" + quote(id) + ",502,"
+                            + quote("{\"error\":{\"message\":\"内置通道未就绪\"}}") + ")");
+                    return;
+                }
+                dsBridge.ask(id, body);
+                return;
+            }
+            new Thread(new Runnable() {
+                @Override public void run() {
+                    int code = 0;
+                    String text = "";
+                    HttpURLConnection c = null;
+                    try {
+                        if (url == null || !(url.startsWith("https://") || url.startsWith("http://"))) {
+                            throw new IllegalArgumentException("接口地址要以 http(s):// 开头");
+                        }
+                        c = (HttpURLConnection) new URL(url).openConnection();
+                        c.setRequestMethod("POST");
+                        c.setConnectTimeout(20000);
+                        c.setReadTimeout(90000);
+                        c.setRequestProperty("Content-Type", "application/json");
+                        c.setRequestProperty("Accept", "application/json");
+                        if (key != null && !key.isEmpty()) {
+                            c.setRequestProperty("Authorization", "Bearer " + key);
+                        }
+                        byte[] b = body == null ? new byte[0] : body.getBytes("UTF-8");
+                        c.setFixedLengthStreamingMode(b.length);
+                        c.setDoOutput(true);
+                        OutputStream os = c.getOutputStream();
+                        try { os.write(b); } finally { os.close(); }
+                        code = c.getResponseCode();
+                        InputStream in = code >= 400 ? c.getErrorStream() : c.getInputStream();
+                        ByteArrayOutputStream out = new ByteArrayOutputStream();
+                        if (in != null) {
+                            try {
+                                byte[] buf = new byte[8192];
+                                int n;
+                                while ((n = in.read(buf)) > 0) {
+                                    out.write(buf, 0, n);
+                                    if (out.size() > 4 * 1024 * 1024) break;
+                                }
+                            } finally {
+                                in.close();
+                            }
+                        }
+                        text = new String(out.toByteArray(), "UTF-8");
+                    } catch (Exception e) {
+                        code = 0;
+                        text = e.getMessage() == null ? e.getClass().getSimpleName() : e.getMessage();
+                    } finally {
+                        if (c != null) c.disconnect();
+                    }
+                    final int fc = code;
+                    final String ft = text;
+                    js("window.onChatApi(" + quote(id) + "," + fc + "," + quote(ft) + ")");
+                }
+            }, "gime-chat").start();
+        }
+
+        /** 大肥鱼的登录态：页面据此决定显示「登录」还是「已登录」。 */
+        @JavascriptInterface
+        public String dsStatus() {
+            return DeepSeekBridge.statusJson(MainActivity.this);
+        }
+
+        /** 打开手机号登录页。 */
+        @JavascriptInterface
+        public void dsLogin() {
+            runOnUiThread(new Runnable() {
+                @Override public void run() {
+                    if (dsBridge != null) dsBridge.openLogin();
+                }
+            });
+        }
+
+        /** 退出登录：清掉本地 token。 */
+        @JavascriptInterface
+        public void dsLogout() {
+            DeepSeekBridge.clear(MainActivity.this);
+        }
+
+        /** 取消一个还在跑的大肥鱼请求（掐断连接，不用等到超时）。 */
+        @JavascriptInterface
+        public void dsCancel(String id) {
+            if (dsBridge != null) dsBridge.cancel(id);
         }
 
         /** 页面换肤时同步系统栏图标深浅和窗口底色。 */

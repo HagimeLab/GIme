@@ -53,6 +53,18 @@ GIme 是一款面向 Android
 -   提供字号、震动反馈、答题后是否自动展开解析等设置。
 -   支持清理练习进度及管理个人题目清单。
 
+### 大肥鱼答疑助手
+
+答题页中间的大肥鱼头像可以随时叫出对话，它会读取当前题目和题库来回答，
+也能把解析或参考答案写回题库。两种接法，在「我的 → 大肥鱼」顶部按钮二选一：
+
+-   **手机号直连**（推荐）：用手机号登录一次 DeepSeek，之后 App 自己直连，
+    不需要 API Key，也不需要电脑。详见 [docs/大肥鱼直连DeepSeek.md](docs/大肥鱼直连DeepSeek.md)。
+-   **外部 API**：填任意 OpenAI 兼容的接口地址和 Key。
+
+切换按钮第一行写「当前」用什么，第二行写点下去会换成什么；同一时刻只显示
+当前那一种配置，不会同时要你登录又填 Key。
+
 ### 版本更新
 
 应用提供版本检查功能：检测到新版本时，弹窗会显示当前版本、最新版本、发布日期（更新源提供时）和更新日志，确认后再进入下载与系统安装流程。
@@ -94,6 +106,16 @@ GIme
   `app/src/main/java/com/fan/shuatiku/TextExtract.java`    从支持的文本题库文件中提取正文，供题目识别流程使用。
 
   `app/src/main/java/com/fan/shuatiku/Updater.java`        处理版本信息获取、更新下载及系统安装流程。
+
+  `app/src/main/java/com/fan/shuatiku/DeepSeekBridge.java` 大肥鱼的内置通道：把页面的 OpenAI 请求接到 DeepSeek 网页版，并维护登录态与会话。
+
+  `app/src/main/java/com/fan/shuatiku/DeepSeekWeb.java`    DeepSeek 网页版私有协议客户端：建会话、算 PoW、解析流式方言。
+
+  `app/src/main/java/com/fan/shuatiku/DeepSeekClient.java` OpenAI 协议层：messages 拍平成 prompt，`<tool_call>` 解析回 `tool_calls`。
+
+  `app/src/main/java/com/fan/shuatiku/DeepSeekHashV1.java` 上游 PoW 用的 Keccak 变体实现，多线程暴破。
+
+  `app/src/main/java/com/fan/shuatiku/DeepSeekLoginActivity.java` 手机号登录页，只负责把登录结果搬进 App。
 
   `app/src/main/java/com/fan/shuatiku/Ver.java`            集中提供应用版本相关信息。
 

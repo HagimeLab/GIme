@@ -46,6 +46,14 @@
                 <data android:mimeType="*/*" />
             </intent-filter>
         </activity>
+
+        <!-- 大肥鱼的 DeepSeek 手机号登录：真浏览器登录一次，之后 App 自己当反代。
+             人机验证（数美/hCaptcha）只能由真人在真实浏览器里完成，所以这步不可自动化。 -->
+        <activity
+            android:name=".DeepSeekLoginActivity"
+            android:exported="false"
+            android:label="登录 DeepSeek"
+            android:windowSoftInputMode="adjustResize" />
     </application>
 
 </manifest>
