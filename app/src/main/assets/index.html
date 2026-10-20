@@ -833,6 +833,10 @@ function paperTitle() {
    Chrome 80 的 element.animate() 永远不触发 onfinish，所以时序全部用 setTimeout 串，
    并且每个动画都留引用，中断时 cancel 掉——否则 fill:"forwards" 会把终值钉在元素上。 */
 var SH_IN = 350, SH_FLY = 300, SH_LAND = 200, SH_OUT = 450, SH_OUT_FADE = 120;
+/* 返回的尾段：幽灵缩到终点附近后，和真卡片交叉淡入淡出的起点。
+   按 SH_EASE 算，走到一半时幽灵已经是目标尺寸的 98%，剩下的位移肉眼看不出来，
+   从这里换层最稳；再早就得露出比卡片小一圈的幽灵边。 */
+var SH_OUT_LAND = 225;
 var SH_EASE = "cubic-bezier(0.16,1,0.3,1)";
 var SH = null, SH_nodes = [], SH_back = [], SH_anim = [], SH_timer = [];
 
@@ -906,19 +910,22 @@ function shGhost(r, rad, opening) {
   g.style.height = H + "px";
   document.body.appendChild(shTrack(g));
   shAnim(g, kf, opening ? SH_IN : SH_OUT);
+  return g;
 }
 
 /* 文字飞进 .q-head：克隆体按"终点"排版摆在终点矩形，位置用 transform 平移回去，
    字号则真的动画 font-size。
    不用 scale 模拟字号变化：缩放是把文字按一个尺寸光栅化后再放大/缩小，逐帧取整会让
-   字形边界来回跳——矩形一动不动，看着却是"卡片在抖"。规格要的"字号渐变"本来也是这个意思。 */
-function shFlyLabel(src, dst) {
+   字形边界来回跳——矩形一动不动，看着却是"卡片在抖"。规格要的"字号渐变"本来也是这个意思。
+   返回时把终点换成原卡片上的文字，方向和时长由调用方给（dur 缺省走进入的 300ms）；
+   text 用来只飞题库名——#qSub 里还拼着"· 1 / 320"，整段飞回卡片会把进度也带进去。 */
+function shFlyLabel(src, dst, dur, text) {
   if (!src || !dst) return;
   var a = src.getBoundingClientRect(), b = dst.getBoundingClientRect();
   var cs = getComputedStyle(dst), ss = getComputedStyle(src);
   var el = document.createElement("div");
   el.className = "share-fly";
-  el.textContent = src.textContent;
+  el.textContent = text == null ? src.textContent : text;
   el.style.left = b.left + "px";
   el.style.top = b.top + "px";
   el.style.width = b.width + "px";
@@ -932,7 +939,7 @@ function shFlyLabel(src, dst) {
   shAnim(el, [
     { transform: "translate(" + dx + "px," + dy + "px)", fontSize: ss.fontSize, lineHeight: ss.lineHeight },
     { transform: "translate(0,0)", fontSize: cs.fontSize, lineHeight: cs.lineHeight }
-  ], SH_FLY);
+  ], dur || SH_FLY);
 }
 
 /* 次要元素"随容器放大淡出"：幽灵是盖在列表上的纯色矩形，原元素开场就被压住，
@@ -1037,14 +1044,43 @@ function shClose() {
      幽灵夹在 #quiz 底下，淡出这一段正好把它盖住，不会提前露出缩小的矩形。 */
   card.style.opacity = "0";
   shHold(function () { card.style.opacity = ""; });
-  shGhost(r, rad, false);
+  var ghost = shGhost(r, rad, false);
   shAnim(quiz, [{ opacity: 1 }, { opacity: 0 }], SH_OUT_FADE);
+  var labSel = SH.tf ? "b" : ".bk-name";
+  var labSrc = document.getElementById(SH.tf ? "qTitle" : "qSub");
+  var labTx = SH.tf ? null : (S ? (S.title || subjName(S.subject)) : null);
+  var c2 = null, lab = null;
+  /* 幽灵缩到终点附近（SH_OUT_LAND 时已到目标尺寸的 98%）再和真卡片交叉淡入。
+     之前幽灵全程是不透明纯色板：卡片矩形从返回第一帧空到第 450ms，内容要等
+     幽灵移除才出现——用户报的"卡片空白约 0.5 秒"就是这一段。同一点把真卡片
+     淡进来、幽灵同步淡出，两者背景同色，收尾重合，移除幽灵那一帧看不出来。
+     阴影跟着卡片一起淡入，正好接上"圆角/背景/阴影复原"这一步。
+     计时按整段转场的绝对时间挂，不套在淡出回调里面：回调晚到一点，
+     交叉淡入也得在 SH_OUT 之前收完，不然幽灵会在半透明时被硬删。 */
+  shAt(SH_OUT_LAND, function () {
+    if (!c2) return;
+    shAnim(ghost, [{ opacity: 1 }, { opacity: 0 }], SH_OUT - SH_OUT_LAND);
+    shAnim(c2, [{ opacity: 0 }, { opacity: 1 }], SH_OUT - SH_OUT_LAND);
+  });
   shAt(SH_OUT_FADE, function () {
     quiz.classList.remove("on", "snap");
     renderAll();
+    /* 题库页的堆叠样式原本是下一帧才补的。这里量完卡片位置、造好飞行标签之后，
+       中途再被 stackCards 改一次 transform 就对不上了，所以先同步补一次
+       （rAF 那一趟再跑一遍是幂等的）。 */
+    if (curTab === "bank") stackCards();
+    c2 = shCard();
+    if (!c2) return;
     /* renderAll 会重建列表，新节点得再藏一次，否则它会隔着幽灵露出来 */
-    var c2 = shCard();
-    if (c2) { c2.style.opacity = "0"; shHold(function () { c2.style.opacity = ""; }); }
+    c2.style.opacity = "0";
+    shHold(function () { c2.style.opacity = ""; });
+    lab = c2.querySelector(labSel);
+    if (lab) {
+      /* 这枚文字由飞行标签去落位；卡片同时淡入的话会在落点看到两个一样的字 */
+      lab.style.visibility = "hidden";
+      shHold(function () { lab.style.visibility = ""; });
+      shFlyLabel(labSrc, lab, SH_OUT - SH_OUT_FADE, labTx);
+    }
   });
   shAt(SH_OUT, function () { SH = null; shAbort(); });
   return true;
