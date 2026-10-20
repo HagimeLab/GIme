@@ -61,7 +61,15 @@ public final class PdfText {
                 stripper.setLineSeparator("\n");
                 stripper.setParagraphEnd("\n");
                 stripper.setPageEnd("\n");
-                text = stripper.getText(doc);
+                /* 逐页取，才能在这里去掉页末页码；整本一次取出来后就分不清
+                   哪一行是页末的「3」、哪一行是正文里的数字了 */
+                StringBuilder all = new StringBuilder();
+                for (int p = 1; p <= pages; p++) {
+                    stripper.setStartPage(p);
+                    stripper.setEndPage(p);
+                    all.append(PdfTidy.dropPageFooter(stripper.getText(doc), p));
+                }
+                text = all.toString();
             } catch (NoClassDefFoundError e) {
                 throw new TextExtract.Reject("这个 PDF 的字体编码不受支持，请换一个文件或另存为 .docx 再导入");
             } catch (IOException e) {

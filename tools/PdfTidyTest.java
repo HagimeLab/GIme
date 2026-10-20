@@ -20,6 +20,7 @@ public class PdfTidyTest {
 
     public static void main(String[] args) {
         tidyCases();
+        footerCases();
         rejectCases();
         System.out.println();
         if (fail > 0) {
@@ -70,6 +71,30 @@ public class PdfTidyTest {
         /* 关键回归：不能把正常中文句子里的标点吃掉 */
         String normal = "1、以下哪个是可靠传输协议？\nA、UDP\nB、TCP\n答案：B";
         ok("正常题库文本原样保留", normal.equals(PdfTidy.tidy(normal)), PdfTidy.tidy(normal));
+    }
+
+    private static void footerCases() {
+        System.out.println();
+        System.out.println("=== dropPageFooter：只删页末那一行、且正好是本页页码 ===");
+
+        String page = "第3题\n\n题目：以下哪个选项为字符处理函数？\n\n3\n";
+        ok("页末页码被删掉",
+                PdfTidy.dropPageFooter(page, 3).indexOf("\n3\n") < 0
+                        && PdfTidy.dropPageFooter(page, 3).contains("字符处理函数"),
+                PdfTidy.dropPageFooter(page, 3));
+        ok("页码不对时不删（正文里的 4 留着）",
+                PdfTidy.dropPageFooter(page, 4).contains("\n3\n"), PdfTidy.dropPageFooter(page, 4));
+        ok("页末是正文时不动",
+                "题目：3 个选项哪个对".equals(PdfTidy.dropPageFooter("题目：3 个选项哪个对", 3)),
+                PdfTidy.dropPageFooter("题目：3 个选项哪个对", 3));
+        ok("正文中间的页码行不删",
+                PdfTidy.dropPageFooter("3\n题目：以下哪个对\n答案：A", 3).startsWith("3"),
+                PdfTidy.dropPageFooter("3\n题目：以下哪个对\n答案：A", 3));
+        ok("页末带空行也能认出页码",
+                PdfTidy.dropPageFooter("题干\n\n3\n\n", 3).indexOf("3") < 0,
+                PdfTidy.dropPageFooter("题干\n\n3\n\n", 3));
+        ok("空串与 null 不炸",
+                "".equals(PdfTidy.dropPageFooter("", 1)) && "".equals(PdfTidy.dropPageFooter(null, 1)));
     }
 
     private static void rejectCases() {

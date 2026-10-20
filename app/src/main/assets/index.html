@@ -2995,11 +2995,28 @@ var LET = "ABCDEFG";
 var OPT_INLINE_RE = [];
 for (var _i = 0; _i < 7; _i++) {
   /* 分隔符后面那一档空格必须吃掉：西文写法是「A. \du  B. dr」，点号后面带空格。
-     少了这个 \s*，(?=\S) 会卡在空格上，一行四个选项就只拆出一个。 */
-  OPT_INLINE_RE.push(new RegExp("(?:^|(?<=\\s))" + LET.charAt(_i) + "(?:\\s*[.、．)）]|\\s+)\\s*(?=\\S)"));
+     少了这个 \s*，(?=\S) 会卡在空格上，一行四个选项就只拆出一个。
+     带点号的允许停在行末：PDF 会把「… C.」和选项正文断在两行，行末那个
+     「C.」仍是选项标记，正文从下一行接着写。空格分隔的写法不允许，
+     否则正文里行末的「选项 C」会被当成空选项。 */
+  OPT_INLINE_RE.push(new RegExp("(?:^|(?<=\\s))" + LET.charAt(_i)
+    + "(?:\\s*[.、．)）]\\s*(?=\\S|$)|\\s+(?=\\S))"));
 }
 
 function nz(s) { return String(s == null ? "" : s).replace(/\s+/g, " ").trim(); }
+/* PDF 是按行断的，中文词会被切在两行：「序」在行末、「列等对象」在下一行。
+   逐行拼接时如果两边都是汉字就不要补空格，否则会拼出「序 列」；英文单词之间照旧留空。 */
+var CJK_TAIL = /[\u4e00-\u9fff\u3400-\u4dbf\u3000-\u303f\uff00-\uffef\ufe30-\ufe4f]$/;
+var CJK_HEAD = /^[\u4e00-\u9fff\u3400-\u4dbf\u3000-\u303f\uff00-\uffef\ufe30-\ufe4f]/;
+function joinText(parts) {
+  var out = "";
+  for (var i = 0; i < parts.length; i++) {
+    var s = String(parts[i] == null ? "" : parts[i]).trim();
+    if (!s) continue;
+    out = out ? out + (CJK_TAIL.test(out) && CJK_HEAD.test(s) ? "" : " ") + s : s;
+  }
+  return out;
+}
 /* 抽正文时红字被包在 \u0001 \u0002 里：出题库时去掉，判答案时要用它。
    markdown 的两个排版记号也在这里落地：行内代码的反引号、**加粗**——
    界面按纯文本渲染题干，留着就会在题里看到一排 ` 和 * */
@@ -3099,7 +3116,9 @@ function parseBankText(text) {
           want = "A";
         }
         if (mo && mo[1] === want) {
-          var multi = cur.options.length ? [] : inlineOptions(head, want);
+          /* 已经收过前几个选项，这一行以 C. 开头也不代表 C 是最后一个：
+             PDF 换行后同一行里可能还塞着 D. */
+          var multi = inlineOptions(head, want);
           if (multi.length > 1) {
             for (var m2 = 0; m2 < multi.length; m2++) {
               cur.options.push([multi[m2][0], multi[m2][1], redRatio(multi[m2][1])]);
@@ -3110,9 +3129,26 @@ function parseBankText(text) {
         } else if (!cur.options.length) {
           cur.stem.push(head);
         } else {
+          /* 选项整段是连续的「A. … B. … C. …」，PDF 换行会从中间切断：
+             「… C. 数据」在行末，剩下的「在存储时加密 D. …」落到下一行。
+             续行里再出现的 C. / D. 不拆开，就会被并进上一个选项，
+             答案字母（D）也就对不上任何选项，整题变成「无答案」。 */
+          var more = cur.options.length < LET.length ? inlineOptions(head, LET.charAt(cur.options.length)) : [];
           var last = cur.options[cur.options.length - 1];
-          last[1] = nz(last[1] + " " + head);
-          last[2] = Math.max(last[2], redRatio(head));
+          if (more.length) {
+            var cut = OPT_INLINE_RE[cur.options.length].exec(head);
+            var keep = head.slice(0, cut.index);
+            if (keep.trim()) {
+              last[1] = nz(joinText([last[1], keep]));
+              last[2] = Math.max(last[2], redRatio(keep));
+            }
+            for (var m3 = 0; m3 < more.length; m3++) {
+              cur.options.push([more[m3][0], more[m3][1], redRatio(more[m3][1])]);
+            }
+          } else {
+            last[1] = nz(joinText([last[1], head]));
+            last[2] = Math.max(last[2], redRatio(head));
+          }
         }
       }
     }
@@ -3126,7 +3162,7 @@ function parseBankText(text) {
 
   var out = [];
   for (var i = 0; i < qs.length; i++) {
-    var q = qs[i], stem = nz(q.stem.join(" ")), opts = [];
+    var q = qs[i], stem = nz(joinText(q.stem)), opts = [];
     for (var j = 0; j < q.options.length; j++) opts.push([q.options[j][0], plain(q.options[j][1])]);
     var letters = answerLetters(q.answer_text);
     var ans = letters.length ? letters : judgeLetters(q.answer_text);
@@ -3157,7 +3193,7 @@ function parseBankText(text) {
       /* 主观题：选项不是选项，是正文的一部分（有些题库会把「要点」排成 A/B/C） */
       if (opts.length) {
         var extra = opts.map(function (o) { return o[0] + "、" + o[1]; }).join(" ");
-        stem = nz(stem + " " + extra);
+        stem = nz(joinText([stem, extra]));
         opts = [];
       }
       type = kind;
@@ -3180,7 +3216,7 @@ function parseBankText(text) {
       stem: plain(stem.replace(/[（(【]\s*(多选|单选|判断|填空|解答|简答|问答)[题]?\s*[)）】]/g, " ")),
       type: type, options: opts, answer: ans, ans_raw: q.answer_text,
       ref: (type === "fill" || type === "short") ? refText : "",
-      explain: plain(q.explain.join(" ")), note: "", flag: ""
+      explain: plain(joinText(q.explain)), note: "", flag: ""
     });
   }
 

@@ -48,6 +48,31 @@ public final class PdfTidy {
     }
 
     /**
+     * 去掉每页末尾的页码。
+     *
+     * 页码在 PDF 里是一段独立的文字，抽出来就是页末单独一行「3」。
+     * 交给页面解析时，它既不是题号（不连续）也不是选项，只会被当成续行
+     * 拼进题干、选项或解析的结尾，用户看到的就是「……描述正确的是？ 3」。
+     * 只删「页末那一行且正好等于本页页码」的数字，正文里的数字一概不动。
+     */
+    public static String dropPageFooter(String pageText, int pageNo) {
+        if (pageText == null) return "";
+        String[] lines = pageText.replace("\r\n", "\n").replace('\r', '\n').split("\n", -1);
+        for (int i = lines.length - 1; i >= 0; i--) {
+            String t = lines[i].trim();
+            if (t.isEmpty()) continue;
+            if (!t.equals(String.valueOf(pageNo))) return pageText;
+            StringBuilder sb = new StringBuilder(pageText.length());
+            for (int j = 0; j < lines.length; j++) {
+                if (j > 0) sb.append('\n');
+                if (j != i) sb.append(lines[j]);
+            }
+            return sb.toString();
+        }
+        return pageText;
+    }
+
+    /**
      * 规整 PDF 抽出来的文字。PDF 是按字形定位排版的，抽成纯文本后会带两类噪声：
      * 一是中文之间被塞进空格（「以 下 哪 个」），二是每行首尾的空白。
      * 中文本来就不靠空格分词，把汉字之间的空格去掉是安全的；英文单词之间的空格保留。

@@ -817,6 +817,52 @@ W.saveSample();
 ok("存盘失败时改成教用户长按复制", toastTx().indexOf("长按") >= 0, toastTx());
 delete W.Android;
 
+section("[12] v1.0.4：真题 PDF 的分页页码与跨行选项");
+/* 这四条都来自一份真实省赛 PDF 的抽取形状：页码在页末单独成行、
+   一行选项被 PDF 从中间断开、中文词被切在两行。 */
+const pdfTextSrc = fs.readFileSync(path.join(ROOT, "app/src/main/java/com/fan/shuatiku/PdfText.java"), "utf8");
+ok("PDF 抽取逐页调用去页码", pdfTextSrc.indexOf("setStartPage(p)") >= 0 && pdfTextSrc.indexOf("PdfTidy.dropPageFooter") >= 0);
+
+const pdfCase = [
+  "第1题",
+  "题目：以下哪些说法是正确的？",
+  "A. 甲甲 B. 乙乙",
+  "C. 丙丙 D. 丁丁",
+  "答案：AC",
+  "第2题",
+  "题目：以下哪个命令可显示当前正在运行的服务？",
+  "A. aaaa B. bbbb C.",
+  "systemctl list-units D. dddd",
+  "答案：B",
+  "第3题",
+  "题目：以下哪个说法正确？",
+  "A. 甲甲 B. 乙乙 C. 数",
+  "据库 D. 丁丁",
+  "答案：D",
+  "第4题",
+  "题目：以下哪项正确？",
+  "A. TCP provides reliable",
+  "transfer B. UDP is not",
+  "答案：A"
+].join("\n");
+const pq = sandbox.parseBankText(pdfCase);
+ok("以 C. 开头的行里还塞着 D. 时拆成四项",
+   pq[0] && pq[0].options.length === 4 && pq[0].options[3][1] === "丁丁",
+   pq[0] && JSON.stringify(pq[0].options));
+ok("行末只剩「C.」时，下一行补成 C 选项",
+   pq[1] && pq[1].options.length === 4 && pq[1].options[2][1] === "systemctl list-units" && pq[1].options[3][1] === "dddd",
+   pq[1] && JSON.stringify(pq[1].options));
+ok("续行里的 D. 不再并进上一项",
+   pq[2] && pq[2].options.length === 4 && pq[2].options[3][1] === "丁丁",
+   pq[2] && JSON.stringify(pq[2].options));
+ok("中文跨行拼接不插空格", pq[2] && pq[2].options[2][1] === "数据库",
+   pq[2] && JSON.stringify(pq[2].options[2][1]));
+ok("英文跨行拼接保留空格", pq[3] && pq[3].options[0][1] === "TCP provides reliable transfer",
+   pq[3] && JSON.stringify(pq[3].options[0][1]));
+ok("拆开后的答案字母每题都对得上选项",
+   pq.length === 4 && pq.every((q) => q.answer.length && q.answer.every((a) => q.options.some((o) => o[0] === a))),
+   JSON.stringify(pq.map((q) => q.answer.join(""))));
+
 /* ---------- 结果 ---------- */
 console.log("\n" + "=".repeat(46));
 if (fails.length) {
