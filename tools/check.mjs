@@ -226,6 +226,68 @@ ok("主观题不算「无答案」", spRep.noans === 0, "实际 " + spRep.noans)
 ok("缺参考答案单独计数", spRep.noRef === 0, "实际 " + spRep.noRef);
 ok("结果统计行包含题型明细", sandbox.importLine(spRep).indexOf("填空 2") >= 0);
 
+/* 4a. 用户 2026-10-20 报的那份 ICT 题源排版（图一，md 与 pdf 是同一份稿子）：
+   「第N题」标题 + 「题目：」标签 + 四个选项挤在一行 + 代码块。
+   改之前 NUM_RE 只认行首「1、」，这份稿子整篇一道题都认不出来。
+   下面这份夹具是按截图逐字重打的，不是原文件本身。 */
+const labeled = [
+  "# ICT大赛-计算赛道省赛",
+  "",
+  "第1题",
+  "题目：可以列出所有数据库角色的是？",
+  "A. \\du  B. dr  C. \\d",
+  "答案：A",
+  "解析：在openGauss/PostgreSQL中，`\\du` 是元命令，用于列出所有数据库角色（用户）。",
+  "",
+  "第2题",
+  "题目：现有分区表t定义语句如下：",
+  "```sql",
+  "CREATE TABLE t",
+  "(  col1 integer NOT NULL,",
+  "  col2 character varying(60)",
+  ") PARTITION BY RANGE (col1);",
+  "```",
+  "现执行插入语句：INSERT INTO t VALUES(20000); 以下选项哪个是正确的执行结果？",
+  "A. 插入失败，原因是无法匹配到合适的分区 B. 插入失败，原因是语法错误 C. 插入成功，插入行位于自动新建的分区中 D. 插入成功，插入的行位于分区P3",
+  "正确答案：A",
+  "解析：范围分区表中，P1接受col1<5000。插入值20000超过了最大分区上限15000，没有匹配的分区，因此插入失败。",
+  "",
+  "第3题",
+  "题目：以下哪个选项为字符处理函数？",
+  "选项：A. lpad  B. bitand  C. age  D. path",
+  "答案：A",
+  "答案解析：**lpad(string, length, fill)** 是字符处理函数。bitand 是位运算函数。",
+  "",
+  "第4题",
+  "题目：如果将分区sdd2开机自动挂载到/mnt/file目录下，管理员需将对应配置写入到以下哪个配置文件中？",
+  "A. /etc/fstab  B. /etc/mtab  C. /etc/passwd  D. /etc/hosts",
+].join("\n");
+const lb = sandbox.parseBankText(labeled);
+ok("「第N题 + 题目：」排版认得出 4 道题", lb.length === 4, "实际 " + lb.length);
+ok("第 1 题答案 A、单选", lb[0] && lb[0].type === "single" && lb[0].answer.join("") === "A",
+   lb[0] && (lb[0].type + "/" + lb[0].answer.join("")));
+ok("第 1 题三个选项", lb[0] && lb[0].options.length === 3, lb[0] && String(lb[0].options.length));
+ok("「题目：」标签没留在题干里", lb[0] && lb[0].stem.indexOf("题目") < 0, lb[0] && lb[0].stem);
+ok("选项里的反斜杠保住（\\du 没被吃掉）", lb[0] && lb[0].options[0][1].indexOf("\\du") >= 0,
+   lb[0] && JSON.stringify(lb[0].options));
+ok("解析里的行内代码反引号被去掉", lb[0] && lb[0].explain.indexOf("`") < 0, lb[0] && lb[0].explain);
+ok("代码块围栏 ``` 不进题干", lb[1] && lb[1].stem.indexOf("```") < 0, lb[1] && lb[1].stem);
+ok("代码块正文收进题干", lb[1] && lb[1].stem.indexOf("CREATE TABLE t") >= 0
+   && lb[1].stem.indexOf("INSERT INTO") >= 0, lb[1] && lb[1].stem);
+ok("第 2 题四个选项都在", lb[1] && lb[1].options.length === 4, lb[1] && String(lb[1].options.length));
+ok("「正确答案：」也算答案", lb[1] && lb[1].answer.join("") === "A", lb[1] && lb[1].answer.join(""));
+ok("「正确答案」四个字没混进最后一个选项", lb[1] && lb[1].options[3][1].indexOf("正确") < 0,
+   lb[1] && JSON.stringify(lb[1].options[3]));
+ok("「选项：」标签行也能拆出四个选项", lb[2] && lb[2].options.length === 4, lb[2] && String(lb[2].options.length));
+ok("「答案解析：」整条进解析，不留光杆标签", lb[2] && lb[2].explain.indexOf("lpad") >= 0
+   && lb[2].options[3][1].indexOf("答案") < 0, lb[2] && JSON.stringify([lb[2].explain, lb[2].options[3]]));
+ok("**加粗** 星号不进解析", lb[2] && lb[2].explain.indexOf("**") < 0, lb[2] && lb[2].explain);
+ok("第 4 题没答案 → 不算可判分", lb[3] && lb[3].answer.length === 0 && !sandbox.usableQ(lb[3]));
+const lbRep = sandbox.importReport(lb, lb.filter(sandbox.usableQ));
+ok("这份稿子可判分 3 题", lbRep.usable === 3, "实际 " + lbRep.usable);
+ok("题号从中间开始也认（第12题起的截稿）", sandbox.parseBankText(
+   "第12题\n题目：下列哪个是集群？\nA、x B、y\n答案：A").length === 1);
+
 /* ---------- 4b. 装入一套测试题库，后面的练习/考试流程才有题可出 ---------- */
 section("[4b] 装入测试题库");
 const TB = "test_bank";
@@ -608,6 +670,58 @@ ok("空题库时标题仍是「先导入一个题库」",
 W.goTab("me");
 ok("删光题库后「我的」页无 NaN",
    String(W.document.getElementById("meStat").innerHTML).indexOf("NaN") < 0);
+
+/* ---------- 10. v1.0.4：今日待刷左滑删除 / 不列空库 / 题库改名 ---------- */
+section("[10] v1.0.4：今日待刷左滑 / 过滤空库 / 改名");
+const NB = "nb1";
+const mkq = (sid, i, ans) => ({ id: sid + "-" + i, subject: sid, num: i + 1, pnum: i + 1,
+  type: "single", stem: "甲乙"[i] + "题", options: [["A", "x"], ["B", "y"]], answer: [ans],
+  ans_raw: ans, ref: "", explain: "", note: "", flag: "" });
+BANK.subjects.push({ id: NB, name: "有题的库", file: "nb1.md", count: 2, custom: true });
+BANK.questions.push(mkq(NB, 0, "A"), mkq(NB, 1, "B"));
+BANK.subjects.push({ id: "empty1", name: "空库不该出现", file: "e.md", count: 0, custom: true });
+W.goTab("home");
+const taskHtml = String(W.document.getElementById("tasks").innerHTML);
+ok("今日待刷列出有题的库", taskHtml.indexOf("有题的库") >= 0);
+ok("今日待刷不列题库页里根本没有的空库", taskHtml.indexOf("空库不该出现") < 0, taskHtml);
+ok("今日待刷每行带左滑面板", taskHtml.indexOf('class="swipe"') >= 0 && taskHtml.indexOf("swipe-act") >= 0);
+ok("今日待刷面板里那格是删除", /swipe-act"[^>]*askDeleteBank/.test(taskHtml), taskHtml.slice(0, 160));
+ok("左滑的面板前景是 .task 本身", taskHtml.indexOf('class="task"') >= 0);
+
+let saved = null;
+W.Android = { saveBank: (id, json) => { saved = [id, JSON.parse(json)]; return true; } };
+W.askRenameBank(NB);
+const sheetHtml = String(W.document.getElementById("sheet3").innerHTML);
+ok("改名面板有输入框并预填当前名", sheetHtml.indexOf('class="rn-box"') >= 0
+   && sheetHtml.indexOf('value="有题的库"') >= 0, sheetHtml.slice(0, 140));
+W.renameBank(NB, "  改过的名字  ");
+ok("改名去掉首尾空白并落到列表", W.subjectOf(NB).name === "改过的名字", W.subjectOf(NB).name);
+ok("改名重写整包、id 不变、题数不少", saved && saved[0] === NB && saved[1].subject.id === NB
+   && saved[1].questions.length === 2, saved && JSON.stringify([saved[0], saved[1].questions.length]));
+ok("改名不动题目本身（答案原样）", saved && saved[1].questions[0].answer.join("") === "A");
+saved = null;
+W.Android = { saveBank: () => false };
+W.renameBank(NB, "写盘失败的名字");
+ok("写盘失败时名字回滚，不留界面对磁盘错的两本账",
+   W.subjectOf(NB).name === "改过的名字", W.subjectOf(NB).name);
+/* 这一段跑在 W.toast 恢复成真函数之后（check.mjs:567），所以直接读 #toast 的文本 */
+ok("写盘失败当场提示",
+   String(W.document.getElementById("toast").textContent).indexOf("保存失败") >= 0,
+   String(W.document.getElementById("toast").textContent));
+W.renameBank(NB, "   ");
+ok("空名字不改", W.subjectOf(NB).name === "改过的名字");
+delete W.Android;
+
+/* 题库名要落进 value="…"：不转义就能从属性里跳出去 */
+BANK.subjects.push({ id: "q1", name: 'x" onmouseover="boom()', file: "q.md", count: 1, custom: true });
+BANK.questions.push(mkq("q1", 0, "A"));
+W.askRenameBank("q1");
+const injHtml = String(W.document.getElementById("sheet3").innerHTML);
+ok("题库名里的引号被转义，不会从属性里跳出去",
+   injHtml.indexOf("onmouseover=&quot;boom()") >= 0 && injHtml.indexOf('onmouseover="boom') < 0,
+   injHtml.slice(0, 200));
+BANK.subjects = BANK.subjects.filter((s) => s.id !== "q1");
+BANK.questions = BANK.questions.filter((q) => q.subject !== "q1");
 
 /* ---------- 结果 ---------- */
 console.log("\n" + "=".repeat(46));
