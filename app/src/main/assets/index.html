@@ -1074,6 +1074,20 @@ function shClose() {
     /* renderAll 会重建列表，新节点得再藏一次，否则它会隔着幽灵露出来 */
     c2.style.opacity = "0";
     shHold(function () { c2.style.opacity = ""; });
+    /* 卡片底下压着左滑露出的「改名/删除」面板。卡片淡入的这 225ms 是半透明的，
+       面板会整块透出来——题库页返回时右侧闪一下就是它。给卡片垫一层同色底、
+       面板先藏掉，淡入的只剩卡片内容；收尾随 shAbort 一起还原。 */
+    var host = c2.parentNode;
+    if (host && host.classList && host.classList.contains("swipe")) {
+      host.style.background = "var(--raise)";
+      host.style.borderRadius = "var(--r-card)";
+      shHold(function () { host.style.background = ""; host.style.borderRadius = ""; });
+      var acts = host.querySelector(".swipe-acts");
+      if (acts) {
+        acts.style.opacity = "0";
+        shHold(function () { acts.style.opacity = ""; });
+      }
+    }
     lab = c2.querySelector(labSel);
     if (lab) {
       /* 这枚文字由飞行标签去落位；卡片同时淡入的话会在落点看到两个一样的字 */
@@ -1878,15 +1892,17 @@ function emptyTaskHtml() {
 }
 
 function renderTasks(noQ) {
-  var rows = noQ ? emptyTaskHtml() : "";
+  var rows = noQ ? emptyTaskHtml() : "", anyBank = false;
   BANK.subjects.forEach(function (s) {
     var t = stats(s.id);
     /* 与题库页同一条过滤：一道题都没有的题库不出现在这里。
        少了这一格，「今日待刷」会列出题库页里根本看不到的名字（用户报的那条）。 */
     if (!t.total) return;
+    anyBank = true;
     var left = t.total - t.seen;
     rows += '<div class="swipe" data-sid="' + s.id + '">' +
               '<div class="swipe-acts">' +
+                '<button class="swipe-act" onclick="askRenameBank(&quot;' + s.id + '&quot;)">改名</button>' +
                 '<button class="swipe-act" onclick="askDeleteBank(&quot;' + s.id + '&quot;)">删除</button>' +
               "</div>" +
               '<button class="task" onclick="pickMode(&quot;practice&quot;,&quot;' + s.id + '&quot;)">' +
@@ -1896,6 +1912,7 @@ function renderTasks(noQ) {
               '<span class="rt">' + left + "<i>题</i></span>" +
             "</button></div>";
   });
+  if (anyBank) rows += '<div class="sl-hint" style="margin:-4px 0 18px">左滑题库行可以改名或删除</div>';
   var w = wrongList();
   if (!noQ || w.length) {
     rows += '<button class="task" onclick="pickMode(&quot;wrong&quot;,&quot;all&quot;)">' +
