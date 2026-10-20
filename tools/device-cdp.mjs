@@ -106,7 +106,7 @@ const base = await evalJs(`
     hasExamDone: typeof examDone === "function"
   };
 `);
-ok("运行的是 v1.0.4", base.ver === "1.0.4", base.ver);
+ok("运行的是 v1.0.5", base.ver === "1.0.5", base.ver);
 ok("不再内置题库（v1.0.3）", base.total === 0 && base.subjects === 0, base.total + "/" + base.subjects);
 ok("原生 pageReady 握手存在", base.hasReady === true);
 ok("更新日志渲染函数存在", base.hasUpdLog === true);
