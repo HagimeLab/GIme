@@ -824,9 +824,10 @@ function examN() {
 }
 function examMin() { paperInit(); return set.paper.min; }
 function paperTitle() {
-  var ids = Object.keys(set.paper.subs);
+  /* 删掉的题库不进卷名：组卷选择里若还挂着它的 id，卷名会变成一串原始 id */
+  var ids = Object.keys(set.paper.subs).filter(function (id) { return subjectOf(id); });
   if (!ids.length) return "组合卷";
-  if (ids.length === BANK.subjects.length) return "全部题库";
+  if (ids.length === paperBanks().length) return "全部题库";
   return ids.map(function (i) { return subjName(i); }).join(" + ");
 }
 
@@ -2645,14 +2646,37 @@ document.addEventListener("touchend", function () { if (activeSl) activeSl.up();
 document.addEventListener("mouseup", function () { if (activeSl) activeSl.up(); });
 
 /* ---------------- 组卷：题库多选 + 按总题数 / 按题型分配 ---------------- */
+/* 组卷能选的题库 = 题库页/首页真正列出来的那些（至少有一道题）。
+   题库页对空题库是隐藏的，这里若直接遍历 BANK.subjects，
+   空题库（导入时一道都没收录）就只在组卷里露出来——用户报的那条。 */
+function paperBanks() {
+  return BANK.subjects.filter(function (s) { return stats(s.id).total > 0; });
+}
+/* 删掉的题库、或从没进过本机的 id，不该继续算一票：
+   否则「全选/全不选」和卷名会把它带上。空题库一并清掉。 */
+function paperPrune() {
+  var subs = set.paper.subs, changed = false;
+  Object.keys(subs).forEach(function (id) {
+    var s = subjectOf(id);
+    if (!s || !stats(id).total) { delete subs[id]; changed = true; }
+  });
+  if (changed) {
+    /* 唯一选中的题库被删了：回退到第一个有题的库，别让面板停在
+       「一个都没选」却提示「所选题库里没有客观题」那种对不上号的状态 */
+    var first = paperBanks()[0];
+    if (!Object.keys(subs).length && first) subs[first.id] = 1;
+    save();
+  }
+}
 function paperInit() {
   if (!set.paper) {
-    var subs = {};
+    var subs = {}, first = paperBanks()[0];
     /* 题库可能一个都没有（全是用户导入的，随时可能被删干净），
        这里不能直接取 subjects[0].id，否则空题库时组卷一点就抛异常 */
-    if (BANK.subjects.length) subs[BANK.subjects[0].id] = 1;
+    if (first) subs[first.id] = 1;
     set.paper = { subs: subs, mode: "total", total: 30, single: 10, multi: 10, judge: 10, min: 20 };
   }
+  paperPrune();
 }
 function paperPool() {
   paperInit();
@@ -2703,7 +2727,8 @@ function paperRelabel() {
 function openExam(sid) { openPaper(sid); }
 function openPaper(sid) {
   paperInit();
-  if (!BANK.subjects.length) { toast("还没有题库，先导入一个"); openImport(); return; }
+  var banks = paperBanks();
+  if (!banks.length) { toast("还没有题库，先导入一个"); openImport(); return; }
   if (sid && sid !== "all") { set.paper.subs = {}; set.paper.subs[sid] = 1; }
   var p = set.paper;
   p.total = Math.min(p.total, paperAvail());
@@ -2712,8 +2737,8 @@ function openPaper(sid) {
   var h = '<div class="handle"></div><h2>组卷设置</h2>' +
     '<div class="sec-title" style="margin:8px 0 12px"><b>选择题库</b>' +
       '<button style="font-size:.75rem;color:var(--ink-2);text-decoration:underline" onclick="paperAllSubs()">' +
-        (picked === BANK.subjects.length ? "全不选" : "全选") + "</button></div>" +
-    BANK.subjects.map(function (s) {
+        (picked === banks.length ? "全不选" : "全选") + "</button></div>" +
+    banks.map(function (s) {
       return '<button class="pick' + (p.subs[s.id] ? " on" : "") + '" onclick="paperToggle(&quot;' + s.id + '&quot;)">' +
              '<span class="cbx"></span><b>' + esc(s.name) + "</b><i>" + stats(s.id).total + " 题</i></button>";
     }).join("") +
@@ -2756,9 +2781,10 @@ function paperToggle(sid) {
   save(); openPaper();
 }
 function paperAllSubs() {
-  var all = Object.keys(set.paper.subs).length === BANK.subjects.length;
+  var banks = paperBanks();
+  var all = Object.keys(set.paper.subs).length === banks.length;
   set.paper.subs = {};
-  if (!all) BANK.subjects.forEach(function (s) { set.paper.subs[s.id] = 1; });
+  if (!all) banks.forEach(function (s) { set.paper.subs[s.id] = 1; });
   save(); openPaper();
 }
 function paperMode(m) { set.paper.mode = m; save(); openPaper(); }
@@ -3484,6 +3510,8 @@ function removeBank(sid) {
     document.getElementById("quiz").classList.remove("on");
   }
   if (set.hidden) delete set.hidden[sid];
+  /* 组卷选择里也要摘掉：否则卷名和「全选」标签会继续把已删题库算进去 */
+  if (set.paper && set.paper.subs) delete set.paper.subs[sid];
   save();
   renderAll();
   return true;

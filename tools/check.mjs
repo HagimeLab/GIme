@@ -863,6 +863,47 @@ ok("拆开后的答案字母每题都对得上选项",
    pq.length === 4 && pq.every((q) => q.answer.length && q.answer.every((a) => q.options.some((o) => o[0] === a))),
    JSON.stringify(pq.map((q) => q.answer.join(""))));
 
+/* ---------- 13. v1.0.5：组卷只认当前题库 ----------
+   用户报的：组卷设置里出现了删除的、或题库页里根本没有的题库。
+   两条来源都钉住：空题库不该进选择列表；删库/不存在的 id 不该留在组卷选择里。 */
+section("[13] v1.0.5：组卷只列当前题库");
+/* 上一节留下的 BANK：nb1（2 题，已改名）、empty1（0 题）。 */
+ok("组卷可选列表不含空题库",
+   W.paperBanks().every((s) => s.id !== "empty1"),
+   JSON.stringify(W.paperBanks().map((s) => s.id)));
+ok("组卷可选列表保留有题题库",
+   W.paperBanks().some((s) => s.id === "nb1"));
+
+W.set.paper = { subs: { nb1: 1, gone: 1, empty1: 1 }, mode: "total",
+                total: 2, single: 2, multi: 0, judge: 2, min: 20 };
+W.paperInit();
+ok("组卷丢掉已删除/不存在的题库 id", !W.set.paper.subs.gone, JSON.stringify(W.set.paper.subs));
+ok("组卷丢掉空题库 id", !W.set.paper.subs.empty1, JSON.stringify(W.set.paper.subs));
+ok("组卷保留有题题库的选择", W.set.paper.subs.nb1 === 1);
+ok("卷名不出现已删除题库的原始 id", String(W.paperTitle()).indexOf("gone") < 0, W.paperTitle());
+
+W.set.paper = null;
+W.paperInit();
+ok("首次组卷默认选中有题的题库",
+   W.set.paper.subs.nb1 === 1 && !W.set.paper.subs.empty1, JSON.stringify(W.set.paper.subs));
+
+W.set.paper.subs = { empty1: 1 };
+W.paperInit();
+ok("选中的题库没了时回退到有题的题库",
+   W.set.paper.subs.nb1 === 1 && !W.set.paper.subs.empty1, JSON.stringify(W.set.paper.subs));
+W.set.paper.subs = {};
+W.paperInit();
+ok("用户主动全不选后不强行回填",
+   Object.keys(W.set.paper.subs).length === 0, JSON.stringify(W.set.paper.subs));
+
+W.Android = { deleteBank: () => true };
+W.set.paper.subs = { nb1: 1, empty1: 1 };
+W.removeBank("empty1");
+ok("删除题库时同步摘掉组卷选择", !W.set.paper.subs.empty1, JSON.stringify(W.set.paper.subs));
+ok("删除题库后可选列表同步收缩",
+   W.paperBanks().every((s) => s.id !== "empty1"));
+delete W.Android;
+
 /* ---------- 结果 ---------- */
 console.log("\n" + "=".repeat(46));
 if (fails.length) {
