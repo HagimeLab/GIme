@@ -1431,6 +1431,36 @@ ok("改字号不丢聊天记录",
 W.set.chatFs = 100;
 W.applyChatFs();
 
+/* ---------- 21. MCP 常开 + 大肥鱼系统提示词 ---------- */
+section("[21] MCP 常开与大肥鱼提示词");
+
+/* MCP 不设开关也不设配置面板：应用在跑它就在跑，应用关掉才停 */
+W.renderMe();
+const meSet2 = String(W.document.getElementById("meSet").innerHTML);
+ok("「我的」里没有 MCP 行", meSet2.indexOf('data-k="mcp"') < 0);
+ok("「我的」里大肥鱼行还在", meSet2.indexOf('data-k="agent"') >= 0);
+ok("MCP 配置面板已删除", typeof W.openMcp === "undefined" && typeof W.mcpToggle === "undefined"
+   && typeof W.mcpRotate === "undefined" && typeof W.mcpCopy === "undefined");
+ok("页面不再读 MCP 开关状态", typeof W.mcpStatus === "undefined");
+ok("MCP 工具层仍在", typeof W.mcpDispatch === "function");
+
+const javaMcp = fs.readFileSync(JAVA, "utf8");
+ok("Java 不再存 MCP 开关", javaMcp.indexOf("PREF_MCP_ON") < 0 && javaMcp.indexOf("mcpSetEnabled") < 0
+   && javaMcp.indexOf("mcpRotateToken") < 0 && javaMcp.indexOf("mcpStartIfEnabled") < 0);
+ok("页面就绪即启动 MCP", /pageReady = true;[\s\S]{0,160}?mcpStart\(\);/.test(javaMcp));
+ok("Activity 销毁才停 MCP", /onDestroy\(\)[\s\S]{0,300}?mcp\.stop\(\)/.test(javaMcp));
+ok("状态里 enabled 恒为 true", javaMcp.indexOf('put("enabled", true)') >= 0);
+
+/* 系统提示词：先给结论，再讲依据；工具说明照旧；末尾仍带当前题上下文 */
+const sysPrompt = W.chatSystem({ id: "nb1-0", stem: "甲题" });
+ok("提示词开头是乐于助人的蓝色大肥鱼",
+   sysPrompt.indexOf("你是一只乐于助人的蓝色大肥鱼") === 0, sysPrompt.slice(0, 30));
+ok("提示词保留回答要求", sysPrompt.indexOf("先给结论，再讲依据") >= 0
+   && sysPrompt.indexOf("不要编造题库里没有的内容") >= 0);
+ok("提示词保留工具说明", sysPrompt.indexOf("你可以调用工具读取题库") >= 0);
+ok("提示词仍带当前题上下文", sysPrompt.indexOf("当前题目上下文") >= 0
+   && sysPrompt.indexOf("甲题") >= 0);
+
 /* 清理：不留 API Key / 会话 / 改写过的解析 */
 delete W.Android;
 delete W.set.agent;

@@ -59,7 +59,6 @@ public class MainActivity extends Activity {
     private static final String PREFS = "ui";
     private static final String PREF_LIGHT = "light";
     private static final String PREFS_MCP = "mcp";
-    private static final String PREF_MCP_ON = "on";
     private static final String PREF_MCP_TOKEN = "token";
 
     private volatile McpServer mcp;
@@ -366,14 +365,15 @@ public class MainActivity extends Activity {
     }
 
     /* ---------------- MCP 服务 ----------------
-       HTTP 只绑 127.0.0.1；口令存在 SharedPreferences 里，页面只负责显示与复制。
+       HTTP 只绑 127.0.0.1；口令存在 SharedPreferences 里。
+       服务跟着进程走：页面就绪就开，Activity 销毁（应用关掉）就关，
+       没有开关也不落「开/关」状态——后台常驻一个没人管的监听端口没有意义。
        工具分发在页面 JS（mcpDispatch），这里把请求推进 WebView、等它回包。 */
 
-    private synchronized void mcpStartIfEnabled() {
-        android.content.SharedPreferences p = getSharedPreferences(PREFS_MCP, MODE_PRIVATE);
-        if (!p.getBoolean(PREF_MCP_ON, false)) return;
+    private synchronized void mcpStart() {
         if (mcp != null && mcp.isRunning()) return;
         if (web == null || !pageReady) return;
+        android.content.SharedPreferences p = getSharedPreferences(PREFS_MCP, MODE_PRIVATE);
         String token = p.getString(PREF_MCP_TOKEN, "");
         if (token == null || token.isEmpty()) {
             token = McpServer.randomHex(24);
@@ -385,6 +385,9 @@ public class MainActivity extends Activity {
         if (s.start()) {
             mcp = s;
             mcpError = "";
+            /* 页面不再提供口令入口：要接电脑上的 agent，就从这行日志取。
+               adb logcat -s GImeMCP  （Android 上别的应用读不到别的应用的日志） */
+            android.util.Log.i("GImeMCP", "http://127.0.0.1:" + McpServer.PORT + "/mcp token=" + token);
         } else {
             mcp = null;
             mcpError = s.error();
@@ -392,41 +395,21 @@ public class MainActivity extends Activity {
     }
 
     private synchronized String mcpStatusJson() {
-        android.content.SharedPreferences p = getSharedPreferences(PREFS_MCP, MODE_PRIVATE);
-        boolean on = p.getBoolean(PREF_MCP_ON, false);
-        if (on) mcpStartIfEnabled();
-        String token = p.getString(PREF_MCP_TOKEN, "");
+        mcpStart();
+        String token = getSharedPreferences(PREFS_MCP, MODE_PRIVATE).getString(PREF_MCP_TOKEN, "");
         boolean running = mcp != null && mcp.isRunning();
         try {
             return new JSONObject()
-                    .put("enabled", on)
+                    .put("enabled", true)
                     .put("running", running)
                     .put("port", McpServer.PORT)
                     .put("token", token == null ? "" : token)
                     .put("error", running ? "" : (mcpError == null ? "" : mcpError))
                     .toString();
         } catch (Exception e) {
-            return "{\"enabled\":false,\"running\":false,\"port\":" + McpServer.PORT
+            return "{\"enabled\":true,\"running\":false,\"port\":" + McpServer.PORT
                     + ",\"token\":\"\",\"error\":\"status failed\"}";
         }
-    }
-
-    private synchronized String mcpSetEnabled(boolean on) {
-        getSharedPreferences(PREFS_MCP, MODE_PRIVATE).edit().putBoolean(PREF_MCP_ON, on).apply();
-        if (on) {
-            mcpStartIfEnabled();
-        } else {
-            if (mcp != null) { mcp.stop(); mcp = null; }
-            mcpError = "";
-        }
-        return mcpStatusJson();
-    }
-
-    private synchronized String mcpRotateToken() {
-        String t = McpServer.randomHex(24);
-        getSharedPreferences(PREFS_MCP, MODE_PRIVATE).edit().putString(PREF_MCP_TOKEN, t).apply();
-        if (mcp != null) mcp.setToken(t);
-        return mcpStatusJson();
     }
 
     /** HTTP 线程调用；把请求塞给页面并等回包，页面通过 Android.mcpReply 交回。 */
@@ -467,25 +450,15 @@ public class MainActivity extends Activity {
                 @Override public void run() {
                     pageReady = true;
                     pumpImports();
-                    mcpStartIfEnabled();
+                    mcpStart();
                 }
             });
         }
 
-        /** MCP 服务的开关、状态与口令；页面设置页用。 */
+        /** MCP 服务的运行状态（没有开关：服务跟着进程生命周期走）。 */
         @JavascriptInterface
         public String mcpStatus() {
             return mcpStatusJson();
-        }
-
-        @JavascriptInterface
-        public String mcpSetEnabled(boolean on) {
-            return MainActivity.this.mcpSetEnabled(on);
-        }
-
-        @JavascriptInterface
-        public String mcpRotateToken() {
-            return MainActivity.this.mcpRotateToken();
         }
 
         /** 页面把工具执行结果交回 HTTP 线程。 */

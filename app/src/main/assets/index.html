@@ -2312,17 +2312,11 @@ function renderMe() {
       '<div class="metric"><b>' + cover + "</b><i>覆盖率</i></div>" +
     "</div>";
 
-  var mc = mcpStatus();
-  var mcSub = (!window.Android || !Android.mcpStatus) ? "仅手机版可用"
-    : (mc.enabled ? (mc.running ? "运行中 · 127.0.0.1:" + mc.port : "启动失败 · " + (mc.error || "未知"))
-                  : "给 agent 调用题库与解析");
-
   document.getElementById("meSet").innerHTML =
     row("dark", set.theme === "dark" ? "深色模式" : "浅色模式", "从开关处圆形扩散换肤", true, set.theme === "dark") +
     row("haptics", "震动反馈", "答对短震、答错长震", true, set.haptics) +
     row("autoExp", "答完展开解析", "关闭后判分只给答案，解析自己点开", true, set.autoExp) +
     row("import", "导入题库", "PDF / Word / txt / md，带解析一起导", false) +
-    row("mcp", "MCP 接口", mcSub, false) +
     row("agent", "大肥鱼", agentSub(), false) +
     row("font", "字号", "当前 " + set.fscale + "%，点击循环切换", false) +
     row("update", "检查更新", "当前 v" + APP_VER + " 版本", false, false, upd.hasNew) +
@@ -2336,7 +2330,6 @@ function row(k, title, sub, sw, on, mark) {
          : k === "autoExp" ? "toggleSet('autoExp', event)"
          : k === "font" ? "cycleFont()"
          : k === "import" ? "openImport()"
-         : k === "mcp" ? "openMcp()"
          : k === "agent" ? "openAgentCfg()"
          : k === "update" ? "checkUpdate(true)" : "askClear()";
   return '<div class="row" data-k="' + k + '" onclick="' + fn + '"><span>' + title +
@@ -3987,64 +3980,8 @@ window.__mcpHandle = function (rid, reqJson) {
     }
   } catch (e) {}
 };
-function mcpStatus() {
-  if (!window.Android || !Android.mcpStatus) {
-    return { enabled: false, running: false, port: 8765, token: "", error: "仅手机版可用" };
-  }
-  try { return JSON.parse(Android.mcpStatus()); }
-  catch (e) { return { enabled: false, running: false, port: 8765, token: "", error: "读取状态失败" }; }
-}
-function openMcp() {
-  var st = mcpStatus();
-  var sh = document.getElementById("sheet3");
-  var h = '<div class="handle"></div><h2>MCP 接口</h2>';
-  if (st.enabled && !st.running && st.error) {
-    h += '<div class="note" style="margin:0 0 14px">启动失败：' + esc(st.error) + "</div>";
-  }
-  if (st.enabled && st.running) {
-    h += '<div class="note" style="word-break:break-all">地址<br><b>http://127.0.0.1:' + st.port + '/mcp</b></div>' +
-         '<div class="note" style="word-break:break-all;margin-top:10px">口令（请求头 Authorization: Bearer …）<br><b>' +
-           esc(st.token || "（还没生成）") + "</b></div>" +
-         '<button class="sheet-act" style="margin-top:16px" onclick="mcpCopy(&quot;url&quot;)">复制地址</button>' +
-         '<button class="sheet-act" style="margin-top:10px" onclick="mcpCopy(&quot;token&quot;)">复制口令</button>' +
-         '<button class="sheet-act" style="margin-top:10px" onclick="mcpRotate()">重新生成口令</button>' +
-         '<div class="sl-hint" style="margin:14px 0 0">同一台手机的 agent 连 127.0.0.1；电脑上先 ' +
-           'adb forward tcp:' + st.port + ' tcp:' + st.port + '。工具：list_banks / import_bank / ' +
-           'list_questions / write_explanations。</div>';
-  } else {
-    h += '<div class="note">服务没开。打开后 agent 才能读题库、导入和写解析；只在 127.0.0.1 上监听，' +
-         '每次请求要带口令。</div>';
-  }
-  h += '<button class="sheet-act" style="margin-top:18px" onclick="mcpToggle()">' +
-       (st.enabled ? "关闭 MCP 服务" : "开启 MCP 服务") + "</button>";
-  sh.innerHTML = h;
-  openLayer(sh);
-}
-function mcpToggle() {
-  if (!window.Android || !Android.mcpSetEnabled) { toast("仅手机版可用"); return; }
-  var st = mcpStatus(), next = null;
-  try { next = JSON.parse(Android.mcpSetEnabled(!st.enabled)); }
-  catch (e) { toast("切换失败"); return; }
-  toast(next.enabled
-    ? (next.running ? "MCP 已开启 · 127.0.0.1:" + next.port : "开启失败：" + (next.error || "未知"))
-    : "MCP 已关闭");
-  renderAll();
-  openMcp();
-}
-function mcpRotate() {
-  if (!window.Android || !Android.mcpRotateToken) { toast("仅手机版可用"); return; }
-  try { Android.mcpRotateToken(); toast("口令已更新，旧口令失效"); }
-  catch (e) { toast("更新失败"); return; }
-  openMcp();
-}
-function mcpCopy(which) {
-  var st = mcpStatus();
-  var text = which === "url" ? "http://127.0.0.1:" + st.port + "/mcp" : st.token;
-  if (!text) { toast("还没有口令"); return; }
-  var ok = false;
-  try { ok = !!(window.Android && Android.copyText && Android.copyText(text)); } catch (e) { ok = false; }
-  toast(ok ? "已复制" : "复制失败，长按文字手动复制");
-}
+/* MCP 服务没有开关，也没有配置面板：应用在跑它就在 127.0.0.1:8765 上监听，
+   应用关掉（Activity 销毁）就停。工具分发在 mcpDispatch，下面的大肥鱼也复用它。 */
 
 /* ================= 大肥鱼对话 =================
    页面是 file:// 源，直接 fetch 外部 API 会被 CORS 拦；请求走原生 Android.chatApi，
@@ -4657,7 +4594,7 @@ async function chatRun(cfg) {
   throw new Error("工具调用轮次过多，先停在这里");
 }
 function chatSystem(ctx) {
-  return "你是 GIme 答题页里的答疑助手「蓝色大肥鱼」。用中文回答：先给结论，再讲依据；" +
+  return "你是一只乐于助人的蓝色大肥鱼，用中文回答：先给结论，再讲依据；" +
          "简洁但把关键步骤说清，不要编造题库里没有的内容。你可以调用工具读取题库、查题、" +
          "把解析或参考答案写回题库。当前题目上下文（JSON）：" + JSON.stringify(ctx);
 }
