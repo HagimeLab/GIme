@@ -723,6 +723,93 @@ ok("题库名里的引号被转义，不会从属性里跳出去",
 BANK.subjects = BANK.subjects.filter((s) => s.id !== "q1");
 BANK.questions = BANK.questions.filter((q) => q.subject !== "q1");
 
+/* ---------- 11. v1.0.4：导入格式举例（手机上能打开、能整份下载） ----------
+   用户 2026-10-20 的要求：把「详见仓库文档」换成能直接打开、并且能完整下载的举例。
+   三条都得钉住：随包文件自己就能解析成题（举例不是摆设）、查看与下载同源、
+   界面上不再出现手机打不开的仓库路径。 */
+section("[11] v1.0.4：导入格式举例");
+const SAMPLE_MD = path.join(ROOT, "app/src/main/assets/import-sample.md");
+const JAVA = path.join(ROOT, "app/src/main/java/com/fan/shuatiku/MainActivity.java");
+const sampleSrc = fs.readFileSync(SAMPLE_MD, "utf8");
+const javaSrc = fs.readFileSync(JAVA, "utf8");
+const toastTx = () => String(W.document.getElementById("toast").textContent);
+
+ok("原生桥里的举例文件名就是随包那个",
+   javaSrc.indexOf('SAMPLE_ASSET = "' + path.basename(SAMPLE_MD) + '"') >= 0, path.basename(SAMPLE_MD));
+
+const ss = sandbox.parseBankText(sampleSrc);
+ok("举例自身解析出 8 道题", ss.length === 8, "实际 " + ss.length);
+const ssRep = sandbox.importReport(ss, ss.filter(sandbox.usableQ));
+ok("举例里可判分 7 题", ssRep.usable === 7, "实际 " + ssRep.usable);
+ok("举例演示 1 道无答案", ssRep.noans === 1, "实际 " + ssRep.noans);
+ok("举例一道都没被静默丢掉", ssRep.dropped === 0, "实际 " + ssRep.dropped);
+ok("举例三项相加等于总数", ssRep.usable + ssRep.noans + ssRep.dropped === ssRep.total,
+   [ssRep.usable, ssRep.noans, ssRep.dropped, ssRep.total].join("+"));
+const types = ss.map((q) => q.type);
+ok("举例覆盖五种题型",
+   ["single", "multi", "judge", "fill", "short"].every((t) => types.indexOf(t) >= 0), types.join(","));
+ok("举例里多选题的答案是两个以上字母",
+   types.indexOf("multi") >= 0 && ss[types.indexOf("multi")].answer.length >= 2,
+   types.indexOf("multi") >= 0 ? ss[types.indexOf("multi")].answer.join("") : "没有多选题");
+ok("举例里填空题带参考答案",
+   types.indexOf("fill") >= 0 && !!ss[types.indexOf("fill")].ref,
+   types.indexOf("fill") >= 0 ? String(ss[types.indexOf("fill")].ref) : "没有填空题");
+const dirty = ss.filter((q) => /题目\s*[:：]|题干\s*[:：]|选项\s*[:：]|```/.test(q.stem)).map((q) => q.stem);
+ok("题干里没有标签行或代码块围栏残留", dirty.length === 0, JSON.stringify(dirty));
+const noAns = ss[ss.length - 1];
+ok("举例最后一题就是那道无答案示范", noAns && noAns.answer.length === 0 && !sandbox.usableQ(noAns),
+   JSON.stringify(noAns && noAns.answer));
+
+W.openImport();
+const impHtml = String(W.document.getElementById("sheet3").innerHTML);
+ok("导入面板给「查看格式举例」入口", impHtml.indexOf('openFS(&quot;sample&quot;)') >= 0, impHtml.slice(0, 200));
+ok("导入面板给「下载这份举例」按钮", impHtml.indexOf("saveSample()") >= 0);
+ok("导入面板不再把用户支到仓库文档",
+   impHtml.indexOf("docs/") < 0 && impHtml.indexOf("导入指南") < 0, impHtml.slice(0, 200));
+W.closeTop();
+
+let dlCalls = 0;
+W.Android = {
+  importSample: () => sampleSrc,
+  saveImportSample: () => { dlCalls++; return "系统「下载」目录里的 GIme导入格式举例.md"; }
+};
+const fsHtml = () => String(W.document.getElementById("fs").innerHTML);
+const PRE_OPEN = '<pre class="sample-box">';
+const preBody = (h) => {
+  const a = h.indexOf(PRE_OPEN), b = h.indexOf("</pre>");
+  return a < 0 || b < 0 ? null : h.slice(a + PRE_OPEN.length, b);
+};
+W.openFS("sample");
+ok("查看页标题是「导入格式举例」", fsHtml().indexOf("导入格式举例") >= 0);
+const viewed = preBody(fsHtml());
+ok("查看页给的是完整举例，不是截断摘要",
+   viewed !== null && viewed.indexOf("第1题") >= 0 && viewed.indexOf(String(sampleSrc).trim().split("\n").pop()) >= 0,
+   viewed === null ? "没有 sample-box 区块" : "少了结尾那题");
+ok("查看页里也能直接下载", fsHtml().indexOf("saveSample()") >= 0);
+W.saveSample();
+ok("下载走原生桥且把存放位置说清楚",
+   dlCalls === 1 && toastTx().indexOf("系统「下载」目录") >= 0, dlCalls + "/" + toastTx());
+W.Android = { importSample: () => "第1题\n题目：<script>alert(1)</script>\n答案：A" };
+W.openFS("sample");
+ok("举例正文按文本展示，不会被当成 HTML 执行",
+   fsHtml().indexOf("<script>alert(1)</script>") < 0 && fsHtml().indexOf("&lt;script&gt;") >= 0,
+   String(preBody(fsHtml())));
+W.closeTop();
+
+delete W.Android;
+W.openFS("sample");
+const noBridge = fsHtml();
+ok("读不到举例时给可照抄的写法，而不是仓库路径",
+   noBridge.indexOf("docs/") < 0 && noBridge.indexOf("导入指南") < 0 && noBridge.indexOf("题号") >= 0,
+   noBridge.slice(0, 200));
+W.closeTop();
+W.saveSample();
+ok("没有原生桥时点下载只提示，不抛异常", toastTx().indexOf("请在手机上") >= 0, toastTx());
+W.Android = { importSample: () => sampleSrc, saveImportSample: () => "" };
+W.saveSample();
+ok("存盘失败时改成教用户长按复制", toastTx().indexOf("长按") >= 0, toastTx());
+delete W.Android;
+
 /* ---------- 结果 ---------- */
 console.log("\n" + "=".repeat(46));
 if (fails.length) {

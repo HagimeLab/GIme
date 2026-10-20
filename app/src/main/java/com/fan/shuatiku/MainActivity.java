@@ -1,20 +1,25 @@
 package com.fan.shuatiku;
 
+import java.io.ByteArrayOutputStream;
 import java.io.File;
 import java.io.FileInputStream;
 import java.io.FileOutputStream;
 import java.io.InputStream;
+import java.io.OutputStream;
 import java.util.ArrayDeque;
 
 import org.json.JSONArray;
 import org.json.JSONObject;
 
 import android.app.Activity;
+import android.content.ContentValues;
 import android.content.Intent;
 import android.database.Cursor;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
+import android.os.Environment;
+import android.provider.MediaStore;
 import android.provider.OpenableColumns;
 import android.provider.Settings;
 import android.view.View;
@@ -35,6 +40,9 @@ import android.webkit.WebViewClient;
 public class MainActivity extends Activity {
 
     private static final int PICK = 4711;
+    /** 导入格式举例：assets 里那一份是唯一来源，页面看的和下载的都是它。 */
+    private static final String SAMPLE_ASSET = "import-sample.md";
+    private static final String SAMPLE_NAME = "GIme导入格式举例.md";
     private WebView web;
     private File bankDir;
     private Updater updater;
@@ -481,6 +489,82 @@ public class MainActivity extends Activity {
         public boolean deleteBank(String id) {
             File target = new File(bankDir, BankStore.safe(id) + ".json");
             return !target.exists() || target.delete();
+        }
+
+        /** 导入格式举例：读随包带的那份示例文件。页面展示它，也用它写下载件，两边同一来源。 */
+        private byte[] sampleBytes() throws Exception {
+            InputStream in = getAssets().open(SAMPLE_ASSET);
+            try {
+                ByteArrayOutputStream out = new ByteArrayOutputStream();
+                byte[] buf = new byte[8192];
+                int n;
+                while ((n = in.read(buf)) > 0) out.write(buf, 0, n);
+                return out.toByteArray();
+            } finally {
+                in.close();
+            }
+        }
+
+        @JavascriptInterface
+        public String importSample() {
+            try {
+                return new String(sampleBytes(), "UTF-8");
+            } catch (Exception e) {
+                return "";
+            }
+        }
+
+        /**
+         * 把举例文件存成用户能打开、能改、再导回来的 .md。返回能给用户看的位置，失败返回空串。
+         * Android 10 以上走 MediaStore 的下载集合（不需要任何权限）；8、9 写到 App 自己的
+         * 外部下载目录——那里同样不用申请权限，文件管理器也进得去。
+         */
+        @JavascriptInterface
+        public String saveImportSample() {
+            try {
+                byte[] data = sampleBytes();
+                if (data.length == 0) return "";
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                    ContentValues v = new ContentValues();
+                    v.put(MediaStore.Downloads.DISPLAY_NAME, SAMPLE_NAME);
+                    v.put(MediaStore.Downloads.MIME_TYPE, "text/markdown");
+                    Uri uri = getContentResolver()
+                            .insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, v);
+                    if (uri == null) return "";
+                    OutputStream os = getContentResolver().openOutputStream(uri);
+                    if (os == null) return "";
+                    try {
+                        os.write(data);
+                    } finally {
+                        os.close();
+                    }
+                    /* 同名第二次保存时系统会自动加「(1)」，回读真实文件名再报给用户，
+                       否则提示会说一个下载列表里根本不存在的名字。 */
+                    String shown = SAMPLE_NAME;
+                    Cursor c = getContentResolver().query(uri,
+                            new String[] { MediaStore.MediaColumns.DISPLAY_NAME }, null, null, null);
+                    if (c != null) {
+                        try {
+                            if (c.moveToFirst() && !c.isNull(0)) shown = c.getString(0);
+                        } finally {
+                            c.close();
+                        }
+                    }
+                    return "系统「下载」目录里的 " + shown;
+                }
+                File dir = getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS);
+                if (dir == null || (!dir.isDirectory() && !dir.mkdirs())) return "";
+                File f = new File(dir, SAMPLE_NAME);
+                FileOutputStream out = new FileOutputStream(f);
+                try {
+                    out.write(data);
+                } finally {
+                    out.close();
+                }
+                return f.getAbsolutePath();
+            } catch (Exception e) {
+                return "";
+            }
         }
     }
 }
