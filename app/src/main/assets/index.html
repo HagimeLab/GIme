@@ -416,11 +416,13 @@ svg { display: block; }
 .glass.note .note-acts button.pri { background: var(--ink); color: var(--paper); border-radius: var(--r-in); }
 .glass.note .note-acts button.sec { color: var(--ink-3); font-weight: 600; }
 
-.toast { position: fixed; top: calc(var(--st) + 80px); left: 50%; z-index: 950;
+/* 提示条要在所有浮层之上：格式举例页里点下载，提示若压在页面下面就等于没反馈。
+   1500 比 splash(1400) / 入场舞台(1450) 都高。 */
+.toast { position: fixed; top: calc(var(--st) + 80px); left: 50%; z-index: 1500;
          transform: translateX(-50%) translateY(-100px); opacity: 0;
          background: var(--ink); color: var(--paper); border-radius: 999px; padding: 11px 22px;
-         font-size: .8125rem; font-weight: 600; max-width: 80vw; white-space: nowrap;
-         overflow: hidden; text-overflow: ellipsis; box-shadow: var(--sh);
+         font-size: .8125rem; font-weight: 600; max-width: 80vw; line-height: 1.45; text-align: center;
+         overflow: hidden; box-shadow: var(--sh);
          transition: transform .2s ease-out, opacity .2s ease-out; }
 .toast.on { transform: translateX(-50%) translateY(0); opacity: 1; }
 
@@ -2825,7 +2827,7 @@ function saveSample() {
   if (!window.Android || !Android.saveImportSample) { toast("请在手机上使用 App 下载"); return; }
   var where = "";
   try { where = String(Android.saveImportSample() || ""); } catch (e) { where = ""; }
-  toast(where ? "已存到 " + where : "没能存下来，可以长按下面的正文整段复制");
+  toast(where ? "已存到 " + where : "没能存下来，可以长按正文选中复制");
 }
 function sampleBody() {
   var t = sampleText();
@@ -2835,7 +2837,7 @@ function sampleBody() {
                  "每道题之间空一行。</div>";
   return '<div class="cap" style="margin:0">下面这份就是可直接导入的样例。每道题由「题号 → 题目 → 选项 → 答案 → 解析」五步组成：' +
          "题号写「第1题」或「1、」都行，选项挤在一行或每行一个都行。" +
-         '长按正文可以整段复制，或点下面的按钮把它存成 .md 到手机上，用编辑器照着改完再导回来。</div>' +
+         '长按正文可以选中复制，或点下面的按钮把它存成 .md 到手机上，用编辑器照着改完再导回来。</div>' +
          '<pre class="sample-box">' + esc(t) + "</pre>" +
          '<button class="sheet-act" onclick="saveSample()">下载这份举例</button>';
 }

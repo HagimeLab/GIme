@@ -789,6 +789,13 @@ ok("查看页里也能直接下载", fsHtml().indexOf("saveSample()") >= 0);
 W.saveSample();
 ok("下载走原生桥且把存放位置说清楚",
    dlCalls === 1 && toastTx().indexOf("系统「下载」目录") >= 0, dlCalls + "/" + toastTx());
+/* 「下载这份举例」按钮长在举例页里面，提示条若压在页面下面，用户点完什么都看不见。
+   不点名具体浮层，直接要求 toast 是整份 CSS 里最高的一层。 */
+const cssText = html.slice(html.indexOf("<style>"), html.indexOf("</style>"));
+const zs = (cssText.match(/z-index:\s*\d+/g) || []).map((s) => parseInt(s.split(":")[1], 10));
+const toastZ = parseInt((/\.toast\s*\{[^}]*?z-index:\s*(\d+)/.exec(cssText) || [])[1], 10);
+ok("提示条压在全部浮层之上（举例页里点下载能看见反馈）",
+   toastZ === Math.max.apply(null, zs), toastZ + " vs 最高 " + Math.max.apply(null, zs));
 W.Android = { importSample: () => "第1题\n题目：<script>alert(1)</script>\n答案：A" };
 W.openFS("sample");
 ok("举例正文按文本展示，不会被当成 HTML 执行",
