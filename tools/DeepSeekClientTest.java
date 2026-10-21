@@ -211,9 +211,47 @@ public class DeepSeekClientTest {
                 DeepSeekWeb.CODE_SILENT, "30 秒没响应").isRetryable());
         ok("连不上可重试", new DeepSeekWeb.DeepSeekException(-1, "connect failed").isRetryable());
         ok("登录失效不重试", !new DeepSeekWeb.DeepSeekException(40003, "INVALID_TOKEN").isRetryable());
-        ok("PoW 失败不重试", !new DeepSeekWeb.DeepSeekException(40301, "INVALID_POW_RESPONSE").isRetryable());
+        /* 挑战是一次性的：重试会重新取一个挑战，所以它真的能好，值得再发一次 */
+        ok("PoW 挑战失效可重试", new DeepSeekWeb.DeepSeekException(40301, "INVALID_POW_RESPONSE").isRetryable());
         ok("缺 PoW 头不重试", !new DeepSeekWeb.DeepSeekException(40300, "MISSING_HEADER").isRetryable());
+        ok("网关 5xx 可重试", new DeepSeekWeb.DeepSeekException(502, "Bad Gateway").isRetryable());
+        /* 拦截页不能重试：重试就是继续撞验证码 */
+        ok("拦截页不重试", !new DeepSeekWeb.DeepSeekException(
+                DeepSeekWeb.CODE_BLOCKED, "人机校验").isRetryable());
         ok("登录失效仍被识别为鉴权错误", new DeepSeekWeb.DeepSeekException(40003, "x").isAuthError());
+        eq("拦截页错误码与护栏同值", RiskGuard.BLOCKED_CODE, DeepSeekWeb.CODE_BLOCKED);
+
+        // ── Cookie 罐：上游轮换的 Set-Cookie 要像浏览器一样被吸收 ──
+        java.util.List<String> sets = new java.util.ArrayList<String>();
+        sets.add("HWWAFSESID=abc123; Path=/; HttpOnly");
+        sets.add("smidV2=new; Path=/; Max-Age=86400");
+        eq("新 Cookie 被追加（原有顺序保留）", "ds_session_id=old; HWWAFSESID=abc123; smidV2=new",
+           DeepSeekWeb.mergeCookies("ds_session_id=old", sets));
+        java.util.List<String> replace = new java.util.ArrayList<String>();
+        replace.add("ds_session_id=rotated");
+        eq("同名 Cookie 被替换", "ds_session_id=rotated; other=1",
+           DeepSeekWeb.mergeCookies("ds_session_id=old; other=1", replace));
+        java.util.List<String> del = new java.util.ArrayList<String>();
+        del.add("other=; Max-Age=0");
+        eq("Max-Age=0 表示删除", "ds_session_id=old",
+           DeepSeekWeb.mergeCookies("ds_session_id=old; other=1", del));
+        java.util.List<String> del2 = new java.util.ArrayList<String>();
+        del2.add("other=x; Expires=Thu, 01 Jan 1970 00:00:00 GMT");
+        eq("Expires=1970 表示删除", "ds_session_id=old",
+           DeepSeekWeb.mergeCookies("ds_session_id=old; other=1", del2));
+        java.util.List<String> empty = new java.util.ArrayList<String>();
+        eq("没有 Set-Cookie 时原样返回", "a=1; b=2",
+           DeepSeekWeb.mergeCookies("a=1; b=2", empty));
+        eq("空罐也能收", "a=1", DeepSeekWeb.mergeCookies(null, java.util.Arrays.asList("a=1")));
+        /* 一条头里塞了多条 Set-Cookie（有些实现会这么并）：按「逗号后紧跟 name=」拆开。
+           Expires 里的逗号不能被当成分隔符，否则会把日期当 cookie 写进去。 */
+        java.util.List<String> combined = new java.util.ArrayList<String>();
+        combined.add("a=1; Path=/, b=2; Expires=Wed, 21 Oct 2026 07:28:00 GMT");
+        String mergedCombined = DeepSeekWeb.mergeCookies("", combined);
+        ok("并成一行的多条 Cookie 能拆开",
+           mergedCombined.contains("a=1") && mergedCombined.contains("b=2"), mergedCombined);
+        ok("Expires 里的逗号不误拆", !mergedCombined.contains("07:28"), mergedCombined);
+        eq("非法片段被忽略", "", DeepSeekWeb.mergeCookies("", java.util.Arrays.asList("novalue")));
 
         // ── latestTurn：复用上游会话时只发最新一轮，避免历史灌两遍 ──
         JSONArray full = new JSONArray();
@@ -293,6 +331,54 @@ public class DeepSeekClientTest {
         eq("没有题目指纹返回空", "", DeepSeekClient.questionFingerprint(chatOnly));
         eq("闲聊也能取提问", "你是谁", DeepSeekClient.lastUserText(chatOnly));
         eq("没 user 时提问为空", "", DeepSeekClient.lastUserText(new JSONArray()));
+
+        // ── isFreshAsk：只有「用户新提的一问」才允许碰答案缓存 ──
+        ok("最后一条是 user → 新提问", DeepSeekClient.isFreshAsk(real));
+        JSONArray toolRound = new JSONArray();
+        toolRound.put(real.getJSONObject(0));
+        toolRound.put(new JSONObject().put("role", "user").put("content", "这题为什么选A？"));
+        toolRound.put(new JSONObject().put("role", "assistant").put("content", "")
+                .put("tool_calls", new JSONArray().put(new JSONObject()
+                        .put("function", new JSONObject().put("name", "list_questions")))));
+        toolRound.put(new JSONObject().put("role", "tool").put("name", "list_questions")
+                .put("content", "{\"total\":5}"));
+        ok("工具结果回灌的那一发不算新提问", !DeepSeekClient.isFreshAsk(toolRound));
+        ok("assistant 收尾轮不算新提问", !DeepSeekClient.isFreshAsk(new JSONArray()
+                .put(new JSONObject().put("role", "user").put("content", "问"))
+                .put(new JSONObject().put("role", "assistant").put("content", "答"))));
+        ok("空提问不算新提问", !DeepSeekClient.isFreshAsk(new JSONArray()
+                .put(new JSONObject().put("role", "user").put("content", "   "))));
+        ok("空消息不算新提问", !DeepSeekClient.isFreshAsk(new JSONArray()));
+
+        // ── answerState：作答状态进缓存键，换了选项就不会拿到旧答案 ──
+        eq("没作答状态时也要有固定形状", "|0|", DeepSeekClient.answerState(real));
+        JSONArray pickedB = new JSONArray();
+        pickedB.put(new JSONObject().put("role", "system").put("content",
+                DeepSeekClient.CTX_MARK + "{\"id\":\"q1\",\"userPick\":[\"B\"],\"graded\":false,"
+                        + "\"mode\":\"practice\"}"));
+        eq("选项与判分flag进状态", "B|0|practice", DeepSeekClient.answerState(pickedB));
+        JSONArray pickedBA = new JSONArray();
+        pickedBA.put(new JSONObject().put("role", "system").put("content",
+                DeepSeekClient.CTX_MARK + "{\"id\":\"q1\",\"userPick\":[\"b\",\"A\"],\"graded\":true,"
+                        + "\"mode\":\"practice\"}"));
+        eq("多选先大写再排序", "A,B|1|practice", DeepSeekClient.answerState(pickedBA));
+        JSONArray pickedAB = new JSONArray();
+        pickedAB.put(new JSONObject().put("role", "system").put("content",
+                DeepSeekClient.CTX_MARK + "{\"id\":\"q1\",\"userPick\":[\"A\",\"B\"],\"graded\":true,"
+                        + "\"mode\":\"practice\"}"));
+        eq("选的顺序不影响状态", DeepSeekClient.answerState(pickedBA),
+           DeepSeekClient.answerState(pickedAB));
+        eq("没有题目上下文时状态为空", "", DeepSeekClient.answerState(chatOnly));
+        ok("换了选项 → 缓存键不同",
+           !RiskGuard.cacheKey(DeepSeekClient.questionFingerprint(pickedB), "这题怎么解",
+                   DeepSeekClient.answerState(pickedB))
+             .equals(RiskGuard.cacheKey(DeepSeekClient.questionFingerprint(pickedAB), "这题怎么解",
+                   DeepSeekClient.answerState(pickedAB))), "");
+        eq("同一个状态 → 同一个键",
+           RiskGuard.cacheKey(DeepSeekClient.questionFingerprint(pickedBA), "这题怎么解",
+                   DeepSeekClient.answerState(pickedBA)),
+           RiskGuard.cacheKey(DeepSeekClient.questionFingerprint(pickedAB), "这题怎么解",
+                   DeepSeekClient.answerState(pickedAB)));
 
         System.out.println("\n" + pass + " passed, " + fail + " failed");
         if (fail > 0) System.exit(1);

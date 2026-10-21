@@ -146,6 +146,13 @@ public class RiskGuardTest {
         ok("40003 不算风险（要重新登录）", !RiskGuard.isRisk(40003, "INVALID_TOKEN"), "");
         ok("普通网络错误不算风险", !RiskGuard.isRisk(-1, "connect failed"), "");
         ok("空消息不算风险", !RiskGuard.isRisk(0, null), "");
+        /* 拦截页（上游回 HTML / 人机校验）是最明确的「别问了」，必须算风险 */
+        ok("拦截页算风险", RiskGuard.isRisk(RiskGuard.BLOCKED_CODE, ""), "");
+        ok("「请完成安全验证」算风险", RiskGuard.isRisk(0, "请完成安全验证后重试"), "");
+        ok("「人机校验」算风险", RiskGuard.isRisk(0, "触发人机校验"), "");
+        ok("captcha 算风险", RiskGuard.isRisk(0, "Captcha required"), "");
+        ok("异常流量算风险", RiskGuard.isRisk(0, "检测到异常流量"), "");
+        ok("access denied 算风险", RiskGuard.isRisk(0, "Access Denied"), "");
 
         // ── 缓存键 ──
         String k1 = RiskGuard.cacheKey("同一段 prompt");
@@ -199,6 +206,94 @@ public class RiskGuardTest {
         eq("归一保留中间的标点", "a,b", RiskGuard.normalizeAsk("a,b"));
         eq("只有标点 → 空", "", RiskGuard.normalizeAsk("？？"));
         eq("null → 空", "", RiskGuard.normalizeAsk(null));
+
+        // ── 递增惩罚：同一天被警告得越多，停得越久 ──
+        RiskGuard esc = new RiskGuard();
+        long t1 = 5_000_000L;
+        esc.onRisk(t1); esc.onRisk(t1);                       // 第 1 次 → 10 分钟
+        eq("第 1 次熔断 10 分钟", RiskGuard.COOLDOWN_MS, RiskGuard.cooldownFor(1));
+        eq("第 2 次熔断 20 分钟", 2 * RiskGuard.COOLDOWN_MS, RiskGuard.cooldownFor(2));
+        eq("第 3 次熔断 40 分钟", 4 * RiskGuard.COOLDOWN_MS, RiskGuard.cooldownFor(3));
+        eq("递增有上限", RiskGuard.MAX_COOLDOWN_MS, RiskGuard.cooldownFor(20));
+        ok("第 1 次熔断用了 10 分钟", esc.frozenRemainingMs(t1) == 10 * 60 * 1000L,
+           String.valueOf(esc.frozenRemainingMs(t1)));
+        eq("第 1 次记了一次警告", 1, esc.strikes());
+        /* 熔断期内又来一次风险：已经是第 2 次，停 20 分钟 */
+        long t2 = t1 + 10 * 60 * 1000L + 1;
+        esc.onRisk(t2); esc.onRisk(t2);
+        eq("第 2 次记了两次警告", 2, esc.strikes());
+        ok("第 2 次停更久（20 分钟）", esc.frozenRemainingMs(t2) == 20 * 60 * 1000L,
+           String.valueOf(esc.frozenRemainingMs(t2)));
+
+        // 手动解除只解冻，不清「被警告几次」的账
+        esc.resetFreeze();
+        ok("手动解除立刻可用", !esc.isFrozen(t2), "");
+        eq("手动解除不清警告次数", 2, esc.strikes());
+
+        // 安静一整天之后才降级
+        RiskGuard quiet = new RiskGuard();
+        quiet.onRisk(t1); quiet.onRisk(t1);
+        eq("先记一次警告", 1, quiet.strikes());
+        ok("刚熔断完不算安静", !quiet.onSuccess(t1 + 1000), "");
+        eq("警告次数保留", 1, quiet.strikes());
+        ok("安静超过一天后降级", quiet.onSuccess(t1 + RiskGuard.STRIKE_FORGET_MS + 1), "");
+        eq("降级后警告清零", 0, quiet.strikes());
+
+        // 跨重启恢复熔断：重启一次不能把惩罚清空
+        RiskGuard rf = new RiskGuard();
+        rf.onRisk(t1); rf.onRisk(t1);
+        long until = rf.frozenUntil();
+        RiskGuard rf2 = new RiskGuard();
+        rf2.restoreFreeze(until, rf.strikes(), rf.lastRiskAt());
+        ok("恢复后仍在熔断", rf2.isFrozen(t1 + 1000), "");
+        eq("恢复后剩余时间一致", rf.frozenRemainingMs(t1 + 1000), rf2.frozenRemainingMs(t1 + 1000));
+        eq("恢复后警告次数一致", rf.strikes(), rf2.strikes());
+        RiskGuard rf3 = new RiskGuard();
+        rf3.restoreFreeze(0, 0, 0);
+        ok("空状态恢复=没熔断", !rf3.isFrozen(t1), "");
+
+        // ── 命中统计：让「缓存有没有用」可被观察 ──
+        RiskGuard h = new RiskGuard();
+        eq("初始没命中过", 0L, h.hitCount());
+        h.cachePut("hk", "hv");
+        h.cacheGet("hk");
+        h.cacheGet("hk");
+        h.cacheGet("miss");
+        eq("命中两次只记两次", 2L, h.hitCount());
+        h.restoreHits(40);
+        eq("命中数按落盘值接上", 40L, h.hitCount());
+        h.restoreHits(-5);
+        eq("负数当 0", 0L, h.hitCount());
+
+        // 单条超大答案不写：否则一条就能把几十条挤掉
+        RiskGuard big = new RiskGuard();
+        StringBuilder huge = new StringBuilder();
+        for (int i = 0; i <= RiskGuard.CACHE_MAX_CHARS; i++) huge.append('x');
+        big.cachePut("big", huge.toString());
+        eq("超大答案不进缓存", 0, big.cacheSize());
+        big.cachePut("ok", "正常长度");
+        eq("正常长度照进", 1, big.cacheSize());
+
+        // ── 缓存键带作答状态：换了选项/判了分，就不是同一个问题 ──
+        String k0 = RiskGuard.cacheKey(fp, "这题为什么选A？", "");
+        eq("作答状态为空时与两参版一致", RiskGuard.cacheKey(fp, "这题为什么选A？"), k0);
+        ok("选了 B 与选了 C 键不同",
+           !RiskGuard.cacheKey(fp, "这题为什么选A？", "B|0|practice")
+                .equals(RiskGuard.cacheKey(fp, "这题为什么选A？", "C|0|practice")), "");
+        ok("判分前后键不同",
+           !RiskGuard.cacheKey(fp, "这题为什么选A？", "B|0|practice")
+                .equals(RiskGuard.cacheKey(fp, "这题为什么选A？", "B|1|practice")), "");
+        ok("键仍然是 16 位", k0.length() == 16, k0);
+
+        // 归一再扩一档：全角字母数字、零宽字符、句尾语气词
+        eq("全角字母归一", "选a", RiskGuard.normalizeAsk("选Ａ"));
+        eq("全角数字归一", "abc123", RiskGuard.normalizeAsk("ＡＢＣ１２３"));
+        eq("句尾语气词归一", "这题怎么解", RiskGuard.normalizeAsk("这题怎么解呢"));
+        eq("连着的语气词一并归一", "这题怎么解", RiskGuard.normalizeAsk("这题怎么解呢呀"));
+        eq("语气词后面带问号也归一", "这题怎么解", RiskGuard.normalizeAsk("这题怎么解吧？"));
+        eq("零宽字符被去掉", "abc", RiskGuard.normalizeAsk("a\u200Bb\uFEFFc"));
+        ok("实词差异不能被归一掉",
+           !RiskGuard.normalizeAsk("为什么选B").equals(RiskGuard.normalizeAsk("为什么不选B")), "");
 
         System.out.println("\n" + pass + " passed, " + fail + " failed");
         if (fail > 0) System.exit(1);

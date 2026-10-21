@@ -74,8 +74,13 @@ public final class DeepSeekWeb {
             });
 
     private final String token;
-    private final String cookie;
+    private volatile String cookie;
     private final String deviceId;
+    /** Cookie 发生变化时的回调：桥接层拿它落盘，跨重启接上轮换后的 WAF Cookie。 */
+    private final CookieSink cookieSink;
+
+    /** 上游轮换了 Cookie（Set-Cookie）时回调一次，参数是合并后的整串 Cookie。 */
+    public interface CookieSink { void onCookies(String cookie); }
 
     /**
      * 当前正在用的连接，供 {@link #abort()} 从别的线程掐断。
@@ -87,13 +92,18 @@ public final class DeepSeekWeb {
     private volatile HttpURLConnection active;
 
     public DeepSeekWeb(String token) {
-        this(token, "", "");
+        this(token, "", "", null);
     }
 
     public DeepSeekWeb(String token, String cookie, String deviceId) {
+        this(token, cookie, deviceId, null);
+    }
+
+    public DeepSeekWeb(String token, String cookie, String deviceId, CookieSink sink) {
         this.token = token == null ? "" : token.trim();
         this.cookie = cookie == null ? "" : cookie.trim();
         this.deviceId = deviceId == null ? "" : deviceId.trim();
+        this.cookieSink = sink;
     }
 
     public boolean hasToken() {
@@ -116,12 +126,26 @@ public final class DeepSeekWeb {
         h.put("User-Agent", UA);
         h.put("Origin", ORIGIN);
         h.put("Referer", ORIGIN + "/");
+        /* 浏览器必发的两类头，缺了就是「只抄了 UA 的脚本」：
+           ① Client Hints（要与 UA 里的 Chrome/120 自洽）；
+           ② Sec-Fetch-*（现代浏览器对每个请求都会自动带，不从代码里写就不会有）。
+           这两组都不参与业务校验，但它们是「请求长得像不像浏览器」的免费分。 */
+        h.put("sec-ch-ua", "\"Chromium\";v=\"120\", \"Not:A-Brand\";v=\"99\"");
+        h.put("sec-ch-ua-mobile", "?1");
+        h.put("sec-ch-ua-platform", "\"Android\"");
+        h.put("Sec-Fetch-Site", "same-origin");
+        h.put("Sec-Fetch-Mode", "cors");
+        h.put("Sec-Fetch-Dest", "empty");
+        h.put("Cache-Control", "no-cache");
+        h.put("Pragma", "no-cache");
         // 网页端始终带这两个客户端标识
         h.put("x-client-platform", "web");
         h.put("x-client-locale", "zh_CN");
         h.put("x-client-timezone-offset", "28800");
         if (!deviceId.isEmpty()) h.put("x-device-id", deviceId);
-        if (!cookie.isEmpty()) h.put("Cookie", cookie);
+        // cookie 是 volatile：上游轮换之后，后续请求要立刻用新的那串
+        String jar = cookie;
+        if (jar != null && !jar.isEmpty()) h.put("Cookie", jar);
         if (!token.isEmpty()) {
             // 容错：用户可能连 "Bearer " 一起粘贴进来，别拼成 "Bearer Bearer x"
             String first = token.split(" ", 2)[0].toLowerCase();
@@ -144,6 +168,103 @@ public final class DeepSeekWeb {
         return c;
     }
 
+    /**
+     * 把这次响应里轮换的 Cookie 收下来。
+     *
+     * <p>真实浏览器每发一次请求都会吸收 {@code Set-Cookie}：WAF 的 {@code HWWAFSESID}
+     * 会换、{@code smidV2} 会滚、会话 Cookie 也会续期。以前这里只看响应体、从不看
+     * 响应头，于是 App 一直拿着登录那一刻的 Cookie 用到失效——在风控眼里就是
+     * 「会话时间线和 cookie 时间线对不上」的客户端。
+     *
+     * <p>合并规则交给 {@link #mergeCookies}（纯函数，桌面单测直接覆盖）。
+     */
+    private void harvest(HttpURLConnection c) {
+        try {
+            List<String> raw = new ArrayList<String>();
+            for (Map.Entry<String, List<String>> e : c.getHeaderFields().entrySet()) {
+                String k = e.getKey();
+                if (k == null || !"set-cookie".equalsIgnoreCase(k)) continue;
+                List<String> vs = e.getValue();
+                if (vs != null) raw.addAll(vs);
+            }
+            if (raw.isEmpty()) return;
+            String merged = mergeCookies(cookie, raw);
+            if (merged.equals(cookie == null ? "" : cookie)) return;
+            cookie = merged;
+            if (cookieSink != null) cookieSink.onCookies(merged);
+        } catch (Exception ignored) {
+            // 收 Cookie 失败不该影响这次请求本身
+        }
+    }
+
+    /**
+     * 把若干条 {@code Set-Cookie} 合并进现有的 Cookie 串。
+     *
+     * <p>规则按浏览器的来：同名替换、值为空或 {@code Max-Age<=0} 或 Expires 在 1970
+     * 表示删除；其余属性（Path/Domain/HttpOnly/Secure/SameSite）一律忽略——
+     * 这是给 Cookie 头用的，不是 CookieJar。保持原有顺序，新名字追加在后面。
+     *
+     * <p>纯静态、不碰网络，所以桌面单测能直接喂字符串验证。
+     */
+    static String mergeCookies(String jar, List<String> setCookies) {
+        java.util.LinkedHashMap<String, String> map =
+                new java.util.LinkedHashMap<String, String>();
+        if (jar != null) {
+            for (String part : jar.split(";")) {
+                String s = part.trim();
+                if (s.isEmpty()) continue;
+                int eq = s.indexOf('=');
+                if (eq <= 0) continue;
+                map.put(s.substring(0, eq).trim(), s.substring(eq + 1).trim());
+            }
+        }
+        if (setCookies != null) {
+            for (String one : setCookies) {
+                if (one == null) continue;
+                // 有些实现把多条 Set-Cookie 用逗号并成一行；Expires 里也有逗号，
+                // 所以只在「逗号后面紧跟 name=」时才拆。
+                for (String piece : one.split(",(?=\\s*[A-Za-z0-9_\\-]+=)")) {
+                    applySetCookie(map, piece);
+                }
+            }
+        }
+        StringBuilder b = new StringBuilder();
+        for (Map.Entry<String, String> e : map.entrySet()) {
+            String v = e.getValue();
+            if (v == null || v.isEmpty()) continue;
+            if (b.length() > 0) b.append("; ");
+            b.append(e.getKey()).append('=').append(v);
+        }
+        return b.toString();
+    }
+
+    /** 应用一条 Set-Cookie：写入、覆盖或删除。 */
+    private static void applySetCookie(Map<String, String> map, String piece) {
+        String s = piece == null ? "" : piece.trim();
+        if (s.isEmpty()) return;
+        String[] parts = s.split(";");
+        String pair = parts[0].trim();
+        int eq = pair.indexOf('=');
+        if (eq <= 0) return;
+        String name = pair.substring(0, eq).trim();
+        String value = pair.substring(eq + 1).trim();
+        if (name.isEmpty()) return;
+        boolean expired = value.isEmpty();
+        for (int i = 1; i < parts.length; i++) {
+            String attr = parts[i].trim().toLowerCase(java.util.Locale.US);
+            if (attr.startsWith("max-age=")) {
+                try {
+                    if (Long.parseLong(attr.substring(8).trim()) <= 0) expired = true;
+                } catch (NumberFormatException ignored) { }
+            } else if (attr.startsWith("expires=")) {
+                String d = attr.substring(8);
+                if (d.contains("1970") || d.contains("1969")) expired = true;
+            }
+        }
+        if (expired) map.remove(name);
+        else map.put(name, value);
+    }
+
     /** 从别的线程掐断当前连接：让卡在 read() 上的请求立刻失败，而不是等满超时。 */
     public void abort() {
         HttpURLConnection c = active;
@@ -163,6 +284,7 @@ public final class DeepSeekWeb {
             OutputStream os = c.getOutputStream();
             try { os.write(b); } finally { os.close(); }
             int code = c.getResponseCode();
+            harvest(c);
             InputStream in = code >= 400 ? c.getErrorStream() : c.getInputStream();
             ByteArrayOutputStream out = new ByteArrayOutputStream();
             if (in != null) {
@@ -183,6 +305,7 @@ public final class DeepSeekWeb {
         HttpURLConnection c = open(path, "GET", "application/json");
         try {
             int code = c.getResponseCode();
+            harvest(c);
             InputStream in = code >= 400 ? c.getErrorStream() : c.getInputStream();
             return readAll(in);
         } finally {
@@ -343,6 +466,7 @@ public final class DeepSeekWeb {
             OutputStream os = c.getOutputStream();
             try { os.write(b); } finally { os.close(); }
             int code = c.getResponseCode();
+            harvest(c);
             String ct = c.getContentType();
 
             // 非 event-stream：上游把业务错误当 JSON 返回（40300/40301/40003…）
@@ -398,8 +522,27 @@ public final class DeepSeekWeb {
             }
             return new DeepSeekException(code, hint);
         } catch (Exception e) {
-            return new DeepSeekException(httpCode, raw.length() > 200 ? raw.substring(0, 200) : raw);
+            return blockedOrCode(raw, httpCode);
         }
+    }
+
+    /**
+     * 响应体不是 JSON 时怎么定性。
+     *
+     * <p>上游正常只回 JSON；一旦回 HTML / WAF 页 / 人机校验，说明这一路已经被盯上了。
+     * 这种错误必须单独标成 {@link #CODE_BLOCKED}，让上层按「上游在说别问了」处理
+     * （熔断停手），而不是当成一次普通失败去重试——重试就是继续撞。
+     */
+    private static DeepSeekException blockedOrCode(String raw, int httpCode) {
+        String t = raw == null ? "" : raw.trim();
+        String low = t.toLowerCase(java.util.Locale.US);
+        boolean html = t.startsWith("<") || low.contains("<html") || low.contains("<!doctype")
+                || low.contains("captcha") || low.contains("waf");
+        if (html) {
+            return new DeepSeekException(CODE_BLOCKED,
+                    "上游回了人机校验 / 拦截页（HTTP " + httpCode + "），先停手，别硬撞");
+        }
+        return new DeepSeekException(httpCode, t.length() > 200 ? t.substring(0, 200) : t);
     }
 
     private static String readAll(InputStream in) throws Exception {
@@ -606,15 +749,24 @@ public final class DeepSeekWeb {
         /**
          * 这个错误值不值得重试。
          *
-         * <p>值得：首帧超时（{@link #CODE_SILENT}）、各种负的本地错误（连不上、读不到）。
-         * 不值得：上游明确回了业务码（40003 登录失效、40300/40301 PoW 问题、参数错）——
-         * 重试多少次结果都一样，只会让用户多等几十秒才看到同样的错误。
+         * <p>值得：首帧超时（{@link #CODE_SILENT}）、各种负的本地错误（连不上、读不到）、
+         * 网关类 5xx，以及 {@code 40301}——挑战是一次性的，重试会**重新取一个新挑战**，
+         * 所以它真的能好；不重试反而让用户白等一次。
+         *
+         * <p>不值得：拦截页（{@link #CODE_BLOCKED}，重试=继续撞）、缺 PoW 头、
+         * 登录失效、参数错。
          */
         public boolean isRetryable() {
+            if (code == CODE_BLOCKED) return false;
+            if (code == 40301) return true;
+            if (code == 502 || code == 503 || code == 504) return true;
             return code < 0;
         }
     }
 
     /** 首帧看门狗掐断连接时用的错误码。 */
     public static final int CODE_SILENT = -2;
+
+    /** 上游回了拦截页 / 人机校验（不是 JSON）。与 {@code RiskGuard.BLOCKED_CODE} 同值。 */
+    public static final int CODE_BLOCKED = -5;
 }

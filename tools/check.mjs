@@ -1481,10 +1481,10 @@ ok("退出登录会一起清掉", bridgeSrc.indexOf(".remove(PREF_COOKIE)") >= 0
    && bridgeSrc.indexOf(".remove(PREF_DEVICE_ID)") >= 0);
 
 /* ② 请求头要带 Cookie / x-device-id / x-client-* */
-ok("请求头带 Cookie", /h\.put\("Cookie", cookie\)/.test(webSrc));
+ok("请求头带 Cookie", /h\.put\("Cookie", jar\)/.test(webSrc));
 ok("请求头带 x-device-id", /h\.put\("x-device-id", deviceId\)/.test(webSrc));
 ok("请求头带 x-client-platform", /x-client-platform/.test(webSrc));
-ok("空 Cookie 时不发空头", /if \(!cookie\.isEmpty\(\)\) h\.put\("Cookie"/.test(webSrc));
+ok("空 Cookie 时不发空头", /if \(jar != null && !jar\.isEmpty\(\)\) h\.put\("Cookie"/.test(webSrc));
 ok("构造器接受 cookie/deviceId", /DeepSeekWeb\(String token, String cookie, String deviceId\)/.test(webSrc));
 ok("桥接层把 Cookie 传进去",
    /new DeepSeekWeb\(token, prefs\.getString\(PREF_COOKIE/.test(bridgeSrc));
@@ -1524,14 +1524,14 @@ ok("缓存命中直接返回、不发请求",
    /cacheGet\(cacheKey\)[\s\S]{0,220}?return cached/.test(bridgeSrc));
 
 /* 成功/失败要正确记账 */
-ok("成功会清零连续失败", /guard\.onSuccess\(\)/.test(bridgeSrc));
+ok("成功会清零连续失败", /guard\.onSuccess\(/.test(bridgeSrc));
 ok("成功会计一次用量", /guard\.onUsed\(today\)/.test(bridgeSrc));
 ok("风险错误不重试、直接计风险", /RiskGuard\.isRisk\([\s\S]{0,120}?guard\.onRisk/.test(bridgeSrc));
 ok("每日用量落盘（跨重启保留）", /PREF_GUARD_USED/.test(bridgeSrc) && /persistUsage\(\)/.test(bridgeSrc));
 ok("启动时恢复用量", /guard\.restore\([\s\S]{0,120}?PREF_GUARD_USED/.test(bridgeSrc));
 
 /* 只有最终回答进缓存：中间的工具轮次不能缓存 */
-ok("工具轮次不写缓存", /toolCalls\.length\(\) == 0[\s\S]{0,120}?cachePut/.test(bridgeSrc));
+ok("工具轮次不写缓存", /toolCalls\.length\(\) == 0[\s\S]{0,200}?cachePut/.test(bridgeSrc));
 
 /* 常量约束 */
 ok("熔断阈值是 2 次", /MAX_CONSECUTIVE = 2/.test(guardSrc));
@@ -1635,7 +1635,7 @@ ok("写完缓存就落盘",
    /cachePut\(cacheKey, resp\.toString\(\)\);[\s\S]{0,80}?persistCache\(\)/.test(bridgeSrc));
 ok("清缓存连带清磁盘", /cacheClear\(\);[\s\S]{0,140}?remove\(PREF_GUARD_CACHE\)/.test(bridgeSrc));
 ok("落盘有体积上限", /CACHE_BYTES_MAX = \d+ \* 1024/.test(bridgeSrc));
-ok("快照按新到旧取、超出预算就停", /从最新往回塞/.test(bridgeSrc));
+ok("快照按最旧到最新写盘、超出预算丢最旧", /最旧 → 最新/.test(bridgeSrc) && /while \(from < items\.size\(\) && total > CACHE_BYTES_MAX\)/.test(bridgeSrc));
 
 /* ② 固定前缀：系统提示拆两段，固定段逐字不变 */
 ok("固定段单独成函数", typeof W.chatSysBase === "function");
@@ -1669,6 +1669,115 @@ ok("页面缓存可写可读", (() => { W.apiCachePut("k1", "答案一"); return
 ok("内置通道不走页面缓存", /isBuiltin \? "" : apiCacheKey/.test(html));
 ok("只有纯问答才进缓存", /if \(akey && !usedTools && live\.text\) apiCachePut/.test(html));
 ok("命中时说明没有请求模型", /直接复用上次回答，没有再请求模型/.test(html));
+
+/* ---------- 26. v1.0.8：缓存命中更准、更省；防封更贴浏览器 ---------- */
+section("[26] 缓存命中更准 + 网页版防封更像浏览器");
+
+const clientSrc = fs.readFileSync(path.join(ROOT, "app/src/main/java/com/fan/shuatiku/DeepSeekClient.java"), "utf8");
+
+/* ① 缓存门控：工具轮次不许查也不许写（否则会把刚拿到的工具结果吞掉） */
+ok("有「本轮是不是新提问」的判据", /static boolean isFreshAsk\(JSONArray messages\)/.test(clientSrc));
+ok("判据只看最后一条消息", /messages\.length\(\) - 1[\s\S]{0,400}?"user"\.equals\(last\.optString\("role"\)\)/.test(clientSrc));
+ok("缓存键受新提问门控",
+   /final String cacheKey = freshAsk[\s\S]{0,120}?RiskGuard\.cacheKey/.test(bridgeSrc));
+ok("写缓存也受门控", /if \(freshAsk && parsed\.toolCalls\.length\(\) == 0/.test(bridgeSrc));
+
+/* ② 作答状态进键：换了选项 / 判了分就不是同一个问题 */
+ok("有作答状态提取", /static String answerState\(JSONArray messages\)/.test(clientSrc));
+ok("状态含选项、判分标记、模式",
+   /userPick[\s\S]{0,900}?graded[\s\S]{0,200}?mode/.test(clientSrc));
+ok("缓存键是三参（题目 + 提问 + 状态）",
+   /static String cacheKey\(String questionFingerprint, String ask, String answerState\)/.test(guardSrc));
+ok("桥接层把作答状态喂进键",
+   /RiskGuard\.cacheKey\(quesPrint, askNow, DeepSeekClient\.answerState\(messages\)\)/.test(bridgeSrc));
+ok("键域带版本号，旧条目不会串味", /"v2\\u0001"/.test(guardSrc));
+ok("页面缓存键也含判分状态", /var graded = ctx && ctx\.graded \? "1" : "0"/.test(html));
+ok("页面缓存键对选项排序", /ctx\.userPick\.slice\(\)\.sort\(\)\.join\(","\)/.test(html));
+
+/* ③ 归一再扩：全角、零宽、句尾语气词 */
+ok("归一处理全角字母数字", /foldFullWidth/.test(guardSrc));
+ok("归一去掉零宽字符", /u200B/.test(guardSrc));
+ok("归一去掉句尾语气词", /stripTailParticles/.test(guardSrc));
+ok("页面归一也去语气词", /\[呢呀吧啊嘛哦咯啦呐\]\+\$/.test(html));
+
+/* ④ 落盘：按 UTF-8 字节记账、最旧→最新、单条有上限 */
+ok("按 UTF-8 字节记账", /getBytes\("UTF-8"\)\.length/.test(bridgeSrc) && /utf8Len/.test(bridgeSrc));
+ok("单条缓存值有上限", /CACHE_MAX_CHARS/.test(guardSrc));
+ok("页面单条缓存值也有上限", /String\(text\)\.length > 8000/.test(html));
+
+/* ⑤ 命中可观察：累计次数落盘 + 设置页显示 */
+ok("护栏统计命中次数", /synchronized long hitCount\(\)/.test(guardSrc));
+ok("命中次数跨重启保留", /PREF_GUARD_HITS/.test(bridgeSrc) && /restoreHits/.test(bridgeSrc));
+ok("护栏状态里带命中数", /o\.put\("cacheHits", guard\.hitCount\(\)\)/.test(bridgeSrc));
+ok("设置页显示复用次数", /已直接复用上次答案/.test(html));
+ok("页面命中会刷新 LRU 时间戳", /e\.at = Date\.now\(\);[\s\S]{0,80}?store\.write\(API_CACHE_KEY, all\)/.test(html));
+
+/* ⑥ Cookie 罐：上游轮换的 Set-Cookie 像浏览器一样吸收并落盘 */
+ok("有 Set-Cookie 合并的纯函数", /static String mergeCookies\(String jar, List<String> setCookies\)/.test(webSrc));
+ok("Max-Age=0 / Expires=1970 视为删除", /max-age=/.test(webSrc) && /1970/.test(webSrc));
+ok("删除语义写在 applySetCookie 里", /expired = true/.test(webSrc));
+ok("每个响应都收 Cookie", (webSrc.match(/harvest\(c\)/g) || []).length >= 3,
+   (webSrc.match(/harvest\(c\)/g) || []).length + " 处");
+ok("Cookie 变化有回调", /interface CookieSink/.test(webSrc) && /CookieSink sink/.test(webSrc));
+ok("桥接层把轮换后的 Cookie 落盘",
+   /onCookies\(String cookie\)[\s\S]{0,600}?putString\(PREF_COOKIE, cookie\)/.test(bridgeSrc));
+
+/* ⑦ 更像浏览器：Client Hints / Sec-Fetch / 不缓存 */
+ok("带 Client Hints", /sec-ch-ua/.test(webSrc) && /sec-ch-ua-platform/.test(webSrc));
+ok("带 Sec-Fetch-*", /Sec-Fetch-Site/.test(webSrc) && /Sec-Fetch-Mode/.test(webSrc));
+ok("不复用中间缓存", /Cache-Control", "no-cache"/.test(webSrc));
+
+/* ⑧ 节流：间隔随机、窗口与上次发送跨重启保留 */
+ok("间隔有随机抖动", /JITTER_MS = \d+/.test(bridgeSrc) && /nextGap = MIN_GAP_MS \+ rnd\.nextInt/.test(bridgeSrc));
+ok("节流窗口可序列化", /windowCsv\(\)/.test(bridgeSrc));
+ok("启动时恢复节流状态", /throttle\.restore\(prefs\.getLong\(PREF_SEND_LAST/.test(bridgeSrc));
+ok("每次发送后落盘", /persistThrottle\(\)/.test(bridgeSrc) && /onChange\.run\(\)/.test(bridgeSrc));
+
+/* ⑨ 熔断：递增惩罚 + 跨重启保留 */
+ok("有递增惩罚", /static long cooldownFor\(int strikes\)/.test(guardSrc));
+ok("递增有上限", /MAX_COOLDOWN_MS = 2 \* 60 \* 60 \* 1000/.test(guardSrc));
+ok("安静一天才降级", /STRIKE_FORGET_MS = 24 \* 60 \* 60 \* 1000/.test(guardSrc));
+ok("熔断状态可落盘恢复", /restoreFreeze/.test(guardSrc) && /PREF_GUARD_FREEZE/.test(bridgeSrc));
+ok("风险之后立刻落盘", /guard\.onRisk\([\s\S]{0,120}?persistFreeze\(\)/.test(bridgeSrc));
+ok("手动解除不算抹账", /void resetGuard\(\)[\s\S]{0,120}?resetFreeze/.test(bridgeSrc));
+
+/* ⑩ 拦截页识别：HTML / 人机校验不该被当成网络错误重试 */
+ok("有拦截页错误码", /CODE_BLOCKED = -5/.test(webSrc));
+ok("非 JSON 回包走拦截判定", /blockedOrCode/.test(webSrc));
+ok("拦截页算风险", /code == BLOCKED_CODE/.test(guardSrc));
+ok("拦截页不重试", /if \(code == CODE_BLOCKED\) return false/.test(webSrc));
+ok("挑战失效可重试（重新取挑战）", /if \(code == 40301\) return true/.test(webSrc));
+
+/* ⑪ 页面行为：键的语义 */
+ok("页面：判分前后不同键", (() => {
+  const a = W.apiCacheKey({ id: "q1", graded: true }, "这题怎么解");
+  const b = W.apiCacheKey({ id: "q1", graded: false }, "这题怎么解");
+  return a !== b && a.indexOf("q1") === 0;
+})());
+ok("页面：选项顺序不影响键",
+   W.apiCacheKey({ id: "q1", userPick: ["B", "A"] }, "这题怎么解")
+   === W.apiCacheKey({ id: "q1", userPick: ["A", "B"] }, "这题怎么解"));
+ok("页面：换了选项就换键",
+   W.apiCacheKey({ id: "q1", userPick: ["A"] }, "这题怎么解")
+   !== W.apiCacheKey({ id: "q1", userPick: ["C"] }, "这题怎么解"));
+ok("页面：语气词不影响键",
+   W.apiCacheKey({ id: "q1" }, "这题怎么解呢")
+   === W.apiCacheKey({ id: "q1" }, "这题怎么解"));
+ok("页面：命中会刷新时间戳", (() => {
+  W.apiCachePut("k-lru", "答案");
+  const all0 = W.store.read("stk.acache.v1", {});
+  all0["k-lru"].at = 1;
+  W.store.write("stk.acache.v1", all0);
+  W.apiCacheGet("k-lru");
+  const all1 = W.store.read("stk.acache.v1", {});
+  return all1["k-lru"].at > 1;
+})());
+ok("页面：超大答案不进缓存", (() => {
+  const huge = new Array(9000).join("x");
+  W.apiCachePut("k-huge", huge);
+  return !W.store.read("stk.acache.v1", {})["k-huge"];
+})());
+delete W.store.read("stk.acache.v1", {})["k-lru"];
 
 /* ---------- 结果 ---------- */
 console.log("\n" + "=".repeat(46));

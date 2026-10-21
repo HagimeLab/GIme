@@ -77,7 +77,7 @@ java "-Dfile.encoding=UTF-8" -cp "%OUT%;%JSON_JAR%" com.fan.shuatiku.DeepSeekHas
 if errorlevel 1 goto fail
 echo.
 echo === deepseek client (prompt flatten / tool_call / sse dialect) ===
-javac -encoding UTF-8 -cp "%JSON_JAR%" -d "%OUT%" "%~dp0..\app\src\main\java\com\fan\shuatiku\DeepSeekHashV1.java" "%~dp0..\app\src\main\java\com\fan\shuatiku\DeepSeekClient.java" "%~dp0..\app\src\main\java\com\fan\shuatiku\DeepSeekWeb.java" "%~dp0DeepSeekClientTest.java"
+javac -encoding UTF-8 -cp "%JSON_JAR%" -d "%OUT%" "%~dp0..\app\src\main\java\com\fan\shuatiku\DeepSeekHashV1.java" "%~dp0..\app\src\main\java\com\fan\shuatiku\DeepSeekClient.java" "%~dp0..\app\src\main\java\com\fan\shuatiku\DeepSeekWeb.java" "%~dp0..\app\src\main\java\com\fan\shuatiku\RiskGuard.java" "%~dp0DeepSeekClientTest.java"
 if errorlevel 1 goto fail
 java "-Dfile.encoding=UTF-8" -cp "%OUT%;%JSON_JAR%" com.fan.shuatiku.DeepSeekClientTest
 if errorlevel 1 goto fail

@@ -62,9 +62,16 @@ public final class DeepSeekBridge {
     /** 上游会话闲置多久就丢掉、下次重建（上游 ttl 约 3 天，这里保守取 1 小时）。 */
     private static final long SESSION_TTL_MS = 60 * 60 * 1000L;
 
-    /** 两次上游请求的最小间隔：真人打字没那么快。 */
+    /**
+     * 两次上游请求的最小间隔：真人打字没那么快。
+     *
+     * <p>再叠加一段随机抖动（{@link #JITTER_MS}）：固定 1.2 秒一次的节奏本身就是
+     * 最好认的机器特征——人手打字的间隔从来不是等长的。
+     */
     private static final long MIN_GAP_MS = 1200;
-    /** 一分钟内最多发几次上游请求（含建会话/PoW/对话，按实际 HTTP 请求算）。 */
+    /** 间隔抖动的上限（毫秒）：实际间隔 = MIN_GAP + 随机 0..JITTER。 */
+    private static final int JITTER_MS = 900;
+    /** 一分钟内最多发几次上游请求（建会话与对话各算一次，PoW 挑战随对话一起走）。 */
     private static final int MAX_PER_MINUTE = 12;
 
     /** 护栏：熔断、每日预算、答案缓存。 */
@@ -74,6 +81,15 @@ public final class DeepSeekBridge {
     /** 答案缓存落盘的上限：只留最近用过的，别让正文把私有配置撑大。 */
     private static final String PREF_GUARD_CACHE = "guard_cache";
     private static final int CACHE_BYTES_MAX = 256 * 1024;
+    /** 熔断状态的落盘键：重启一次就把惩罚清空，等于白送一个绕过闸门的按钮。 */
+    private static final String PREF_GUARD_FREEZE = "guard_freeze_until";
+    private static final String PREF_GUARD_STRIKES = "guard_strikes";
+    private static final String PREF_GUARD_RISK_AT = "guard_risk_at";
+    /** 累计复用次数：跨重启保留，用户能在设置页看到缓存到底省了多少次。 */
+    private static final String PREF_GUARD_HITS = "guard_hits";
+    /** 出站节流的上次发送时刻与 60 秒窗口：重启后仍要守同一份额度。 */
+    private static final String PREF_SEND_LAST = "send_last_at";
+    private static final String PREF_SEND_WINDOW = "send_window";
 
     /** 网络类失败最多重试几次（总共最多跑 MAX_RETRY+1 次）。 */
     private static final int MAX_RETRY = 2;
@@ -85,15 +101,25 @@ public final class DeepSeekBridge {
             new ConcurrentHashMap<String, DeepSeekWeb>();
 
     /**
-     * 出站节流：串行化 + 最小间隔 + 每分钟上限。
+     * 出站节流：串行化 + 抖动间隔 + 每分钟上限。
      *
-     * <p>封号的直接诱因就是「短时间内连续打上游」。真人在网页上打字有间隔，
-     * 工具调用循环则是连着几发。这里把节奏压回人类水平：两发之间至少
-     * {@link #MIN_GAP_MS}，任意 60 秒窗口内不超过 {@link #MAX_PER_MINUTE} 发。
+     * <p>封号的直接诱因就是「短时间内连续打上游」。真人在网页上打字有间隔，而且
+     * **间隔不等长**——固定 1.2 秒一次的节奏本身就是机器特征。所以这里两发之间取
+     * {@code MIN_GAP_MS}+随机 0~{@link #JITTER_MS}，任意 60 秒窗口内不超过
+     * {@link #MAX_PER_MINUTE} 发。
+     *
+     * <p>窗口与「上次发送时刻」都落盘：否则杀掉 App 重开就是一台全新的限速器，
+     * 这是最容易被拿来自动化的一个洞。
      */
     private static final class Throttle {
         private final java.util.ArrayDeque<Long> window = new java.util.ArrayDeque<Long>();
+        private final java.util.Random rnd = new java.util.Random();
+        private final Runnable onChange;
         private long last = 0;
+        /** 下一次要等多久：每次成功发送后重新掷一次，别让间隔成为常量。 */
+        private long nextGap = MIN_GAP_MS;
+
+        Throttle(Runnable onChange) { this.onChange = onChange; }
 
         /**
          * 取一个发送许可；不够就睡够。
@@ -105,10 +131,9 @@ public final class DeepSeekBridge {
             boolean hinted = false;
             while (true) {
                 long now = System.currentTimeMillis();
-                // 丢掉 60 秒之前的记录
-                while (!window.isEmpty() && now - window.peekFirst() > 60_000L) window.pollFirst();
+                trim(now);
                 long wait = 0;
-                if (now - last < MIN_GAP_MS) wait = MIN_GAP_MS - (now - last);
+                if (last > 0 && now - last < nextGap) wait = nextGap - (now - last);
                 if (window.size() >= MAX_PER_MINUTE) {
                     long oldest = window.peekFirst();
                     long until = oldest + 60_000L - now;
@@ -117,6 +142,8 @@ public final class DeepSeekBridge {
                 if (wait <= 0) {
                     window.addLast(now);
                     last = now;
+                    nextGap = MIN_GAP_MS + rnd.nextInt(JITTER_MS + 1);
+                    fire();
                     return true;
                 }
                 if (!hinted && waitHint != null && wait >= 1000) {
@@ -126,19 +153,48 @@ public final class DeepSeekBridge {
                 Thread.sleep(Math.min(wait, 5_000L));
             }
         }
+
+        private void trim(long now) {
+            while (!window.isEmpty() && now - window.peekFirst() > 60_000L) window.pollFirst();
+        }
+
+        synchronized long lastAt() { return last; }
+
+        /** 60 秒窗口的快照（逗号分隔的时间戳），调用方拿去落盘。 */
+        synchronized String windowCsv() {
+            StringBuilder b = new StringBuilder();
+            for (Long t : window) {
+                if (b.length() > 0) b.append(',');
+                b.append(t);
+            }
+            return b.toString();
+        }
+
+        /** 重启后把窗口接上：跨重启也要守同一分钟额度。 */
+        synchronized void restore(long lastAt, String csv) {
+            last = Math.max(0, lastAt);
+            window.clear();
+            if (csv != null && !csv.isEmpty()) {
+                for (String one : csv.split(",")) {
+                    try {
+                        long t = Long.parseLong(one.trim());
+                        if (t > 0) window.addLast(t);
+                    } catch (NumberFormatException ignored) { }
+                }
+            }
+            trim(System.currentTimeMillis());
+        }
+
+        /** 状态变了就让调用方落一次盘（apply()，不挡问答线程）。 */
+        private void fire() {
+            if (onChange == null) return;
+            try { onChange.run(); } catch (Exception ignored) { }
+        }
     }
 
     private interface WaitHint { void waiting(long ms); }
 
-    /**
-     * 出站节流：串行化 + 最小间隔 + 每分钟上限。
-     *
-     * <p>封号的直接诱因就是「短时间内连续打上游」。真人在网页上打字有间隔，
-     * 工具调用循环则是连着几发。这里把节奏压回人类水平：两发之间至少
-     * {@link #MIN_GAP_MS}，任意 60 秒窗口内不超过 {@link #MAX_PER_MINUTE} 发。
-     */
-
-    private final Throttle throttle = new Throttle();
+    private final Throttle throttle;
 
     private final Activity activity;
     private final SharedPreferences prefs;
@@ -159,8 +215,18 @@ public final class DeepSeekBridge {
         this.prefs = activity.getSharedPreferences(PREFS, Activity.MODE_PRIVATE);
         // 每日用量要跨重启保留，否则切一下 App 就能把预算重置掉
         guard.restore(prefs.getString(PREF_GUARD_DAY, ""), prefs.getInt(PREF_GUARD_USED, 0));
+        // 熔断与递增惩罚也要跨重启：重启一次就把惩罚清空，等于白送一个绕过闸门的按钮
+        guard.restoreFreeze(prefs.getLong(PREF_GUARD_FREEZE, 0),
+                prefs.getInt(PREF_GUARD_STRIKES, 0),
+                prefs.getLong(PREF_GUARD_RISK_AT, 0));
+        guard.restoreHits(prefs.getLong(PREF_GUARD_HITS, 0));
         // 答案缓存也要跨重启：否则「昨天问过这道题」今天还要再打一次上游
         restoreCache();
+        // 节流器要能在状态变化时落盘，所以把回调接上再恢复窗口
+        throttle = new Throttle(new Runnable() {
+            @Override public void run() { persistThrottle(); }
+        });
+        throttle.restore(prefs.getLong(PREF_SEND_LAST, 0), prefs.getString(PREF_SEND_WINDOW, ""));
     }
 
     /** 本地日期字符串，用于「今日已用」的换天判断。 */
@@ -176,28 +242,59 @@ public final class DeepSeekBridge {
                 .putInt(PREF_GUARD_USED, guard.used()).apply();
     }
 
+    /** 熔断状态落盘：被警告之后关掉 App 再开，惩罚仍然在。 */
+    private void persistFreeze() {
+        prefs.edit().putLong(PREF_GUARD_FREEZE, guard.frozenUntil())
+                .putInt(PREF_GUARD_STRIKES, guard.strikes())
+                .putLong(PREF_GUARD_RISK_AT, guard.lastRiskAt()).apply();
+    }
+
+    /** 节流窗口落盘：跨重启仍守同一份额度。 */
+    private void persistThrottle() {
+        prefs.edit().putLong(PREF_SEND_LAST, throttle.lastAt())
+                .putString(PREF_SEND_WINDOW, throttle.windowCsv()).apply();
+    }
+
+    private void persistHits() {
+        prefs.edit().putLong(PREF_GUARD_HITS, guard.hitCount()).apply();
+    }
+
     /**
      * 把答案缓存写进应用私有配置。
      *
-     * <p>只存最近用过的、总量不超过 {@link #CACHE_BYTES_MAX} 的那些：缓存是「省一次请求」，
-     * 不该反过来把几十万字节的正文长期压在一个 XML 里。写盘用 apply()，不挡问答线程。
+     * <p>按「最旧 → 最新」写盘：恢复时顺序放回，LRU 的淘汰顺序才和内存里一致。
+     * 总量超预算就从最旧的一端丢，留下最近用过的那些——缓存是「省一次请求」，
+     * 不该反过来把几百 KB 的正文长期压在一个 XML 里。写盘用 apply()，不挡问答线程。
      */
     private void persistCache() {
         try {
-            java.util.Map<String, String> snap = guard.snapshot();
+            java.util.Map<String, String> snap = guard.snapshot();      // 最旧 → 最新
             java.util.List<java.util.Map.Entry<String, String>> items =
                     new java.util.ArrayList<java.util.Map.Entry<String, String>>(snap.entrySet());
+            int[] sizes = new int[items.size()];
+            int total = 0;
+            for (int i = 0; i < items.size(); i++) {
+                sizes[i] = utf8Len(items.get(i).getKey()) + utf8Len(items.get(i).getValue());
+                total += sizes[i];
+            }
+            int from = 0;
+            while (from < items.size() && total > CACHE_BYTES_MAX) total -= sizes[from++];
             JSONArray arr = new JSONArray();
-            int bytes = 0;
-            // snapshot 是最旧→最新，这里从最新往回塞，超预算就停
-            for (int i = items.size() - 1; i >= 0; i--) {
-                java.util.Map.Entry<String, String> e = items.get(i);
-                bytes += e.getKey().length() + e.getValue().length();
-                if (bytes > CACHE_BYTES_MAX) break;
-                arr.put(new JSONArray().put(e.getKey()).put(e.getValue()));
+            for (int i = from; i < items.size(); i++) {
+                arr.put(new JSONArray().put(items.get(i).getKey()).put(items.get(i).getValue()));
             }
             prefs.edit().putString(PREF_GUARD_CACHE, arr.toString()).apply();
         } catch (Exception ignored) { }
+    }
+
+    /** 按 UTF-8 字节数记账：中文一个字 3 字节，按字符数算会把 256KB 撑成 700KB。 */
+    private static int utf8Len(String s) {
+        if (s == null) return 0;
+        try {
+            return s.getBytes("UTF-8").length;
+        } catch (Exception e) {
+            return s.length();
+        }
     }
 
     /** 启动时把上次落盘的答案缓存读回来；坏了就当没有，不影响问答。 */
@@ -230,12 +327,18 @@ public final class DeepSeekBridge {
             o.put("limit", RiskGuard.DAILY_LIMIT);
             o.put("remaining", guard.remaining(today));
             o.put("cacheSize", guard.cacheSize());
+            // 「缓存到底省了多少次上游请求」：累计值，跨重启保留
+            o.put("cacheHits", guard.hitCount());
+            o.put("strikes", guard.strikes());
         } catch (Exception ignored) { }
         return o.toString();
     }
 
-    /** 用户主动解除熔断。 */
-    void resetGuard() { guard.resetFreeze(); }
+    /** 用户主动解除熔断（strikes 保留：这是上游的账，不该被「再点一次」抹掉）。 */
+    void resetGuard() {
+        guard.resetFreeze();
+        persistFreeze();
+    }
 
     /** 清空答案缓存（连带磁盘上那份）。 */
     void clearCache() {
@@ -392,19 +495,32 @@ public final class DeepSeekBridge {
         }
 
         final DeepSeekWeb web = new DeepSeekWeb(token, prefs.getString(PREF_COOKIE, ""),
-                prefs.getString(PREF_DEVICE_ID, ""));
+                prefs.getString(PREF_DEVICE_ID, ""), new DeepSeekWeb.CookieSink() {
+                    @Override public void onCookies(String cookie) {
+                        /* 上游每次响应都可能轮换 WAF 与会话 Cookie。像浏览器一样收下来，
+                           下次请求就用新的那串——一直攥着登录那一刻的 Cookie 用到失效，
+                           在风控眼里就是「cookie 时间线和会话时间线对不上」的客户端。 */
+                        prefs.edit().putString(PREF_COOKIE, cookie).apply();
+                    }
+                });
         cancelOf.put(id, web);
 
-        /* ③ 答案缓存：键只看「哪道题 + 问的什么」，不含历史。
+        /* ③ 答案缓存：键只看「哪道题 + 问的什么 + 这道题被答成什么样」，不含历史。
            刷题场景里同一道题常被反复问，这条能实打实省掉相当一部分请求
-           （对手机号登录是不撞风控，对 API Key 是省 token）。 */
+           （对手机号登录是不撞风控，对 API Key 是省 token）。
+           只在本轮是「用户新提的一问」时查：工具调用的第二发带着工具返回，
+           最后一条 user 没变，这时候查缓存会把刚拿到的工具结果整段吞掉。 */
+        final boolean freshAsk = DeepSeekClient.isFreshAsk(messages);
         final String askNow = DeepSeekClient.lastUserText(messages);
         final String quesPrint = DeepSeekClient.questionFingerprint(messages);
-        final String cacheKey = RiskGuard.cacheKey(quesPrint, askNow);
+        final String cacheKey = freshAsk
+                ? RiskGuard.cacheKey(quesPrint, askNow, DeepSeekClient.answerState(messages))
+                : "";
         if (!cacheKey.isEmpty()) {
             String cached = guard.cacheGet(cacheKey);
             if (cached != null) {
                 cancelOf.remove(id);
+                persistHits();
                 sink.toJs("window.onChatCached(" + quote(id) + ")");
                 return cached;
             }
@@ -475,6 +591,7 @@ public final class DeepSeekBridge {
                     DeepSeekWeb.DeepSeekException de = (DeepSeekWeb.DeepSeekException) e;
                     if (RiskGuard.isRisk(de.code, de.getMessage())) {
                         guard.onRisk(System.currentTimeMillis());
+                        persistFreeze();
                         cancelOf.remove(id);
                         throw de;
                     }
@@ -500,7 +617,8 @@ public final class DeepSeekBridge {
         thinkOut.finish();
         textOut.finish();
         cancelOf.remove(id);
-        guard.onSuccess();          // 真出了一轮结果，连续失败计数清零
+        /* 真出了一轮结果：连续失败计数清零；若「安静了一整天」，递增惩罚也降级。 */
+        if (guard.onSuccess(System.currentTimeMillis())) persistFreeze();
         guard.onUsed(today);
         persistUsage();
 
@@ -535,9 +653,10 @@ public final class DeepSeekBridge {
         resp.put("model", MODEL);
         resp.put("choices", new JSONArray().put(choice));
         resp.put("usage", buildUsage(prompt, parsed.text, reasoning.toString(), usage[0]));
-        /* 只有「没有工具调用」的最终回答才进缓存：
+        /* 只有「用户新问 + 没有工具调用」的最终回答才进缓存：
            工具轮次是中间态，缓存它会让下次直接卡在调工具那一步。 */
-        if (parsed.toolCalls.length() == 0 && parsed.text != null && !parsed.text.isEmpty()) {
+        if (freshAsk && parsed.toolCalls.length() == 0
+                && parsed.text != null && !parsed.text.isEmpty()) {
             guard.cachePut(cacheKey, resp.toString());
             persistCache();
         }

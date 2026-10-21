@@ -185,55 +185,112 @@ public final class DeepSeekClient {
         return "";
     }
 
+    /** 题目上下文在 system 消息里的标记：页面用 {@code chatCtxMsg} 拼出来。 */
+    static final String CTX_MARK = "当前题目上下文（JSON）：";
+
     /**
-     * 题目指纹：从 system 消息里挖出「当前题目上下文（JSON）」那一截。
+     * 挖出「当前题目上下文」那个 JSON 对象（没有就是 null）。
      *
-     * <p>页面把题目当作 system 消息的一部分发过来（见 {@code chatSystem}）。
-     * 这里只取那道 JSON，并按题干/选项/答案重组，这样：
-     * <ul>
-     *   <li>同一道题每次的指纹都一样 → 缓存能命中；</li>
-     *   <li>换了题目指纹就变 → 不会把 A 题的答案套到 B 题上。</li>
-     * </ul>
-     * 挖不到就返回空串（比如没有题目上下文时的闲聊），此时缓存键只剩提问本身。
+     * <p>页面把题目作为**单独一条 system 消息**发过来。这里只认标记之后那一截 JSON；
+     * 解析不动就当没有上下文——指纹、作答状态都靠它，坏了只该退化成「不命中」，
+     * 不该让问答整个失败。
      */
-    static String questionFingerprint(JSONArray messages) {
-        if (messages == null) return "";
-        final String MARK = "当前题目上下文（JSON）：";
+    static JSONObject questionContext(JSONArray messages) {
+        if (messages == null) return null;
         for (int i = 0; i < messages.length(); i++) {
             JSONObject m = messages.optJSONObject(i);
             if (m == null || !"system".equals(m.optString("role"))) continue;
             String text = extractText(m.opt("content"));
-            int at = text.indexOf(MARK);
+            int at = text.indexOf(CTX_MARK);
             if (at < 0) continue;
-            String json = text.substring(at + MARK.length()).trim();
+            String json = text.substring(at + CTX_MARK.length()).trim();
             try {
-                JSONObject ctx = new JSONObject(json);
-                // 只取与「这道题是什么」有关的字段，顺序固定，保证指纹稳定
-                StringBuilder b = new StringBuilder();
-                b.append(ctx.optString("id", "")).append('\u0001');
-                b.append(ctx.optString("stem", "")).append('\u0001');
-                JSONArray opts = ctx.optJSONArray("options");
-                if (opts != null) {
-                    for (int k = 0; k < opts.length(); k++) {
-                        JSONObject o = opts.optJSONObject(k);
-                        if (o == null) continue;
-                        b.append(o.optString("key", "")).append('=')
-                         .append(o.optString("text", "")).append('\u0002');
-                    }
-                }
-                JSONArray ans = ctx.optJSONArray("answer");
-                if (ans != null) {
-                    for (int k = 0; k < ans.length(); k++) {
-                        b.append(String.valueOf(ans.opt(k))).append('\u0002');
-                    }
-                }
-                return b.toString();
+                return new JSONObject(json);
             } catch (Exception e) {
-                // 解析不动就当没有题目上下文，别让缓存整体失效
-                return "";
+                return null;
             }
         }
-        return "";
+        return null;
+    }
+
+    /**
+     * 题目指纹：从题目上下文里按题干/选项/答案重组出一段稳定字符串。
+     *
+     * <p>这样同一道题每次的指纹都一样（缓存能命中），换了题目指纹就变
+     * （不会把 A 题的答案套到 B 题上）。没有上下文（闲聊）时返回空串，
+     * 此时缓存键只剩提问本身。
+     */
+    static String questionFingerprint(JSONArray messages) {
+        JSONObject ctx = questionContext(messages);
+        if (ctx == null) return "";
+        // 只取与「这道题是什么」有关的字段，顺序固定，保证指纹稳定
+        StringBuilder b = new StringBuilder();
+        b.append(ctx.optString("id", "")).append('\u0001');
+        b.append(ctx.optString("stem", "")).append('\u0001');
+        JSONArray opts = ctx.optJSONArray("options");
+        if (opts != null) {
+            for (int k = 0; k < opts.length(); k++) {
+                JSONObject o = opts.optJSONObject(k);
+                if (o == null) continue;
+                b.append(o.optString("key", "")).append('=')
+                 .append(o.optString("text", "")).append('\u0002');
+            }
+        }
+        JSONArray ans = ctx.optJSONArray("answer");
+        if (ans != null) {
+            for (int k = 0; k < ans.length(); k++) {
+                b.append(String.valueOf(ans.opt(k))).append('\u0002');
+            }
+        }
+        return b.toString();
+    }
+
+    /**
+     * 本轮是不是「用户刚提了一个新问题」——决定这一轮能不能查/写答案缓存。
+     *
+     * <p>为什么需要这道闸：一轮工具调用会连续发好几次请求，中间的 prompt 里带着
+     * 「工具返回」，而最后一条 user 消息**没变**。若不看最后一条消息的角色就查缓存，
+     * 第二发可能直接命中上一次的最终回答，把刚拿到的工具结果整段吞掉——表现就是
+     * 「大肥鱼查了题库，答的还是旧话」。
+     *
+     * <p>判据只看最后一条消息是不是 user。工具轮次、assistant 收尾轮都不算，
+     * 因此它们既不读缓存也不写缓存。
+     */
+    static boolean isFreshAsk(JSONArray messages) {
+        if (messages == null || messages.length() == 0) return false;
+        JSONObject last = messages.optJSONObject(messages.length() - 1);
+        if (last == null) return false;
+        if (!"user".equals(last.optString("role"))) return false;
+        return !extractText(last.opt("content")).trim().isEmpty();
+    }
+
+    /**
+     * 作答状态：这道题「被答成什么样」——选了哪几个选项、判没判分、什么模式。
+     *
+     * <p>它是缓存键的第三块原料。少了它，用户换个选项再问同一句话会拿到上一回的答案
+     * （那答案里正说着「你选的 B」）。选项先大写归一、再排序，这样「B、A」和「A、B」
+     * 是同一个状态，顺序反过来也照样命中。
+     */
+    static String answerState(JSONArray messages) {
+        JSONObject ctx = questionContext(messages);
+        if (ctx == null) return "";
+        StringBuilder b = new StringBuilder();
+        JSONArray picks = ctx.optJSONArray("userPick");
+        if (picks != null && picks.length() > 0) {
+            java.util.List<String> keys = new java.util.ArrayList<String>();
+            for (int i = 0; i < picks.length(); i++) {
+                String k = String.valueOf(picks.opt(i)).trim();
+                if (!k.isEmpty()) keys.add(k.toUpperCase(java.util.Locale.US));
+            }
+            java.util.Collections.sort(keys);
+            for (int i = 0; i < keys.size(); i++) {
+                if (i > 0) b.append(',');
+                b.append(keys.get(i));
+            }
+        }
+        b.append('|').append(ctx.optBoolean("graded", false) ? '1' : '0');
+        b.append('|').append(ctx.optString("mode", ""));
+        return b.toString();
     }
 
     /** 解析结果：可见正文 + OpenAI 风格 tool_calls。 */

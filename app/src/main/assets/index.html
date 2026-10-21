@@ -4293,7 +4293,11 @@ function agGuardHtml() {
       + '</div>';
   } else {
     line = '<div class="sl-hint" style="margin:0">今日已用 ' + g.used + ' / ' + g.limit
-      + ' 次（正常问答足够；需要更多请切到 API Key）</div>';
+      + ' 次（正常问答足够；需要更多请切到 API Key）'
+      /* 复用次数是「缓存有没有用」的唯一证据，摆在额度旁边才有说服力 */
+      + (typeof g.cacheHits === "number" && g.cacheHits > 0
+          ? '<br>已直接复用上次答案 ' + g.cacheHits + ' 次（这些没有请求上游）' : '')
+      + '</div>';
   }
   var btns = '<div class="ag-fs-row" style="margin-top:10px">'
     + '<button class="ag-fs-b" onclick="dsClearCache()">清空答案缓存'
@@ -4672,19 +4676,30 @@ function chatLastUserText() {
 }
 function apiCacheKey(ctx, ask) {
   var norm = String(ask || "").replace(/\s+/g, "").toLowerCase()
-    .replace(/^[?？!！.。~～、,]+/, "").replace(/[?？!！.。~～、,]+$/, "");
+    .replace(/^[?？!！.。~～、,]+/, "").replace(/[?？!！.。~～、,]+$/, "")
+    /* 句尾语气词也归掉：「这题怎么解呢」和「这题怎么解」是同一问。
+       实词差异（为什么选 B / 为什么不选 B）不在这条范围内。 */
+    .replace(/[呢呀吧啊嘛哦咯啦呐]+$/, "");
   if (!norm) return "";
-  /* 选项要进键：同一句话在「选了 A」和「选了 C」下答案不一样，不能混用。 */
-  var pick = ctx && ctx.userPick ? ctx.userPick.join(",") : "";
-  return (ctx && ctx.id ? String(ctx.id) : "") + "|" + pick + "|" + norm;
+  /* 选项与「判没判分」都要进键：同一句话在「选了 A」和「选了 C」、
+     在「刚答完」和「已判分」下答案不一样，混用就会拿旧话套新状态。
+     选项排序后再拼，选的顺序不同不该等于换了个问题。 */
+  var pick = ctx && ctx.userPick ? ctx.userPick.slice().sort().join(",") : "";
+  var graded = ctx && ctx.graded ? "1" : "0";
+  return (ctx && ctx.id ? String(ctx.id) : "") + "|" + pick + "|" + graded + "|" + norm;
 }
 function apiCacheGet(k) {
   var all = store.read(API_CACHE_KEY, {});
   var e = all[k];
-  return e && typeof e.t === "string" ? e.t : "";
+  if (!e || typeof e.t !== "string") return "";
+  /* 命中就刷新时间戳：否则「常用的那几条」会先被淘汰，留下没人再看的。 */
+  e.at = Date.now();
+  store.write(API_CACHE_KEY, all);
+  return e.t;
 }
 function apiCachePut(k, text) {
   if (!k || !text) return;
+  if (String(text).length > 8000) return;   // 一条大答案不该把整个缓存挤掉
   var all = store.read(API_CACHE_KEY, {});
   all[k] = { t: text, at: Date.now() };
   var keys = Object.keys(all);
