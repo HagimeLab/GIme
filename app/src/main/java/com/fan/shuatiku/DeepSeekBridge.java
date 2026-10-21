@@ -7,6 +7,7 @@ import android.content.SharedPreferences;
 import org.json.JSONArray;
 import org.json.JSONObject;
 
+import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -59,8 +60,14 @@ public final class DeepSeekBridge {
      */
     private static final boolean REUSE_SESSION = true;
 
-    /** 上游会话闲置多久就丢掉、下次重建（上游 ttl 约 3 天，这里保守取 1 小时）。 */
-    private static final long SESSION_TTL_MS = 60 * 60 * 1000L;
+    /**
+     * 上游会话闲置多久就丢掉、下次重建。
+     *
+     * <p>上游 ttl 约 3 天，真人也会在同一个会话里连着问很久；每小时内重建一次
+     * 会话本身就是多余的动作。这里取 12 小时：即便会话真的过期了，
+     * 下面的重试会把「复用失败」当成会话坏了、重建一次再问，用户看不出来。
+     */
+    private static final long SESSION_TTL_MS = 12 * 60 * 60 * 1000L;
 
     /**
      * 两次上游请求的最小间隔：真人打字没那么快。
@@ -74,22 +81,11 @@ public final class DeepSeekBridge {
     /** 一分钟内最多发几次上游请求（建会话与对话各算一次，PoW 挑战随对话一起走）。 */
     private static final int MAX_PER_MINUTE = 12;
 
-    /** 护栏：熔断、每日预算、答案缓存。 */
-    private final RiskGuard guard = new RiskGuard();
-    private static final String PREF_GUARD_DAY = "guard_day";
-    private static final String PREF_GUARD_USED = "guard_used";
-    /** 答案缓存落盘的上限：只留最近用过的，别让正文把私有配置撑大。 */
-    private static final String PREF_GUARD_CACHE = "guard_cache";
-    private static final int CACHE_BYTES_MAX = 256 * 1024;
-    /** 熔断状态的落盘键：重启一次就把惩罚清空，等于白送一个绕过闸门的按钮。 */
-    private static final String PREF_GUARD_FREEZE = "guard_freeze_until";
-    private static final String PREF_GUARD_STRIKES = "guard_strikes";
-    private static final String PREF_GUARD_RISK_AT = "guard_risk_at";
-    /** 累计复用次数：跨重启保留，用户能在设置页看到缓存到底省了多少次。 */
-    private static final String PREF_GUARD_HITS = "guard_hits";
     /** 出站节流的上次发送时刻与 60 秒窗口：重启后仍要守同一份额度。 */
     private static final String PREF_SEND_LAST = "send_last_at";
     private static final String PREF_SEND_WINDOW = "send_window";
+    /** 页面会话 id → 上游会话的映射：重启后还能复用，删会话时才能同步删网页侧。 */
+    private static final String PREF_TURNS = "turns";
 
     /** 网络类失败最多重试几次（总共最多跑 MAX_RETRY+1 次）。 */
     private static final int MAX_RETRY = 2;
@@ -199,7 +195,13 @@ public final class DeepSeekBridge {
     private final Activity activity;
     private final SharedPreferences prefs;
     private final ConcurrentHashMap<String, Turn> turns = new ConcurrentHashMap<String, Turn>();
-    private final ExecutorService pool = Executors.newFixedThreadPool(2);
+    /**
+     * 一次只跑一轮对话。
+     *
+     * <p>真人不会同时开两个会话各问一句——同一账号在几分钟内出现两条并行链路，
+     * 比「问得慢一点」更像脚本。缓存命中也要排队，反正它不发请求、几乎不占时间。
+     */
+    private final ExecutorService pool = Executors.newSingleThreadExecutor();
     private final AtomicInteger seq = new AtomicInteger();
 
     /** 结果回抛给页面的回调（MainActivity 用 js() 实现）。 */
@@ -213,40 +215,13 @@ public final class DeepSeekBridge {
         this.activity = activity;
         this.sink = sink;
         this.prefs = activity.getSharedPreferences(PREFS, Activity.MODE_PRIVATE);
-        // 每日用量要跨重启保留，否则切一下 App 就能把预算重置掉
-        guard.restore(prefs.getString(PREF_GUARD_DAY, ""), prefs.getInt(PREF_GUARD_USED, 0));
-        // 熔断与递增惩罚也要跨重启：重启一次就把惩罚清空，等于白送一个绕过闸门的按钮
-        guard.restoreFreeze(prefs.getLong(PREF_GUARD_FREEZE, 0),
-                prefs.getInt(PREF_GUARD_STRIKES, 0),
-                prefs.getLong(PREF_GUARD_RISK_AT, 0));
-        guard.restoreHits(prefs.getLong(PREF_GUARD_HITS, 0));
-        // 答案缓存也要跨重启：否则「昨天问过这道题」今天还要再打一次上游
-        restoreCache();
+        // 页面会话 ↔ 上游会话的映射跨重启：删会话时要能找到网页侧那条
+        restoreTurns();
         // 节流器要能在状态变化时落盘，所以把回调接上再恢复窗口
         throttle = new Throttle(new Runnable() {
             @Override public void run() { persistThrottle(); }
         });
         throttle.restore(prefs.getLong(PREF_SEND_LAST, 0), prefs.getString(PREF_SEND_WINDOW, ""));
-    }
-
-    /** 本地日期字符串，用于「今日已用」的换天判断。 */
-    private static String today() {
-        java.util.Calendar c = java.util.Calendar.getInstance();
-        return String.format(java.util.Locale.US, "%04d-%02d-%02d",
-                c.get(java.util.Calendar.YEAR), c.get(java.util.Calendar.MONTH) + 1,
-                c.get(java.util.Calendar.DAY_OF_MONTH));
-    }
-
-    private void persistUsage() {
-        prefs.edit().putString(PREF_GUARD_DAY, guard.day())
-                .putInt(PREF_GUARD_USED, guard.used()).apply();
-    }
-
-    /** 熔断状态落盘：被警告之后关掉 App 再开，惩罚仍然在。 */
-    private void persistFreeze() {
-        prefs.edit().putLong(PREF_GUARD_FREEZE, guard.frozenUntil())
-                .putInt(PREF_GUARD_STRIKES, guard.strikes())
-                .putLong(PREF_GUARD_RISK_AT, guard.lastRiskAt()).apply();
     }
 
     /** 节流窗口落盘：跨重启仍守同一份额度。 */
@@ -255,95 +230,80 @@ public final class DeepSeekBridge {
                 .putString(PREF_SEND_WINDOW, throttle.windowCsv()).apply();
     }
 
-    private void persistHits() {
-        prefs.edit().putLong(PREF_GUARD_HITS, guard.hitCount()).apply();
-    }
-
-    /**
-     * 把答案缓存写进应用私有配置。
-     *
-     * <p>按「最旧 → 最新」写盘：恢复时顺序放回，LRU 的淘汰顺序才和内存里一致。
-     * 总量超预算就从最旧的一端丢，留下最近用过的那些——缓存是「省一次请求」，
-     * 不该反过来把几百 KB 的正文长期压在一个 XML 里。写盘用 apply()，不挡问答线程。
-     */
-    private void persistCache() {
+    /** 页面会话 → 上游会话映射落盘，重启后删会话仍能找到网页侧那一份。 */
+    private void persistTurns() {
         try {
-            java.util.Map<String, String> snap = guard.snapshot();      // 最旧 → 最新
-            java.util.List<java.util.Map.Entry<String, String>> items =
-                    new java.util.ArrayList<java.util.Map.Entry<String, String>>(snap.entrySet());
-            int[] sizes = new int[items.size()];
-            int total = 0;
-            for (int i = 0; i < items.size(); i++) {
-                sizes[i] = utf8Len(items.get(i).getKey()) + utf8Len(items.get(i).getValue());
-                total += sizes[i];
-            }
-            int from = 0;
-            while (from < items.size() && total > CACHE_BYTES_MAX) total -= sizes[from++];
             JSONArray arr = new JSONArray();
-            for (int i = from; i < items.size(); i++) {
-                arr.put(new JSONArray().put(items.get(i).getKey()).put(items.get(i).getValue()));
+            for (Map.Entry<String, Turn> e : turns.entrySet()) {
+                Turn t = e.getValue();
+                if (t == null) continue;
+                JSONObject o = new JSONObject();
+                o.put("k", e.getKey());
+                o.put("sid", t.sessionId);
+                o.put("p", t.parent == null ? JSONObject.NULL : t.parent);
+                o.put("at", t.at);
+                arr.put(o);
             }
-            prefs.edit().putString(PREF_GUARD_CACHE, arr.toString()).apply();
+            prefs.edit().putString(PREF_TURNS, arr.toString()).apply();
         } catch (Exception ignored) { }
     }
 
-    /** 按 UTF-8 字节数记账：中文一个字 3 字节，按字符数算会把 256KB 撑成 700KB。 */
-    private static int utf8Len(String s) {
-        if (s == null) return 0;
-        try {
-            return s.getBytes("UTF-8").length;
-        } catch (Exception e) {
-            return s.length();
-        }
-    }
-
-    /** 启动时把上次落盘的答案缓存读回来；坏了就当没有，不影响问答。 */
-    private void restoreCache() {
-        String raw = prefs.getString(PREF_GUARD_CACHE, "");
+    private void restoreTurns() {
+        String raw = prefs.getString(PREF_TURNS, "");
         if (raw == null || raw.isEmpty()) return;
         try {
             JSONArray arr = new JSONArray(raw);
-            java.util.Map<String, String> saved = new java.util.LinkedHashMap<String, String>();
             for (int i = 0; i < arr.length(); i++) {
-                JSONArray one = arr.optJSONArray(i);
-                if (one == null || one.length() < 2) continue;
-                saved.put(one.getString(0), one.getString(1));
+                JSONObject o = arr.optJSONObject(i);
+                if (o == null) continue;
+                String k = o.optString("k", "");
+                String sid = o.optString("sid", "");
+                if (k.isEmpty() || sid.isEmpty()) continue;
+                Long parent = o.isNull("p") ? null : o.optLong("p");
+                turns.put(k, new Turn(sid, parent, o.optLong("at", 0)));
             }
-            guard.restoreCache(saved);
         } catch (Exception ignored) {
-            prefs.edit().remove(PREF_GUARD_CACHE).apply();
+            prefs.edit().remove(PREF_TURNS).apply();
         }
     }
 
-    /** 护栏状态（页面用来显示「今日还剩几次」「熔断还剩多久」）。 */
-    String guardJson() {
-        long now = System.currentTimeMillis();
-        String today = today();
-        JSONObject o = new JSONObject();
-        try {
-            o.put("frozen", guard.isFrozen(now));
-            o.put("frozenMs", guard.frozenRemainingMs(now));
-            o.put("used", guard.touchDay(today));
-            o.put("limit", RiskGuard.DAILY_LIMIT);
-            o.put("remaining", guard.remaining(today));
-            o.put("cacheSize", guard.cacheSize());
-            // 「缓存到底省了多少次上游请求」：累计值，跨重启保留
-            o.put("cacheHits", guard.hitCount());
-            o.put("strikes", guard.strikes());
-        } catch (Exception ignored) { }
-        return o.toString();
+    private DeepSeekWeb openWeb(String token) {
+        return new DeepSeekWeb(token, prefs.getString(PREF_COOKIE, ""),
+                prefs.getString(PREF_DEVICE_ID, ""), new DeepSeekWeb.CookieSink() {
+                    @Override public void onCookies(String cookie) {
+                        prefs.edit().putString(PREF_COOKIE, cookie).apply();
+                    }
+                });
     }
 
-    /** 用户主动解除熔断（strikes 保留：这是上游的账，不该被「再点一次」抹掉）。 */
-    void resetGuard() {
-        guard.resetFreeze();
-        persistFreeze();
-    }
-
-    /** 清空答案缓存（连带磁盘上那份）。 */
-    void clearCache() {
-        guard.cacheClear();
-        prefs.edit().remove(PREF_GUARD_CACHE).apply();
+    /**
+     * 页面删掉一个会话时，把网页侧那条会话也删掉。
+     *
+     * <p>映射先移除再发请求：本地删除不该等网络；删失败就留在网页侧，下一次不会再找它。
+     */
+    void deleteChat(final String convKey) {
+        if (convKey == null || convKey.isEmpty()) return;
+        final Turn t = turns.remove(convKey);
+        persistTurns();
+        final String token = token();
+        if (t == null || token.isEmpty()) return;
+        pool.execute(new Runnable() {
+            @Override public void run() {
+                try {
+                    DeepSeekWeb web = openWeb(token);
+                    throttle.acquire(null);
+                    web.deleteSession(t.sessionId);
+                    if (BuildConfig.DEBUG) {
+                        android.util.Log.d("GImeDS", "session deleted");
+                    }
+                } catch (Exception ignored) {
+                    // 本地已删；网页侧删失败不挡用户
+                    if (BuildConfig.DEBUG) {
+                        android.util.Log.d("GImeDS", "session delete failed: " + ignored.getMessage());
+                    }
+                }
+            }
+        });
     }
 
     /** 当前登录态（给页面显示用）。 */
@@ -449,7 +409,40 @@ public final class DeepSeekBridge {
     /** 取消一个正在跑的请求（用户点了「停止」）。 */
     void cancel(String id) {
         DeepSeekWeb web = cancelOf.remove(id);
-        if (web != null) web.abort();
+        if (web != null) web.cancel();
+    }
+
+    /**
+     * 页面新开一个对话时，立刻在上游也建一个会话。
+     *
+     * <p>以前是「第一条消息才建」，于是两条边界会掉队：第一条命中答案缓存时根本
+     * 不会建会话；用户新开后只是看看、没提问，网页侧也看不到这个对话。真实网页
+     * 自己就会预建会话，所以这里按同样的节奏来——App 侧和网页侧一一对应。
+     *
+     * <p>失败不挡用户：第一条提问时还会按老路再建一次。
+     */
+    void newChat(final String convKey) {
+        if (convKey == null || convKey.isEmpty()) return;
+        final String token = token();
+        if (token.isEmpty()) return;
+        pool.execute(new Runnable() {
+            @Override public void run() {
+                Turn t = turns.get(convKey);
+                if (t != null && System.currentTimeMillis() - t.at < SESSION_TTL_MS) return;
+                try {
+                    DeepSeekWeb web = openWeb(token);
+                    throttle.acquire(null);
+                    String sid = web.createSession();
+                    turns.put(convKey, new Turn(sid, null, System.currentTimeMillis()));
+                    persistTurns();
+                    if (BuildConfig.DEBUG) {
+                        android.util.Log.d("GImeDS", "newChat session created");
+                    }
+                } catch (Exception ignored) {
+                    // 建会话失败不挡用户：第一次提问时还会再试
+                }
+            }
+        });
     }
 
     private void fail(String id, int status, String msg) {
@@ -478,61 +471,19 @@ public final class DeepSeekBridge {
         String convKey = req.optString("user", "");
         if (convKey.isEmpty()) convKey = "default";
 
-        final String today = today();
-        long now = System.currentTimeMillis();
-
-        // ① 熔断中：直接拒绝，不发任何请求
-        if (guard.isFrozen(now)) {
-            long sec = (guard.frozenRemainingMs(now) + 999) / 1000;
-            throw new DeepSeekWeb.DeepSeekException(-3,
-                    "上游刚有异常，已暂停 " + sec + " 秒（避免继续触发风控）。稍后再试，或点设置切到 API Key。");
-        }
-        // ② 今日预算用尽
-        if (!guard.budgetLeft(today)) {
-            throw new DeepSeekWeb.DeepSeekException(-4,
-                    "今天已经问了 " + RiskGuard.DAILY_LIMIT + " 次，先歇一歇。"
-                            + "需要更多可以把接入方式切到 API Key。");
-        }
-
-        final DeepSeekWeb web = new DeepSeekWeb(token, prefs.getString(PREF_COOKIE, ""),
-                prefs.getString(PREF_DEVICE_ID, ""), new DeepSeekWeb.CookieSink() {
-                    @Override public void onCookies(String cookie) {
-                        /* 上游每次响应都可能轮换 WAF 与会话 Cookie。像浏览器一样收下来，
-                           下次请求就用新的那串——一直攥着登录那一刻的 Cookie 用到失效，
-                           在风控眼里就是「cookie 时间线和会话时间线对不上」的客户端。 */
-                        prefs.edit().putString(PREF_COOKIE, cookie).apply();
-                    }
-                });
+        final DeepSeekWeb web = openWeb(token);
         cancelOf.put(id, web);
 
-        /* ③ 答案缓存：键只看「哪道题 + 问的什么 + 这道题被答成什么样」，不含历史。
-           刷题场景里同一道题常被反复问，这条能实打实省掉相当一部分请求
-           （对手机号登录是不撞风控，对 API Key 是省 token）。
-           只在本轮是「用户新提的一问」时查：工具调用的第二发带着工具返回，
-           最后一条 user 没变，这时候查缓存会把刚拿到的工具结果整段吞掉。 */
-        final boolean freshAsk = DeepSeekClient.isFreshAsk(messages);
-        final String askNow = DeepSeekClient.lastUserText(messages);
-        final String quesPrint = DeepSeekClient.questionFingerprint(messages);
-        final String cacheKey = freshAsk
-                ? RiskGuard.cacheKey(quesPrint, askNow, DeepSeekClient.answerState(messages))
-                : "";
-        if (!cacheKey.isEmpty()) {
-            String cached = guard.cacheGet(cacheKey);
-            if (cached != null) {
-                cancelOf.remove(id);
-                persistHits();
-                sink.toJs("window.onChatCached(" + quote(id) + ")");
-                return cached;
-            }
-        }
         /* 拿会话：命中就用，过期就重建。
            复用时只发「最新这一轮」，历史由上游会话链负责，
-           所以既不会把历史灌两遍，也不用每句都 create_session。 */
+           所以既不会把历史灌两遍，也不用每句都 create_session。
+           convKey 来自页面传来的会话 id：不同页面对话走不同上游链路，
+           免得新对话被上一段历史带偏。 */
         Turn prev = null;
         if (REUSE_SESSION) {
             Turn t = turns.get(convKey);
             if (t != null && System.currentTimeMillis() - t.at < SESSION_TTL_MS) prev = t;
-            else if (t != null) turns.remove(convKey);
+            else if (t != null) { turns.remove(convKey); persistTurns(); }
         }
         String prompt;
         String sid;
@@ -547,6 +498,9 @@ public final class DeepSeekBridge {
             parent = null;
             prompt = DeepSeekClient.buildPrompt(messages, tools);
         }
+        /* 这一轮是不是在复用一个已有会话：复用失败要能分辨「会话过期」和「真的出错」，
+           前者重建一次就好，后者重试只会白撞上游。 */
+        boolean reused = prev != null;
 
         final StringBuilder content = new StringBuilder();
         final StringBuilder reasoning = new StringBuilder();
@@ -589,21 +543,33 @@ public final class DeepSeekBridge {
                    这是防封的核心：被提醒之后继续重试，等于把警告当耳旁风。 */
                 if (e instanceof DeepSeekWeb.DeepSeekException) {
                     DeepSeekWeb.DeepSeekException de = (DeepSeekWeb.DeepSeekException) e;
+                    /* 上游表达「别问了」就停手，不重试、也不做超时封停：
+                       继续撞等于把警告当耳旁风；要不要接着问交给用户判断。 */
                     if (RiskGuard.isRisk(de.code, de.getMessage())) {
-                        guard.onRisk(System.currentTimeMillis());
-                        persistFreeze();
                         cancelOf.remove(id);
                         throw de;
                     }
+                    // 登录失效只能靠重新登录，重建会话只是多撞一次上游
+                    if (de.isAuthError()) throw de;
                 }
 
-                if (gotSomething || attempt > MAX_RETRY || !isTransient(e)) throw e;
+                if (gotSomething || attempt > MAX_RETRY) throw e;
+                /* 用户按了「停止」：掐断会表现为网络错误，但这里绝不能重试——
+                   否则页面已经收手了，App 还在背后继续打上游。 */
+                if (web.isCancelled()) throw e;
+                /* 复用中的会话可能已在上游过期（会话 ttl 比本地记的早到）：
+                   这时回的是业务错误，重建一次就能接着问。只给一次机会，
+                   重建之后再错就照实报错，别把这个口子变成无限重发。 */
+                boolean staleSession = reused && e instanceof DeepSeekWeb.DeepSeekException;
+                if (!isTransient(e) && !staleSession) throw e;
                 // 建会话可能是它先挂的：一并重建，别拿着一个可能已经失效的 sid 重试
+                reused = false;
                 try {
                     throttle.acquire(null);
                     sid = web.createSession();
                     parent = null;
                     turns.remove(convKey);
+                    persistTurns();
                 } catch (Exception ignored) { }
                 sink.toJs("window.onChatRetry(" + quote(id) + "," + attempt + ","
                         + quote(retryNote(attempt, e)) + ")");
@@ -617,13 +583,14 @@ public final class DeepSeekBridge {
         thinkOut.finish();
         textOut.finish();
         cancelOf.remove(id);
-        /* 真出了一轮结果：连续失败计数清零；若「安静了一整天」，递增惩罚也降级。 */
-        if (guard.onSuccess(System.currentTimeMillis())) persistFreeze();
-        guard.onUsed(today);
-        persistUsage();
+        if (BuildConfig.DEBUG) {
+            // 只报长度与是否挂上，不输出令牌值；用 logcat -s GImeDS 看
+            android.util.Log.d("GImeDS", "hif " + web.hifState());
+        }
 
         if (REUSE_SESSION && respId[0] >= 0) {
             turns.put(convKey, new Turn(sid, respId[0], System.currentTimeMillis()));
+            persistTurns();
         }
 
         // 解析工具调用：只要本轮带了 tools 就必须解析，否则页面永远收不到 tool_calls
@@ -653,13 +620,6 @@ public final class DeepSeekBridge {
         resp.put("model", MODEL);
         resp.put("choices", new JSONArray().put(choice));
         resp.put("usage", buildUsage(prompt, parsed.text, reasoning.toString(), usage[0]));
-        /* 只有「用户新问 + 没有工具调用」的最终回答才进缓存：
-           工具轮次是中间态，缓存它会让下次直接卡在调工具那一步。 */
-        if (freshAsk && parsed.toolCalls.length() == 0
-                && parsed.text != null && !parsed.text.isEmpty()) {
-            guard.cachePut(cacheKey, resp.toString());
-            persistCache();
-        }
         return resp.toString();
     }
 

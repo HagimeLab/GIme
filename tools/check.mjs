@@ -60,7 +60,7 @@ function makeElement(id) {
     },
     setAttribute: (k, v) => { el["attr_" + k] = v; },
     getAttribute: (k) => el["attr_" + k],
-    appendChild: (c) => { el.children.push(c); return c; },
+    appendChild: (c) => { el.children.push(c); c.parentNode = el; return c; },
     remove: () => {},
     querySelector: () => null,
     querySelectorAll: () => [],
@@ -360,6 +360,63 @@ W.startSession("practice", "all", "");
 const sidPractice = W.S.order.slice();
 W.exitQuiz();
 ok("普通练习退出保留会话且不结算", W.S !== null && W.S.order.length === sidPractice.length);
+
+/* ---------- 5b. 中途退出续刷 ----------
+   退出时把「当前题号 + 已选 + 已判对错 + 未作答」按题库存一份快照；
+   最近练习、题库页「继续刷」都从同一份快照恢复。 */
+section("[5b] 中途退出续刷 / 最近练习入口");
+const RB = "resume_bank";
+BANK.subjects.push({ id: RB, name: "续刷题库", file: "r.txt", count: 4, custom: true });
+["A", "B", "A", "B"].forEach((ans, i) => {
+  const x = { id: RB + "-" + i, subject: RB, num: i + 1, pnum: i + 1, type: "single",
+    stem: "续刷题 " + (i + 1), options: [["A", "甲"], ["B", "乙"]], answer: [ans], ans_raw: ans,
+    ref: "", explain: "", note: "", flag: "", ex_source: "编写" };
+  BANK.questions.push(x);
+  W.byId[x.id] = x;
+});
+W.startSession("practice", RB, "");
+ok("新练习从第 1 题开始", W.S && W.S.idx === 0 && W.S.order.length === 4);
+W.pick("A");                 // 第 1 题答对
+W.go(1);
+W.pick("A");                 // 第 2 题答错（答案是 B）
+W.go(1);                     // 第 3 题未作答就退出
+const rbIdx = W.S.idx;
+W.exitQuiz();
+const rbKey = W.resumeKey(RB, "");
+const rbSnap = W.resume[rbKey];
+ok("退出时按题库保存快照", !!rbSnap);
+ok("快照保留退出前所在题号", !!rbSnap && rbSnap.idx === rbIdx);
+ok("快照保留答对/答错", !!rbSnap && rbSnap.graded[RB + "-0"] === 1 && rbSnap.graded[RB + "-1"] === 0);
+ok("快照保留未作答（第 3 题没有判分）", !!rbSnap && rbSnap.graded[RB + "-2"] === undefined);
+W.startSession("practice", RB, "");
+ok("「继续刷」回到退出前题号", W.S && W.S.idx === rbIdx);
+ok("「继续刷」保留已答题的对错", W.S && W.S.graded[RB + "-0"] === 1 && W.S.graded[RB + "-1"] === 0);
+
+/* 最近练习入口：先退出，再点题库；也要回到同一题。 */
+W.exitQuiz();
+W.goTab("home");
+W.renderTasks(false);
+ok("最近练习的题库行可点击", /resumeRecent\(&quot;resume_bank&quot;\)/.test(String(doc.getElementById("recent").innerHTML)));
+W.resumeRecent(RB);
+ok("点最近练习回到退出前题号", W.S && W.S.subject === RB && W.S.idx === rbIdx);
+
+/* 全部答完后快照清掉：下次「继续刷」按新的进度重新开始，不是永远停在最后一题 */
+W.pick("A");                 // 第 3 题
+W.go(1);
+W.pick("B");                 // 第 4 题，答完最后一题
+ok("答完整组后快照被清除", !W.resume[rbKey]);
+W.exitQuiz();
+W.startSession("practice", RB, "");
+ok("已刷完的题库重新从第 1 题开始", W.S && W.S.idx === 0);
+W.exitQuiz();
+
+/* 这套临时题库只在 5b 里用，后面还有「空题库」用例，必须清干净 */
+BANK.subjects = BANK.subjects.filter((s) => s.id !== RB);
+BANK.questions = BANK.questions.filter((q) => q.subject !== RB);
+Object.keys(W.byId).forEach((id) => { if (id.indexOf(RB + "-") === 0) delete W.byId[id]; });
+Object.keys(W.prog).forEach((id) => { if (id.indexOf(RB + "-") === 0) delete W.prog[id]; });
+Object.keys(W.resume).forEach((k) => { if (k.indexOf(RB + "|") === 0) delete W.resume[k]; });
+W.S = null;
 
 /* ---------- 6. 两条返回入口必须一致 ----------
    答题页左上角箭头走 exitQuiz()，系统返回键走 window.onBack()。
@@ -1095,7 +1152,8 @@ ok("用户展开后保持展开",
 ok("用户收起后保持收起",
    W.chatLiveHtml({ id: "m1", text: "x", reasoning: "y", thinkOpen: false }).indexOf(" open") < 0);
 ok("折叠标题带思考字数", thinkHtml.indexOf("思考过程 · 4 字") >= 0, thinkHtml.slice(0, 120));
-ok("正文单独成气泡", thinkHtml.indexOf('<div class="bubble">答案选 A。</div>') >= 0);
+ok("正文单独成气泡",
+   thinkHtml.indexOf('<div class="bubble md"><p>答案选 A。</p></div>') >= 0);
 
 /* 内置通道：桩在回包之前先推增量，模拟真实流式 */
 W.set.agent = { base: "builtin://deepseek", model: "deepseek-web", key: "" };
@@ -1477,6 +1535,22 @@ const loginSrc = fs.readFileSync(path.join(ROOT, "app/src/main/java/com/fan/shua
 /* ① 登录必须把 Cookie 与设备指纹一起收下（只带 token 的流量最像脚本） */
 ok("登录页存 Cookie", loginSrc.indexOf("PREF_COOKIE") >= 0 && loginSrc.indexOf("cookieHeader()") >= 0);
 ok("登录页存设备指纹", loginSrc.indexOf("PREF_DEVICE_ID") >= 0 && loginSrc.indexOf("deepseek-device-id:chat") >= 0);
+ok("打开登录页先用已存 token 自检",
+   /String savedToken = unwrap\(getSharedPreferences\(PREFS, MODE_PRIVATE\)\.getString\(PREF_TOKEN/.test(loginSrc)
+   && /verify\(savedToken\)/.test(loginSrc));
+ok("自检先裸 token，再带 Cookie/设备指纹兜底",
+   /new DeepSeekWeb\(token\)\.currentMobile\(\)/.test(loginSrc)
+   && /new DeepSeekWeb\(token, cookie, device\)\.currentMobile\(\)/.test(loginSrc));
+ok("空 Cookie / 设备 id 不覆盖旧值",
+   /cookie == null \|\| cookie\.isEmpty\(\) \? oldCookie/.test(loginSrc)
+   && /deviceId == null \|\| deviceId\.isEmpty\(\) \? oldDevice/.test(loginSrc));
+ok("从登录页真实请求里抓 token（不只读 localStorage）",
+   /shouldInterceptRequest\(/.test(loginSrc)
+   && /regionMatches\(true, 0, "Bearer ", 0, 7\)/.test(loginSrc)
+   && /onPageToken\(/.test(loginSrc));
+ok("页面请求里的 Cookie / 设备指纹优先于 CookieManager",
+   /String ck = pageCookie;/.test(loginSrc)
+   && /pageCookie\.isEmpty\(\) \? cookieHeader\(\) : pageCookie/.test(loginSrc));
 ok("退出登录会一起清掉", bridgeSrc.indexOf(".remove(PREF_COOKIE)") >= 0
    && bridgeSrc.indexOf(".remove(PREF_DEVICE_ID)") >= 0);
 
@@ -1508,77 +1582,53 @@ ok("对话前过闸", /throttle\.acquire\([^\n]*\);\s*\n\s*web\.stream\(/.test(b
 ok("页面有节流提示回调", html.indexOf("window.onChatThrottle") >= 0);
 ok("节流提示写明原因", html.indexOf("为了账号安全") >= 0);
 
-/* ---------- 23. 护栏接线：熔断 / 预算 / 缓存 ---------- */
-section("[23] 护栏接线：熔断、每日预算、答案缓存");
+/* ---------- 23. 风险判定 / 已删除的护栏 ---------- */
+section("[23] 风险判定 / 护栏删除");
 
 const guardSrc = fs.readFileSync(path.join(ROOT, "app/src/main/java/com/fan/shuatiku/RiskGuard.java"), "utf8");
 
-/* 拦截点要在发请求之前，否则拦了也白拦 */
-ok("熔断检查在 createSession 之前",
-   bridgeSrc.indexOf("guard.isFrozen") >= 0
-   && bridgeSrc.indexOf("guard.isFrozen") < bridgeSrc.indexOf("web.createSession"));
-ok("预算检查在 createSession 之前",
-   bridgeSrc.indexOf("budgetLeft") >= 0
-   && bridgeSrc.indexOf("budgetLeft") < bridgeSrc.indexOf("web.createSession"));
-ok("缓存命中直接返回、不发请求",
-   /cacheGet\(cacheKey\)[\s\S]{0,220}?return cached/.test(bridgeSrc));
+/* 风险错误的处理：不重试、不封停，只把错误交给用户 */
+ok("风险错误直接停手不重试",
+   /RiskGuard\.isRisk\([\s\S]{0,300}?throw de;/.test(bridgeSrc));
+ok("风险错误不累计惩罚", bridgeSrc.indexOf("guard.onRisk") < 0);
 
-/* 成功/失败要正确记账 */
-ok("成功会清零连续失败", /guard\.onSuccess\(/.test(bridgeSrc));
-ok("成功会计一次用量", /guard\.onUsed\(today\)/.test(bridgeSrc));
-ok("风险错误不重试、直接计风险", /RiskGuard\.isRisk\([\s\S]{0,120}?guard\.onRisk/.test(bridgeSrc));
-ok("每日用量落盘（跨重启保留）", /PREF_GUARD_USED/.test(bridgeSrc) && /persistUsage\(\)/.test(bridgeSrc));
-ok("启动时恢复用量", /guard\.restore\([\s\S]{0,120}?PREF_GUARD_USED/.test(bridgeSrc));
+/* 额度与熔断已经删掉：没有每日上限、没有封停计时 */
+ok("没有每日上限", bridgeSrc.indexOf("DAILY_LIMIT") < 0 && guardSrc.indexOf("DAILY_LIMIT") < 0);
+ok("没有熔断判定", bridgeSrc.indexOf("isFrozen") < 0 && guardSrc.indexOf("isFrozen") < 0);
+ok("没有熔断落盘", bridgeSrc.indexOf("PREF_GUARD_FREEZE") < 0 && guardSrc.indexOf("restoreFreeze") < 0);
+ok("页面没有解除熔断入口", html.indexOf("dsGuardReset") < 0);
 
-/* 只有最终回答进缓存：中间的工具轮次不能缓存 */
-ok("工具轮次不写缓存", /toolCalls\.length\(\) == 0[\s\S]{0,200}?cachePut/.test(bridgeSrc));
+/* 答案缓存已删：原生不再读写缓存，页面也没有缓存面板 */
+ok("原生不再读写答案缓存",
+   bridgeSrc.indexOf("cacheGet") < 0 && bridgeSrc.indexOf("cachePut") < 0
+   && bridgeSrc.indexOf("PREF_GUARD_CACHE") < 0 && guardSrc.indexOf("cache") < 0);
+ok("页面不再有缓存面板",
+   html.indexOf("agGuardHtml") < 0 && html.indexOf("dsClearCache") < 0
+   && html.indexOf("apiCache") < 0 && html.indexOf("onChatCached") < 0);
 
 /* 常量约束 */
-ok("熔断阈值是 2 次", /MAX_CONSECUTIVE = 2/.test(guardSrc));
-ok("熔断 10 分钟", /COOLDOWN_MS = 10 \* 60 \* 1000/.test(guardSrc));
-ok("每日上限有明确数值", /DAILY_LIMIT = \d+/.test(guardSrc));
 ok("40300 算风险", /code == 40300/.test(guardSrc));
-/* 40301 是「挑战只能用一次」，偶发、重试即好，不该算进熔断；
+/* 40301 是「挑战只能用一次」，偶发、重试即好，不该算进风险；
    只看 isRisk 函数体，别被注释里提到的 40301 带偏。 */
 const isRiskBody = (guardSrc.match(/static boolean isRisk\([\s\S]*?\n    \}/) || [""])[0];
 ok("isRisk 里不把 40301 当风险", isRiskBody.length > 0 && isRiskBody.indexOf("40301") < 0,
    isRiskBody.slice(0, 120));
 
-/* 页面：配额展示与解除按钮 */
-ok("页面能读护栏状态", html.indexOf("Android.dsGuard") >= 0);
-ok("页面能解除熔断", html.indexOf("Android.dsGuardReset") >= 0);
-ok("页面能清缓存", html.indexOf("Android.dsClearCache") >= 0);
-ok("命中缓存有提示", html.indexOf("window.onChatCached") >= 0);
-ok("设置页有使用额度区", html.indexOf("agGuardHtml") >= 0 && html.indexOf("使用额度") >= 0);
-
-/* 配额面板只在登录模式出现：API Key 走官方额度，不该被本地限制 */
+/* 设置面板还能正常打开：登录模式与 Key 模式都不再有缓存区 */
 W.Android = {
-  dsStatus: () => JSON.stringify({ loggedIn: true, mobile: "199******41" }),
-  dsGuard: () => JSON.stringify({ frozen: false, frozenMs: 0, used: 3, limit: 60,
-                                  remaining: 57, cacheSize: 5 })
+  dsStatus: () => JSON.stringify({ loggedIn: true, mobile: "199******41" })
 };
 W.set.agent = { base: "builtin://deepseek", model: "deepseek-web", key: "", mode: "login" };
 W.openAgentCfg();
 const guardPanel = String(W.document.getElementById("sheet3").innerHTML);
-ok("登录模式显示今日用量", guardPanel.indexOf("今日已用 3 / 60") >= 0, guardPanel.slice(0, 200));
-ok("登录模式显示缓存数", guardPanel.indexOf("清空答案缓存（5）") >= 0);
-ok("未熔断时不显示解除按钮", guardPanel.indexOf("dsGuardReset()") < 0);
+ok("登录面板正常显示", guardPanel.indexOf("已登录 DeepSeek") >= 0, guardPanel.slice(0, 200));
+ok("登录面板不再出现答案缓存", guardPanel.indexOf("答案缓存") < 0);
 while (W.openLayers.length) W.closeTop();
 
-/* 熔断中要显示剩余秒数 + 解除按钮 */
-W.Android.dsGuard = () => JSON.stringify({ frozen: true, frozenMs: 42000, used: 3, limit: 60,
-                                           remaining: 57, cacheSize: 0 });
-W.openAgentCfg();
-const frozenPanel = String(W.document.getElementById("sheet3").innerHTML);
-ok("熔断时显示剩余秒数", frozenPanel.indexOf("已暂停 42 秒") >= 0, frozenPanel.slice(0, 200));
-ok("熔断时给解除按钮", frozenPanel.indexOf("dsGuardReset()") >= 0);
-while (W.openLayers.length) W.closeTop();
-
-/* Key 模式不显示本地配额 */
 W.set.agent = { base: "https://api.example.com/v1", model: "m1", key: "sk", mode: "key" };
 W.openAgentCfg();
-ok("Key 模式不显示本地配额", String(W.document.getElementById("sheet3").innerHTML)
-   .indexOf("使用额度") < 0);
+ok("Key 模式面板不再出现答案缓存", String(W.document.getElementById("sheet3").innerHTML)
+   .indexOf("答案缓存") < 0);
 while (W.openLayers.length) W.closeTop();
 
 /* ---------- 24. 两条接入都走流式 ---------- */
@@ -1623,21 +1673,10 @@ W.chatCurId = "";
 W.S = null;
 W.byId["nb1-0"].explain = "";
 
-/* ---------- 25. v1.0.7：缓存落盘 / 前缀缓存 / token 裁剪 ---------- */
-section("[25] v1.0.7：缓存落盘、固定前缀、token 裁剪");
+/* ---------- 25. 固定前缀与 token 裁剪 ---------- */
+section("[25] 固定前缀与 token 裁剪");
 
-/* ① 答案缓存跨重启：护栏只负责快照，落盘归桥接层 */
-ok("护栏能导出缓存快照", /synchronized Map<String, String> snapshot\(\)/.test(guardSrc));
-ok("护栏能从快照恢复", /synchronized void restoreCache\(Map<String, String> saved\)/.test(guardSrc));
-ok("缓存有独立落盘键", /PREF_GUARD_CACHE = "guard_cache"/.test(bridgeSrc));
-ok("启动时读回缓存", /restoreCache\(\);/.test(bridgeSrc) && /guard\.restoreCache\(saved\)/.test(bridgeSrc));
-ok("写完缓存就落盘",
-   /cachePut\(cacheKey, resp\.toString\(\)\);[\s\S]{0,80}?persistCache\(\)/.test(bridgeSrc));
-ok("清缓存连带清磁盘", /cacheClear\(\);[\s\S]{0,140}?remove\(PREF_GUARD_CACHE\)/.test(bridgeSrc));
-ok("落盘有体积上限", /CACHE_BYTES_MAX = \d+ \* 1024/.test(bridgeSrc));
-ok("快照按最旧到最新写盘、超出预算丢最旧", /最旧 → 最新/.test(bridgeSrc) && /while \(from < items\.size\(\) && total > CACHE_BYTES_MAX\)/.test(bridgeSrc));
-
-/* ② 固定前缀：系统提示拆两段，固定段逐字不变 */
+/* ① 固定前缀：系统提示拆两段，固定段逐字不变 */
 ok("固定段单独成函数", typeof W.chatSysBase === "function");
 ok("固定段不含题目", W.chatSysBase().indexOf("当前题目上下文") < 0);
 ok("固定段两次调用逐字相同", W.chatSysBase() === W.chatSysBase());
@@ -1654,63 +1693,9 @@ ok("工具结果缩到 3000 字", /payload\.length > 3000/.test(html));
 ok("超长先砍题数再切串", /while \(out\.questions\.length > 1 && JSON\.stringify\(out\)\.length > 3000\)/.test(html));
 ok("对话取题默认 5 条", /limit: args\.limit \|\| 5/.test(html));
 
-/* ④ API Key 模式的页面缓存（内置通道的缓存在原生护栏里） */
-ok("缓存键含选项", (() => {
-  const a = W.apiCacheKey({ id: "q1", userPick: ["A"] }, "这题怎么解？");
-  const b = W.apiCacheKey({ id: "q1", userPick: ["C"] }, "这题怎么解？");
-  return a !== b && a.indexOf("q1") === 0;
-})());
-ok("缓存键忽略空白与首尾问号",
-   W.apiCacheKey({ id: "q1" }, "这题 怎么解？") === W.apiCacheKey({ id: "q1" }, "这题怎么解"));
-ok("不同题目不同键",
-   W.apiCacheKey({ id: "q1" }, "怎么解") !== W.apiCacheKey({ id: "q2" }, "怎么解"));
-ok("空提问不建键", W.apiCacheKey({ id: "q1" }, "  ？？ ") === "");
-ok("页面缓存可写可读", (() => { W.apiCachePut("k1", "答案一"); return W.apiCacheGet("k1") === "答案一"; })());
-ok("内置通道不走页面缓存", /isBuiltin \? "" : apiCacheKey/.test(html));
-ok("只有纯问答才进缓存", /if \(akey && !usedTools && live\.text\) apiCachePut/.test(html));
-ok("命中时说明没有请求模型", /直接复用上次回答，没有再请求模型/.test(html));
 
-/* ---------- 26. v1.0.8：缓存命中更准、更省；防封更贴浏览器 ---------- */
-section("[26] 缓存命中更准 + 网页版防封更像浏览器");
-
-const clientSrc = fs.readFileSync(path.join(ROOT, "app/src/main/java/com/fan/shuatiku/DeepSeekClient.java"), "utf8");
-
-/* ① 缓存门控：工具轮次不许查也不许写（否则会把刚拿到的工具结果吞掉） */
-ok("有「本轮是不是新提问」的判据", /static boolean isFreshAsk\(JSONArray messages\)/.test(clientSrc));
-ok("判据只看最后一条消息", /messages\.length\(\) - 1[\s\S]{0,400}?"user"\.equals\(last\.optString\("role"\)\)/.test(clientSrc));
-ok("缓存键受新提问门控",
-   /final String cacheKey = freshAsk[\s\S]{0,120}?RiskGuard\.cacheKey/.test(bridgeSrc));
-ok("写缓存也受门控", /if \(freshAsk && parsed\.toolCalls\.length\(\) == 0/.test(bridgeSrc));
-
-/* ② 作答状态进键：换了选项 / 判了分就不是同一个问题 */
-ok("有作答状态提取", /static String answerState\(JSONArray messages\)/.test(clientSrc));
-ok("状态含选项、判分标记、模式",
-   /userPick[\s\S]{0,900}?graded[\s\S]{0,200}?mode/.test(clientSrc));
-ok("缓存键是三参（题目 + 提问 + 状态）",
-   /static String cacheKey\(String questionFingerprint, String ask, String answerState\)/.test(guardSrc));
-ok("桥接层把作答状态喂进键",
-   /RiskGuard\.cacheKey\(quesPrint, askNow, DeepSeekClient\.answerState\(messages\)\)/.test(bridgeSrc));
-ok("键域带版本号，旧条目不会串味", /"v2\\u0001"/.test(guardSrc));
-ok("页面缓存键也含判分状态", /var graded = ctx && ctx\.graded \? "1" : "0"/.test(html));
-ok("页面缓存键对选项排序", /ctx\.userPick\.slice\(\)\.sort\(\)\.join\(","\)/.test(html));
-
-/* ③ 归一再扩：全角、零宽、句尾语气词 */
-ok("归一处理全角字母数字", /foldFullWidth/.test(guardSrc));
-ok("归一去掉零宽字符", /u200B/.test(guardSrc));
-ok("归一去掉句尾语气词", /stripTailParticles/.test(guardSrc));
-ok("页面归一也去语气词", /\[呢呀吧啊嘛哦咯啦呐\]\+\$/.test(html));
-
-/* ④ 落盘：按 UTF-8 字节记账、最旧→最新、单条有上限 */
-ok("按 UTF-8 字节记账", /getBytes\("UTF-8"\)\.length/.test(bridgeSrc) && /utf8Len/.test(bridgeSrc));
-ok("单条缓存值有上限", /CACHE_MAX_CHARS/.test(guardSrc));
-ok("页面单条缓存值也有上限", /String\(text\)\.length > 8000/.test(html));
-
-/* ⑤ 命中可观察：累计次数落盘 + 设置页显示 */
-ok("护栏统计命中次数", /synchronized long hitCount\(\)/.test(guardSrc));
-ok("命中次数跨重启保留", /PREF_GUARD_HITS/.test(bridgeSrc) && /restoreHits/.test(bridgeSrc));
-ok("护栏状态里带命中数", /o\.put\("cacheHits", guard\.hitCount\(\)\)/.test(bridgeSrc));
-ok("设置页显示复用次数", /已直接复用上次答案/.test(html));
-ok("页面命中会刷新 LRU 时间戳", /e\.at = Date\.now\(\);[\s\S]{0,80}?store\.write\(API_CACHE_KEY, all\)/.test(html));
+/* ---------- 26. 网页版防封更贴浏览器 ---------- */
+section("[26] 网页版防封更贴浏览器");
 
 /* ⑥ Cookie 罐：上游轮换的 Set-Cookie 像浏览器一样吸收并落盘 */
 ok("有 Set-Cookie 合并的纯函数", /static String mergeCookies\(String jar, List<String> setCookies\)/.test(webSrc));
@@ -1733,13 +1718,10 @@ ok("节流窗口可序列化", /windowCsv\(\)/.test(bridgeSrc));
 ok("启动时恢复节流状态", /throttle\.restore\(prefs\.getLong\(PREF_SEND_LAST/.test(bridgeSrc));
 ok("每次发送后落盘", /persistThrottle\(\)/.test(bridgeSrc) && /onChange\.run\(\)/.test(bridgeSrc));
 
-/* ⑨ 熔断：递增惩罚 + 跨重启保留 */
-ok("有递增惩罚", /static long cooldownFor\(int strikes\)/.test(guardSrc));
-ok("递增有上限", /MAX_COOLDOWN_MS = 2 \* 60 \* 60 \* 1000/.test(guardSrc));
-ok("安静一天才降级", /STRIKE_FORGET_MS = 24 \* 60 \* 60 \* 1000/.test(guardSrc));
-ok("熔断状态可落盘恢复", /restoreFreeze/.test(guardSrc) && /PREF_GUARD_FREEZE/.test(bridgeSrc));
-ok("风险之后立刻落盘", /guard\.onRisk\([\s\S]{0,120}?persistFreeze\(\)/.test(bridgeSrc));
-ok("手动解除不算抹账", /void resetGuard\(\)[\s\S]{0,120}?resetFreeze/.test(bridgeSrc));
+/* ⑨ 熔断与每日额度已删除：只剩「风险不重试」*/
+ok("没有递增惩罚", guardSrc.indexOf("cooldownFor") < 0);
+ok("没有警告记账", guardSrc.indexOf("strikes") < 0);
+ok("没有每日额度", guardSrc.indexOf("DAILY_LIMIT") < 0);
 
 /* ⑩ 拦截页识别：HTML / 人机校验不该被当成网络错误重试 */
 ok("有拦截页错误码", /CODE_BLOCKED = -5/.test(webSrc));
@@ -1748,36 +1730,240 @@ ok("拦截页算风险", /code == BLOCKED_CODE/.test(guardSrc));
 ok("拦截页不重试", /if \(code == CODE_BLOCKED\) return false/.test(webSrc));
 ok("挑战失效可重试（重新取挑战）", /if \(code == 40301\) return true/.test(webSrc));
 
-/* ⑪ 页面行为：键的语义 */
-ok("页面：判分前后不同键", (() => {
-  const a = W.apiCacheKey({ id: "q1", graded: true }, "这题怎么解");
-  const b = W.apiCacheKey({ id: "q1", graded: false }, "这题怎么解");
-  return a !== b && a.indexOf("q1") === 0;
+
+/* ---------- 27. 单并发、会话自愈、会话删除同步、指纹按设备 ---------- */
+section("[27] 单并发、会话自愈、删除同步、指纹按设备");
+
+/* ① 删除会话：App 删一条，网页侧也删一条 */
+ok("删除会话会同步删上游",
+   /void deleteChat\(final String convKey\)/.test(bridgeSrc)
+   && /web\.deleteSession\(t\.sessionId\)/.test(bridgeSrc));
+ok("删除走官方 delete 接口",
+   /DELETE_SESSION_PATH = "\/api\/v0\/chat_session\/delete"/.test(webSrc)
+   && /body\.put\("chat_session_ids"/.test(webSrc));
+ok("页面删除/清空空会话时通知原生",
+   /chatDeleteUpstream\(id\)/.test(html) && /chatDeleteUpstream\(dropped\[i\]\)/.test(html));
+ok("原生暴露 dsDeleteChat", /public void dsDeleteChat\(String convKey\)/.test(mainSrc));
+ok("会话映射跨重启",
+   /PREF_TURNS/.test(bridgeSrc) && /persistTurns\(\)/.test(bridgeSrc)
+   && /restoreTurns\(\)/.test(bridgeSrc));
+ok("建会话后落盘映射", /turns\.put\(convKey[\s\S]{0,160}?persistTurns\(\)/.test(bridgeSrc));
+
+/* ④ 出站单并发：同一账号不该有两条并行的对话链路 */
+ok("一次只跑一轮对话", /Executors\.newSingleThreadExecutor\(\)/.test(bridgeSrc));
+
+/* ⑤ 会话复用要能自愈，才敢把 ttl 放长 */
+ok("会话 12 小时才重建", /SESSION_TTL_MS = 12 \* 60 \* 60 \* 1000L/.test(bridgeSrc));
+ok("复用失败当成会话过期重建一次",
+   /boolean staleSession = reused/.test(bridgeSrc)
+   && /if \(!isTransient\(e\) && !staleSession\) throw e;/.test(bridgeSrc));
+ok("登录失效不重建会话", /if \(de\.isAuthError\(\)\) throw de;/.test(bridgeSrc));
+ok("重建后不再当成复用", /reused = false;[\s\S]{0,160}?web\.createSession\(\)/.test(bridgeSrc));
+
+/* ⑥ 会话按页面对话分流 + 指纹按设备 */
+ok("页面把会话 id 当作上游会话键",
+   /if \(isBuiltin && chatCurId\) body\.user = chatCurId/.test(html));
+ok("有按设备生成的语言/时区函数",
+   /static String localeTag\(java\.util\.Locale l\)/.test(webSrc)
+   && /static int tzOffsetSeconds\(java\.util\.TimeZone tz\)/.test(webSrc));
+ok("请求头用设备语言与时区", /h\.put\("x-client-locale", localeTag\(loc\)\)/.test(webSrc)
+   && /h\.put\("x-client-timezone-offset", String\.valueOf\(tzOffsetSeconds/.test(webSrc));
+ok("不再写死 UTC+8 字符串", webSrc.indexOf('"28800"') < 0);
+
+/* ⑦ 用户「停止」不能变成背后继续重试 */
+ok("停止会标记为「用户叫停」", /public void cancel\(\)[\s\S]{0,80}?cancelled = true/.test(webSrc));
+ok("叫停后不做重试", /if \(web\.isCancelled\(\)\) throw e;/.test(bridgeSrc));
+ok("桥接层用 cancel 而不是裸 abort", /web\.cancel\(\)/.test(bridgeSrc));
+
+
+/* ---------- 28. 请求头对齐真实页面（2026-10-21 抓包） ---------- */
+section("[28] 请求头对齐登录 WebView 的真实请求");
+
+/* 基线来自登录 WebView 自己发出的 GET /api/v0/client/settings（见 docs 抓包记录） */
+ok("登录页与原生请求共用同一份 UA",
+   /setUserAgentString\(DeepSeekWeb\.UA\)/.test(loginSrc)
+   && loginSrc.indexOf("private static final String UA") < 0);
+ok("UA 带真实页面的设备型号段", webSrc.indexOf("Pixel 7") >= 0);
+ok("补了前端版本号",
+   /CLIENT_VERSION = "2\.5\.0"/.test(webSrc)
+   && /h\.put\("x-client-version", CLIENT_VERSION\)/.test(webSrc));
+ok("补了前端 bundle id",
+   /CLIENT_BUNDLE_ID = "com\.deepseek\.chat"/.test(webSrc)
+   && /h\.put\("x-client-bundle-id", CLIENT_BUNDLE_ID\)/.test(webSrc));
+ok("补了设备型号头（真实页面是空值）",
+   /h\.put\("x-device-model", ""\)/.test(webSrc));
+ok("HIF 头只在完成请求挂（不走通用 headers）",
+   webSrc.indexOf('h.put("x-hif-leim"') < 0);
+ok("Accept-Language 带第二语言 en-US",
+   /tags\.add\("en-US"\)/.test(webSrc));
+
+/* ---------- 29. 真实完成请求基线（2026-10-21 登录态抓包） ---------- */
+section("[29] 完成请求对齐真实页面");
+
+ok("Origin 只在 POST 上",
+   /if \(post\) h\.put\("Origin", ORIGIN\)/.test(webSrc)
+   && !/\n\s*h\.put\("Origin", ORIGIN\);/.test(webSrc));
+ok("Referer 可按会话路径传入",
+   /h\.put\("Referer", referer == null \|\| referer\.isEmpty\(\) \? ORIGIN \+ "\/" : referer\)/.test(webSrc));
+ok("完成请求用会话路径",
+   /String sessionUrl = ORIGIN \+ "\/a\/chat\/s\/" \+ sessionId/.test(webSrc)
+   && /open\(CHAT_PATH, "POST", "\*\/\*", sessionUrl\)/.test(webSrc));
+ok("首轮挑战用根路径、后续用会话路径",
+   /powHeader\(parentMessageId == null \? ORIGIN \+ "\/" : sessionUrl\)/.test(webSrc));
+ok("完成请求 Accept 是 */*",
+   /open\(CHAT_PATH, "POST", "\*\/\*", sessionUrl\)/.test(webSrc));
+ok("body 字段与真实一致",
+   /static JSONObject completionBody\(/.test(webSrc)
+   && /body\.put\("model_type", "default"\)/.test(webSrc)
+   && /body\.put\("preempt", false\)/.test(webSrc));
+ok("body 顺序：session 在 prompt 之前",
+   webSrc.indexOf('body.put("chat_session_id"') < webSrc.indexOf('body.put("prompt"'));
+/* x-hif 不是伪造：从官方 HIF 接口拉取，按 x-hif-ttl 缓存 */
+const hifBody = (webSrc.match(/private HifToken fetchHif[\s\S]*?\n    \}/) || [""])[0];
+ok("HIF 令牌从官方接口拉",
+   /HIF_LEIM_URL = "https:\/\/hif-leim\.deepseek\.com\/query"/.test(webSrc)
+   && /HIF_DLIQ_URL = "https:\/\/hif-dliq\.deepseek\.com\/query"/.test(webSrc));
+ok("HIF 请求不带 Cookie / Authorization",
+   hifBody.length > 0 && /h\.remove\("Cookie"\)/.test(hifBody)
+   && /h\.remove\("Authorization"\)/.test(hifBody));
+ok("HIF 响应不污染聊天 Cookie 罐", hifBody.length > 0 && hifBody.indexOf("harvest(") < 0);
+ok("HIF 令牌按 TTL 缓存续期", /hifRefreshAt/.test(webSrc) && /HIF_REFRESH_MARGIN_MS/.test(webSrc));
+ok("完成请求挂上两枚令牌",
+   /c\.setRequestProperty\("x-hif-leim"/.test(webSrc)
+   && /c\.setRequestProperty\("x-hif-dliq"/.test(webSrc));
+ok("令牌只在完成请求挂，不当成通用头",
+   !/h\.put\("x-hif-(leim|dliq)"/.test(webSrc));
+
+/* 新会话：页面新开对话时，上游也立刻建一条 */
+ok("页面新开会话会通知上游", /Android\.dsNewChat\(chatCurId\)/.test(html));
+ok("原生暴露 dsNewChat", /public void dsNewChat\(String convKey\)/.test(mainSrc));
+ok("桥接层预建会话并记入 turns",
+   /void newChat\(final String convKey\)/.test(bridgeSrc)
+   && /turns\.put\(convKey, new Turn\(sid, null/.test(bridgeSrc));
+ok("预建失败不挡提问", /建会话失败不挡用户/.test(bridgeSrc));
+
+/* ---------- 30. 大肥鱼正文 Markdown（思考链不算） ---------- */
+section("[30] 大肥鱼正文 Markdown");
+
+ok("HTML 被转义", (() => {
+  const h = W.mdToHtml('<script>alert(1)</script>\n\n<b>x</b>');
+  return h.indexOf("<script>") < 0 && h.indexOf("<b>") < 0 && h.indexOf("&lt;script&gt;") >= 0;
 })());
-ok("页面：选项顺序不影响键",
-   W.apiCacheKey({ id: "q1", userPick: ["B", "A"] }, "这题怎么解")
-   === W.apiCacheKey({ id: "q1", userPick: ["A", "B"] }, "这题怎么解"));
-ok("页面：换了选项就换键",
-   W.apiCacheKey({ id: "q1", userPick: ["A"] }, "这题怎么解")
-   !== W.apiCacheKey({ id: "q1", userPick: ["C"] }, "这题怎么解"));
-ok("页面：语气词不影响键",
-   W.apiCacheKey({ id: "q1" }, "这题怎么解呢")
-   === W.apiCacheKey({ id: "q1" }, "这题怎么解"));
-ok("页面：命中会刷新时间戳", (() => {
-  W.apiCachePut("k-lru", "答案");
-  const all0 = W.store.read("stk.acache.v1", {});
-  all0["k-lru"].at = 1;
-  W.store.write("stk.acache.v1", all0);
-  W.apiCacheGet("k-lru");
-  const all1 = W.store.read("stk.acache.v1", {});
-  return all1["k-lru"].at > 1;
+ok("粗体与斜体", (() => {
+  const h = W.mdToHtml("**粗** 和 *斜*");
+  return h.indexOf("<strong>粗</strong>") >= 0 && h.indexOf("<em>斜</em>") >= 0;
 })());
-ok("页面：超大答案不进缓存", (() => {
-  const huge = new Array(9000).join("x");
-  W.apiCachePut("k-huge", huge);
-  return !W.store.read("stk.acache.v1", {})["k-huge"];
+ok("行内代码里的星号不被解析", W.mdToHtml("`**x**`").indexOf("<code>**x**</code>") >= 0);
+ok("围栏代码块保留内容并转义", (() => {
+  const h = W.mdToHtml("```js\nconst a = 1 < 2;\n```");
+  return h.indexOf('<pre class="md-pre"><code>const a = 1 &lt; 2;</code></pre>') >= 0
+      && h.indexOf("<strong>") < 0;
 })());
-delete W.store.read("stk.acache.v1", {})["k-lru"];
+ok("标题/无序列表/引用", (() => {
+  const h = W.mdToHtml("## 标题\n\n- 甲\n- 乙\n\n> 引用");
+  return h.indexOf("<h2>标题</h2>") >= 0
+      && h.indexOf("<ul><li>甲</li><li>乙</li></ul>") >= 0
+      && h.indexOf("<blockquote><p>引用</p></blockquote>") >= 0;
+})());
+ok("有序列表", W.mdToHtml("1. 一\n2. 二").indexOf("<ol><li>一</li><li>二</li></ol>") >= 0);
+ok("正常链接可点", W.mdToHtml("[例子](https://example.com)")
+   .indexOf('data-md-href="https://example.com"') >= 0);
+ok("javascript: 链接不生成可点元素",
+   W.mdToHtml("[x](javascript:alert(1))").indexOf("data-md-href") < 0);
+ok("链接属性里的下划线不被斜体改写", (() => {
+  const h = W.mdToHtml("[x](https://example.com/a_b_c)");
+  return h.indexOf("<em>") < 0 && h.indexOf('data-md-href="https://example.com/a_b_c"') >= 0;
+})());
+ok("图片不加载远程资源",
+   W.mdToHtml("![图](https://example.com/a.png)").indexOf("<img") < 0);
+ok("思考链不解析 Markdown", (() => {
+  const h = W.chatLiveHtml({ id: "mdthink", role: "assistant", reasoning: "**粗**", text: "答案", live: false });
+  return h.indexOf("<strong>") < 0 && h.indexOf("**粗**") >= 0;
+})());
+ok("流式期间正文保持纯文本", (() => {
+  const h = W.chatLiveHtml({ id: "mdlive", role: "assistant", reasoning: "", text: "**粗**", live: true });
+  return h.indexOf("<strong>") < 0 && h.indexOf("**粗**") >= 0;
+})());
+ok("回答结束后正文按 Markdown 渲染", (() => {
+  const h = W.chatLiveHtml({ id: "mddone", role: "assistant", reasoning: "", text: "**粗**", live: false });
+  return h.indexOf("<strong>粗</strong>") >= 0;
+})());
+ok("用户消息不进 Markdown 渲染", html.indexOf('(me ? "" : " md")') >= 0);
+ok("链接走原生打开", html.indexOf("data-md-href") >= 0
+   && html.indexOf("Android.openUrl") >= 0
+   && /public void openUrl\((?:final )?String url\)/.test(mainSrc));
+
+/* ---------- 31. 会话规则与空会话界面 ---------- */
+section("[31] 会话规则与空会话界面");
+
+/* 空会话不能叠空会话 */
+W.chatConvs = [{ id: "r_empty", title: "", at: Date.now(), msgs: [] }];
+W.chatCurId = "r_empty";
+W.chatMsgs = [];
+W.chatNewConv();
+ok("空会话不允许新建", W.chatConvs.length === 1 && W.chatCurId === "r_empty",
+   JSON.stringify(W.chatConvs.map((c) => c.id)));
+
+/* 任意一条消息（失败也算）后可以新建 */
+W.chatMsgs = [{ role: "error", text: "没答上来" }];
+W.chatNewConv();
+ok("有对话（含失败）后可以新建", W.chatConvs.length === 2 && W.chatCurId !== "r_empty");
+ok("新建后的会话是空的", W.chatMsgs.length === 0);
+
+/* 空会话：hero 居中；发出消息后回到底部 */
+const hero = W.document.getElementById("chatHero");
+const heroInput = W.document.getElementById("chatIn");
+ok("空会话显示 hero", hero.hidden === false);
+ok("输入框在 hero 里", heroInput.parentNode.id === "chatHeroSlot");
+ok("虚线提示在 hero 里", /id="chatHero"[\s\S]*?问大肥鱼这道题。它会读取/.test(html));
+ok("列表不再重复空态提示", !/chat-empty">问大肥鱼这道题/.test(html));
+ok("空会话头部隐藏头像/名字（CSS）",
+   /\.chat\.empty \.chat-head \.ava, \.chat\.empty \.chat-head b \{ visibility: hidden; \}/.test(html));
+
+W.chatMsgs = [{ role: "user", text: "第一个问题" }];
+W.chatRender();
+ok("有消息后 hero 收起", hero.hidden === true);
+ok("输入框回到底部", W.document.getElementById("chatIn").parentNode.id === "chatFoot");
+ok("头部始终显示 agent 名字",
+   W.document.getElementById("chatTitle").textContent === "蓝色大肥鱼");
+
+/* 切走时清掉当前空会话 */
+W.chatConvs = [
+  { id: "r_old", title: "旧", msgs: [{ role: "user", text: "旧问题" }] },
+  { id: "r_blank", title: "", msgs: [] }
+];
+W.chatCurId = "r_blank";
+W.chatMsgs = [];
+W.chatLoadConv("r_old");
+ok("切走时删掉空会话", !W.chatConvs.some((c) => c.id === "r_blank") && W.chatCurId === "r_old",
+   JSON.stringify(W.chatConvs.map((c) => c.id)));
+
+/* 历史列表不显示空会话 */
+W.chatConvs = [
+  { id: "r_a", title: "有内容", msgs: [{ role: "user", text: "x" }] },
+  { id: "r_b", title: "空的", msgs: [] }
+];
+W.chatCurId = "r_a";
+W.chatMsgs = (W.chatCurConv().msgs || []).slice();
+W.openConvList();
+const convListHtml = W.document.getElementById("sheet3").innerHTML;
+ok("历史列表不列空会话",
+   convListHtml.indexOf("空的") < 0 && convListHtml.indexOf("有内容") >= 0,
+   convListHtml.slice(0, 200));
+while (W.openLayers.length) W.closeTop();
+
+/* 从大肥鱼头部点「+」新建：面板要留在原地切到空会话界面，不能关掉 */
+W.chatConvs = [{ id: "keep", title: "", msgs: [{ role: "user", text: "x" }] }];
+W.chatCurId = "keep";
+W.chatMsgs = [{ role: "user", text: "x" }];
+W.openLayer(W.document.getElementById("chat"));
+W.chatNewConv();
+ok("新建会话不关闭大肥鱼面板",
+   W.openLayers.some((l) => l.id === "chat"),
+   JSON.stringify(W.openLayers.map((l) => l.id)));
+ok("新建后进入空会话界面",
+   W.chatMsgs.length === 0 && W.document.getElementById("chatHero").hidden === false);
+while (W.openLayers.length) W.closeTop();
 
 /* ---------- 结果 ---------- */
 console.log("\n" + "=".repeat(46));

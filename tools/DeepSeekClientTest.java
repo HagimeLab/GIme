@@ -285,100 +285,80 @@ public class DeepSeekClientTest {
         eq("没有 user 时整段返回", 1, DeepSeekClient.latestTurn(noUser).length());
         eq("空消息返回空", 0, DeepSeekClient.latestTurn(new JSONArray()).length());
 
-        // ── lastUserText / questionFingerprint：缓存键的两块原料 ──
-        JSONArray real = new JSONArray();
-        real.put(new JSONObject().put("role", "system").put("content",
-                "你是大肥鱼。当前题目上下文（JSON）："
-                + "{\"id\":\"nb1-0\",\"num\":1,\"type\":\"single\",\"stem\":\"TCP三次握手\","
-                + "\"options\":[{\"key\":\"A\",\"text\":\"可以携带数据\"},"
-                + "{\"key\":\"B\",\"text\":\"SYN必须携带数据\"}],\"answer\":[\"A\"]}"));
-        real.put(new JSONObject().put("role", "user").put("content", "旧的一问"));
-        real.put(new JSONObject().put("role", "assistant").put("content", "旧的一答"));
-        real.put(new JSONObject().put("role", "user").put("content", "这题为什么选A？"));
+        // ── 客户端指纹头：语言/时区取设备，不写死 UTC+8 ──
+        eq("中文环境的语言标识", "zh_CN",
+           DeepSeekWeb.localeTag(java.util.Locale.SIMPLIFIED_CHINESE));
+        eq("英文环境的语言标识", "en_US", DeepSeekWeb.localeTag(java.util.Locale.US));
+        eq("空语言退回中文", "zh_CN", DeepSeekWeb.localeTag(new java.util.Locale("", "")));
+        eq("中文 Accept-Language 与真实页面逐字一致",
+           "zh-CN,zh;q=0.9,en-US;q=0.8,en;q=0.7",
+           DeepSeekWeb.acceptLanguage(java.util.Locale.SIMPLIFIED_CHINESE));
+        eq("英文环境只列 en-US 与 en", "en-US,en;q=0.9",
+           DeepSeekWeb.acceptLanguage(java.util.Locale.US));
+        eq("无语言标签时退回中文", "zh-CN,zh;q=0.9,en-US;q=0.8,en;q=0.7",
+           DeepSeekWeb.acceptLanguage(new java.util.Locale("", "")));
 
-        eq("取到本轮提问", "这题为什么选A？", DeepSeekClient.lastUserText(real));
-        String qFp = DeepSeekClient.questionFingerprint(real);
-        ok("挖到题目指纹", qFp.length() > 0, qFp);
-        ok("指纹含题干", qFp.indexOf("TCP三次握手") >= 0, qFp);
-        ok("指纹含选项", qFp.indexOf("可以携带数据") >= 0, qFp);
-        ok("指纹不含历史", qFp.indexOf("旧的一") < 0, qFp);
+        // ── 请求头对齐真实页面（2026-10-21 从登录 WebView 抓包）──
+        java.util.Map<String, String> h = new DeepSeekWeb("tok", "a=1", "dev-1")
+                .headers("text/event-stream");
+        eq("UA 与登录 WebView 共用同一份", DeepSeekWeb.UA, h.get("User-Agent"));
+        ok("UA 带设备型号段", DeepSeekWeb.UA.indexOf("; Pixel 7") > 0, DeepSeekWeb.UA);
+        eq("前端版本号", "2.5.0", h.get("x-client-version"));
+        eq("前端 bundle id", "com.deepseek.chat", h.get("x-client-bundle-id"));
+        eq("设备型号头（真实页面为空值）", "", h.get("x-device-model"));
+        eq("设备 id", "dev-1", h.get("x-device-id"));
+        eq("平台标识", "web", h.get("x-client-platform"));
+        ok("真实页面已不带 x-hif-leim（不该凭空补）",
+           !h.containsKey("x-hif-leim"), "不该有 x-hif-leim");
+        ok("Authorization 自动加 Bearer",
+           "Bearer tok".equals(h.get("Authorization")), String.valueOf(h.get("Authorization")));
+        ok("Cookie 原样带上", "a=1".equals(h.get("Cookie")), String.valueOf(h.get("Cookie")));
 
-        /* 关键：历史变了，指纹不变 —— 这是缓存能命中的前提 */
-        JSONArray moreHistory = new JSONArray();
-        moreHistory.put(real.getJSONObject(0));
-        moreHistory.put(new JSONObject().put("role", "user").put("content", "第一问"));
-        moreHistory.put(new JSONObject().put("role", "assistant").put("content", "第一答"));
-        moreHistory.put(new JSONObject().put("role", "user").put("content", "第二问"));
-        moreHistory.put(new JSONObject().put("role", "assistant").put("content", "第二答"));
-        moreHistory.put(new JSONObject().put("role", "user").put("content", "这题为什么选A？"));
-        eq("历史多了指纹不变", qFp, DeepSeekClient.questionFingerprint(moreHistory));
-        eq("历史多了本轮提问也能取到", "这题为什么选A？",
-                DeepSeekClient.lastUserText(moreHistory));
+        // 2026-10-21 真实完成请求基线：Origin 只在 POST、Referer 用会话路径
+        java.util.Map<String, String> hp = new DeepSeekWeb("tok", "", "")
+                .headers("*/*", "https://chat.deepseek.com/a/chat/s/sid", true);
+        eq("POST 带 Origin", "https://chat.deepseek.com", hp.get("Origin"));
+        eq("Referer 可用会话路径", "https://chat.deepseek.com/a/chat/s/sid", hp.get("Referer"));
+        java.util.Map<String, String> hg = new DeepSeekWeb("tok", "", "")
+                .headers("*/*", null, false);
+        ok("GET 不带 Origin", !hg.containsKey("Origin"), String.valueOf(hg.get("Origin")));
+        eq("默认 Referer 是根路径", "https://chat.deepseek.com/", hg.get("Referer"));
 
-        /* 换一道题，指纹必须变（否则会把 A 题答案套到 B 题） */
-        JSONArray otherQ = new JSONArray();
-        otherQ.put(new JSONObject().put("role", "system").put("content",
-                "你是大肥鱼。当前题目上下文（JSON）：{\"id\":\"nb1-1\",\"stem\":\"另一道题\","
-                + "\"options\":[{\"key\":\"A\",\"text\":\"甲\"}],\"answer\":[\"B\"]}"));
-        otherQ.put(new JSONObject().put("role", "user").put("content", "这题为什么选A？"));
-        ok("换了题目指纹就变", !qFp.equals(DeepSeekClient.questionFingerprint(otherQ)),
-           DeepSeekClient.questionFingerprint(otherQ));
+        // 完成请求 body：字段与真实页面一致
+        JSONObject cb = DeepSeekWeb.completionBody("sid-1", null, "问题", true);
+        eq("model_type 是 default", "default", cb.optString("model_type"));
+        eq("首轮 parent 是 null", true, cb.isNull("parent_message_id"));
+        eq("带 preempt:false", false, cb.optBoolean("preempt", true));
+        eq("session 与 prompt 正确", "sid-1/问题",
+           cb.optString("chat_session_id") + "/" + cb.optString("prompt"));
+        eq("thinking 透传", true, cb.optBoolean("thinking_enabled"));
+        eq("search 默认关", false, cb.optBoolean("search_enabled", true));
 
-        /* 没有题目上下文（闲聊）时返回空，不报错 */
-        JSONArray chatOnly = new JSONArray();
-        chatOnly.put(new JSONObject().put("role", "system").put("content", "你是大肥鱼"));
-        chatOnly.put(new JSONObject().put("role", "user").put("content", "你是谁"));
-        eq("没有题目指纹返回空", "", DeepSeekClient.questionFingerprint(chatOnly));
-        eq("闲聊也能取提问", "你是谁", DeepSeekClient.lastUserText(chatOnly));
-        eq("没 user 时提问为空", "", DeepSeekClient.lastUserText(new JSONArray()));
+        // ── HIF 令牌：从官方接口拉取、按 x-hif-ttl 缓存 ──
+        eq("HIF 令牌解析",
+           "abc.DEF",
+           DeepSeekWeb.hifValue("{\"code\":0,\"msg\":\"\",\"data\":{\"biz_code\":0,"
+                   + "\"biz_msg\":\"\",\"biz_data\":{\"value\":\"abc.DEF\"}}}"));
+        eq("HIF biz_code 非 0 → 空", "", DeepSeekWeb.hifValue("{\"data\":{\"biz_code\":7}}"));
+        eq("HIF 坏 JSON → 空", "", DeepSeekWeb.hifValue("not json"));
+        eq("HIF 空响应 → 空", "", DeepSeekWeb.hifValue(""));
+        eq("HIF ttl 缺省 600s", 600000L, DeepSeekWeb.hifTtlMs(null));
+        eq("HIF ttl 解析", 120000L, DeepSeekWeb.hifTtlMs("120"));
+        eq("HIF ttl 非法回默认", 600000L, DeepSeekWeb.hifTtlMs("abc"));
+        eq("HIF ttl 非正数回默认", 600000L, DeepSeekWeb.hifTtlMs("0"));
+        eq("UTC+8 是 28800 秒", 28800,
+           DeepSeekWeb.tzOffsetSeconds(java.util.TimeZone.getTimeZone("GMT+08:00")));
+        eq("UTC-5 是 -18000 秒", -18000,
+           DeepSeekWeb.tzOffsetSeconds(java.util.TimeZone.getTimeZone("GMT-05:00")));
+        eq("拿不到时区退回 UTC+8", 28800, DeepSeekWeb.tzOffsetSeconds(null));
 
-        // ── isFreshAsk：只有「用户新提的一问」才允许碰答案缓存 ──
-        ok("最后一条是 user → 新提问", DeepSeekClient.isFreshAsk(real));
-        JSONArray toolRound = new JSONArray();
-        toolRound.put(real.getJSONObject(0));
-        toolRound.put(new JSONObject().put("role", "user").put("content", "这题为什么选A？"));
-        toolRound.put(new JSONObject().put("role", "assistant").put("content", "")
-                .put("tool_calls", new JSONArray().put(new JSONObject()
-                        .put("function", new JSONObject().put("name", "list_questions")))));
-        toolRound.put(new JSONObject().put("role", "tool").put("name", "list_questions")
-                .put("content", "{\"total\":5}"));
-        ok("工具结果回灌的那一发不算新提问", !DeepSeekClient.isFreshAsk(toolRound));
-        ok("assistant 收尾轮不算新提问", !DeepSeekClient.isFreshAsk(new JSONArray()
-                .put(new JSONObject().put("role", "user").put("content", "问"))
-                .put(new JSONObject().put("role", "assistant").put("content", "答"))));
-        ok("空提问不算新提问", !DeepSeekClient.isFreshAsk(new JSONArray()
-                .put(new JSONObject().put("role", "user").put("content", "   "))));
-        ok("空消息不算新提问", !DeepSeekClient.isFreshAsk(new JSONArray()));
-
-        // ── answerState：作答状态进缓存键，换了选项就不会拿到旧答案 ──
-        eq("没作答状态时也要有固定形状", "|0|", DeepSeekClient.answerState(real));
-        JSONArray pickedB = new JSONArray();
-        pickedB.put(new JSONObject().put("role", "system").put("content",
-                DeepSeekClient.CTX_MARK + "{\"id\":\"q1\",\"userPick\":[\"B\"],\"graded\":false,"
-                        + "\"mode\":\"practice\"}"));
-        eq("选项与判分flag进状态", "B|0|practice", DeepSeekClient.answerState(pickedB));
-        JSONArray pickedBA = new JSONArray();
-        pickedBA.put(new JSONObject().put("role", "system").put("content",
-                DeepSeekClient.CTX_MARK + "{\"id\":\"q1\",\"userPick\":[\"b\",\"A\"],\"graded\":true,"
-                        + "\"mode\":\"practice\"}"));
-        eq("多选先大写再排序", "A,B|1|practice", DeepSeekClient.answerState(pickedBA));
-        JSONArray pickedAB = new JSONArray();
-        pickedAB.put(new JSONObject().put("role", "system").put("content",
-                DeepSeekClient.CTX_MARK + "{\"id\":\"q1\",\"userPick\":[\"A\",\"B\"],\"graded\":true,"
-                        + "\"mode\":\"practice\"}"));
-        eq("选的顺序不影响状态", DeepSeekClient.answerState(pickedBA),
-           DeepSeekClient.answerState(pickedAB));
-        eq("没有题目上下文时状态为空", "", DeepSeekClient.answerState(chatOnly));
-        ok("换了选项 → 缓存键不同",
-           !RiskGuard.cacheKey(DeepSeekClient.questionFingerprint(pickedB), "这题怎么解",
-                   DeepSeekClient.answerState(pickedB))
-             .equals(RiskGuard.cacheKey(DeepSeekClient.questionFingerprint(pickedAB), "这题怎么解",
-                   DeepSeekClient.answerState(pickedAB))), "");
-        eq("同一个状态 → 同一个键",
-           RiskGuard.cacheKey(DeepSeekClient.questionFingerprint(pickedBA), "这题怎么解",
-                   DeepSeekClient.answerState(pickedBA)),
-           RiskGuard.cacheKey(DeepSeekClient.questionFingerprint(pickedAB), "这题怎么解",
-                   DeepSeekClient.answerState(pickedAB)));
+        // ── 用户叫停 ≠ 看门狗掐断：前者不该触发重试 ──
+        DeepSeekWeb w = new DeepSeekWeb("token");
+        ok("初始没被叫停", !w.isCancelled());
+        w.abort();
+        ok("看门狗式掐断不算用户叫停", !w.isCancelled());
+        w.cancel();
+        ok("用户叫停能被识别", w.isCancelled());
 
         System.out.println("\n" + pass + " passed, " + fail + " failed");
         if (fail > 0) System.exit(1);

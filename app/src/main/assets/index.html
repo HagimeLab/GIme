@@ -168,6 +168,9 @@ svg { display: block; }
 .rec .p { flex: 0 0 92px; text-align: right; }
 .rec .p b { font-size: 1.125rem; font-weight: 800; }
 .rec .p small { display: block; font-size: .6875rem; color: var(--ink-3); }
+button.rec { background: none; border: 0; border-bottom: 1px solid var(--line); color: inherit;
+  font: inherit; text-align: left; -webkit-tap-highlight-color: transparent; }
+button.rec:active { opacity: .62; }
 
 /* ---------------- 底部 tab ---------------- */
 .tabs {
@@ -408,6 +411,26 @@ svg { display: block; }
 .msg.me .bubble { background: var(--ink); color: var(--paper); border-top-right-radius: 6px; }
 .msg .ava { width: 28px; height: 28px; flex-basis: 28px; margin-top: 2px; }
 .msg .bubble.typing { color: var(--ink-3); }
+/* 大肥鱼正文的 Markdown：只作用于 .bubble.md，思考链与用户消息不受影响 */
+.bubble.md p { margin: 0 0 8px; }
+.bubble.md p:last-child { margin-bottom: 0; }
+.bubble.md h1, .bubble.md h2, .bubble.md h3,
+.bubble.md h4, .bubble.md h5, .bubble.md h6 { margin: 12px 0 6px; line-height: 1.35; font-weight: 700; }
+.bubble.md h1 { font-size: 1.2em; }
+.bubble.md h2 { font-size: 1.1em; }
+.bubble.md h3, .bubble.md h4, .bubble.md h5, .bubble.md h6 { font-size: 1em; }
+.bubble.md h1:first-child, .bubble.md h2:first-child, .bubble.md h3:first-child { margin-top: 0; }
+.bubble.md ul, .bubble.md ol { margin: 4px 0 8px; padding-left: 1.4em; }
+.bubble.md li { margin: 2px 0; }
+.bubble.md code { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+                  font-size: .9em; padding: 1px 4px; border-radius: 4px; background: var(--surface); }
+.bubble.md pre { margin: 8px 0; padding: 10px 12px; border-radius: 10px; overflow-x: auto;
+                 background: var(--surface); border: 1px solid var(--line); }
+.bubble.md pre code { padding: 0; background: none; font-size: .85em; line-height: 1.55; }
+.bubble.md blockquote { margin: 8px 0; padding: 2px 0 2px 10px;
+                        border-left: 3px solid var(--line); color: var(--ink-2); }
+.bubble.md hr { border: 0; border-top: 1px solid var(--line); margin: 10px 0; }
+.bubble.md .md-link { color: inherit; text-decoration: underline; text-underline-offset: 2px; cursor: pointer; }
 /* 流式回答：思考链在上、正文在下，同一个气泡列里长出来 */
 .msg .live { flex: 1; min-width: 0; max-width: 78%; display: flex; flex-direction: column;
              align-items: flex-start; gap: 6px; }
@@ -432,6 +455,19 @@ svg { display: block; }
                     border-radius: 16px; border: 1.5px solid var(--line); background: var(--raise);
                     font-family: inherit; font-size: .875rem; color: var(--ink); line-height: 1.4; }
 .chat-in textarea:focus { border-color: var(--ink-3); outline: none; }
+/* 空会话（新对话）：头像放大、名字与输入框居中，虚线提示在输入框下面。
+   发送后整组收起，输入框回到底部（chatFoot），头部名字重新出现。 */
+.chat-hero { flex: 1; min-height: 0; display: flex; flex-direction: column; align-items: center;
+             justify-content: center; padding: 4px 0 14px; }
+.chat-hero[hidden] { display: none; }
+.chat-hero .hero-ava { width: 96px; height: 96px; flex-basis: 96px; background: transparent;
+                       box-shadow: none; margin-bottom: 2px; }
+.chat-hero .hero-name { font-size: 1.25rem; font-weight: 700; color: var(--ink); margin: 2px 0 18px; }
+.chat-hero .hero-slot { width: 100%; max-width: 560px; }
+.chat-hero .chat-in { width: 100%; padding-top: 0; }
+.chat-hero .hero-hint { width: 100%; max-width: 560px; margin: 14px 0 0; text-align: center; }
+/* 空会话时头部只留按钮：大头像和名字在中间，避免重复 */
+.chat.empty .chat-head .ava, .chat.empty .chat-head b { visibility: hidden; }
 .chat-send { flex: 0 0 64px; padding: 12px 0; border-radius: 16px; background: var(--ink); color: var(--paper);
              font-size: .8125rem; font-weight: 700; box-shadow: var(--sh-sm); }
 .chat-send[disabled] { opacity: .4; }
@@ -859,12 +895,20 @@ html.swap, html.swap * { transition: none !important; }
     </button>
     <button class="chat-cfg" onclick="openAgentCfg()">设置</button>
   </div>
+  <div class="chat-hero" id="chatHero" hidden>
+    <span class="ava hero-ava"><img class="ag-l" src="agent-light.png" alt=""><img class="ag-d" src="agent-dark.png" alt=""></span>
+    <div class="hero-name">蓝色大肥鱼</div>
+    <div class="hero-slot" id="chatHeroSlot"></div>
+    <div class="chat-empty hero-hint">问大肥鱼这道题。它会读取当前题目和题库来回答；需要时还能把解析写回题库。</div>
+  </div>
   <div class="chat-list" id="chatList"></div>
   <div class="chat-hint" id="chatHint"></div>
-  <div class="chat-in">
-    <textarea id="chatText" rows="1" placeholder="问大肥鱼这道题…"
-      onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();chatSend()}"></textarea>
-    <button class="chat-send" id="chatSend" onclick="chatSend()">发送</button>
+  <div class="chat-foot" id="chatFoot">
+    <div class="chat-in" id="chatIn">
+      <textarea id="chatText" rows="1" placeholder="问大肥鱼这道题…"
+        onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();chatSend()}"></textarea>
+      <button class="chat-send" id="chatSend" onclick="chatSend()">发送</button>
+    </div>
   </div>
 </div>
 <div class="glass" id="glass"></div>
@@ -877,7 +921,7 @@ html.swap, html.swap * { transition: none !important; }
 
 /* ================= 数据与持久化 ================= */
 var BANK = window.BANK || { subjects: [], questions: [] };
-var LS = { p: "stk.progress.v2", s: "stk.settings.v2", j: "stk.session.v2", u: "stk.update.v1", c: "stk.chat.v1" };
+var LS = { p: "stk.progress.v2", s: "stk.settings.v2", j: "stk.session.v2", u: "stk.update.v1", c: "stk.chat.v1", r: "stk.resume.v1" };
 var store = {
   read: function (k, d) { try { var v = localStorage.getItem(k); return v ? JSON.parse(v) : d; } catch (e) { return d; } },
   write: function (k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) {} }
@@ -935,8 +979,88 @@ function shuffle(a) {
   for (var i = a.length - 1; i > 0; i--) { var j = Math.floor(Math.random() * (i + 1)), t = a[i]; a[i] = a[j]; a[j] = t; }
   return a;
 }
-function save() { store.write(LS.j, S); store.write(LS.p, prog); store.write(LS.s, set); }
+function save() { store.write(LS.j, S); store.write(LS.p, prog); store.write(LS.s, set); saveResume(); }
 window.saveProgress = save;
+
+/* ================= 中途退出续刷 =================
+   会话 S 只记「当前打开的那一组」，换一个题库就会被覆盖；所以退出时另存一份按题库
+   归档的快照（order / 当前题 / 已选 / 已判 / 主观题自评 / 输入中的文字）。
+   「最近练习」和题库页的「继续刷」都从这里恢复，两条入口共用同一份进度。
+   快照只收顺序练习：考试有交卷/放弃语义，错题/收藏/背题每次都是重新抽的清单，
+   恢复旧的一组反而会跳过用户这次想练的范围。 */
+var resume = store.read(LS.r, {});
+function resumeKey(sid, tf) { return sid + "|" + (tf || ""); }
+function practiceLeft(s) {
+  var left = 0;
+  s.order.forEach(function (id) {
+    var x = byId[id];
+    if (!x) return;
+    if (isSubjective(x.type)) { if (!s.self || s.self[id] === undefined) left++; }
+    else if (!s.graded || s.graded[id] === undefined) left++;
+  });
+  return left;
+}
+function dropResume(key) {
+  if (!resume[key]) return;
+  delete resume[key];
+  store.write(LS.r, resume);
+}
+function saveResume() {
+  if (!S || S.mode !== "practice" || !S.order || !S.order.length) return;
+  var key = resumeKey(S.subject, S.tf);
+  if (!practiceLeft(S)) { dropResume(key); return; }
+  resume[key] = { sid: S.subject, tf: S.tf || "", order: S.order.slice(), idx: S.idx,
+                  picks: S.picks || {}, graded: S.graded || {}, text: S.text || {}, self: S.self || {},
+                  at: Date.now() };
+  store.write(LS.r, resume);
+}
+/* 先找同一筛选条件的；没有再看这个题库最近退出的那一组。
+   题库页的「继续刷」因此总能回到用户真正的退出位置，而不只是「第一道没刷过的」。 */
+function latestResume(sid) {
+  var best = null;
+  Object.keys(resume).forEach(function (k) {
+    var r = resume[k];
+    if (r.sid !== sid) return;
+    if (!best || (r.at || 0) > (best.at || 0)) best = r;
+  });
+  return best;
+}
+function findResume(sid, tf) {
+  /* 选了题型就是明确要那一类，不能拿别的题型的旧会话顶替；
+     「整个题库」这一档才回退到这个题库最近退出的一组。 */
+  if (tf) return resume[resumeKey(sid, tf)] || null;
+  return latestResume(sid);
+}
+function validResume(r) {
+  if (!r || !r.order || !r.order.length) return false;
+  if (typeof r.idx !== "number" || r.idx < 0 || r.idx >= r.order.length) return false;
+  for (var i = 0; i < r.order.length; i++) if (!byId[r.order[i]]) return false;
+  return true;
+}
+function restorePractice(r, from) {
+  if (!validResume(r)) {
+    Object.keys(resume).forEach(function (k) { if (resume[k] === r) delete resume[k]; });
+    store.write(LS.r, resume);
+    return false;
+  }
+  S = { subject: r.sid, mode: "practice", tf: r.tf || "", order: r.order.slice(), idx: r.idx,
+        title: "", state: "",
+        picks: r.picks || {}, graded: r.graded || {}, text: r.text || {}, self: r.self || {},
+        started: Date.now(), dur: 0 };
+  save();
+  render();
+  shAbort();
+  SH = (from && !shRM()) ? (from === "cat" ? { tf: r.tf } : { sid: r.sid }) : null;
+  if (SH && !shCard()) SH = null;
+  if (SH) shOpen(); else shPlain();
+  return true;
+}
+function resumeRecent(sid) {
+  if (!subjectOf(sid)) return;
+  var r = findResume(sid, "");
+  if (r && restorePractice(r, null)) return;
+  startSession("practice", sid, "", null);
+}
 
 /* ================= 统计 ================= */
 function stats(sid, tf) {
@@ -1267,6 +1391,12 @@ function shClose() {
 }
 
 function startSession(mode, sid, tf, from) {
+  /* 顺序练习接着上次退出那一题继续：题库页「继续刷」、首页待刷、最近练习
+     都走这里，和退出时自动保存的是同一份快照。 */
+  if (mode === "practice") {
+    var r0 = findResume(sid, tf);
+    if (r0 && restorePractice(r0, from)) return;
+  }
   var pool = subjQs(sid, tf === "exam" ? null : tf);
   if (mode === "wrong") {
     pool = pool.filter(inWrong);
@@ -2091,13 +2221,21 @@ function renderTasks(noQ) {
   }
   document.getElementById("tasks").innerHTML = rows;
 
-  var rec = BANK.subjects.map(function (s) { var t = stats(s.id); t.id = s.id; t.name = s.name; return t; })
-    .filter(function (t) { return t.seen > 0; })
-    .sort(function (a, b) { return b.lastT - a.lastT; }).slice(0, 4);
+  var rec = BANK.subjects.map(function (s) {
+    var t = stats(s.id);
+    t.id = s.id; t.name = s.name;
+    t.r = findResume(s.id, "");
+    t.at = Math.max(t.lastT || 0, t.r ? (t.r.at || 0) : 0);
+    return t;
+  })
+    .filter(function (t) { return t.seen > 0 || !!t.r; })
+    .sort(function (a, b) { return b.at - a.at; }).slice(0, 4);
   document.getElementById("recent").innerHTML = rec.length ? rec.map(function (t) {
-    return '<div class="rec"><span class="n">' + esc(t.name) +
-             "<i>完成 " + t.seen + " / " + t.total + " 题</i></span>" +
-             '<span class="p"><b>' + t.rate + "%</b><small>正确率</small></span></div>";
+    var sub = "完成 " + t.seen + " / " + t.total + " 题";
+    if (t.r && validResume(t.r)) sub += " · 上次到第 " + (t.r.idx + 1) + " 题";
+    return '<button class="rec" onclick="resumeRecent(&quot;' + t.id + '&quot;)">' +
+             '<span class="n">' + esc(t.name) + "<i>" + sub + "</i></span>" +
+             '<span class="p"><b>' + t.rate + "%</b><small>正确率</small></span></button>";
   }).join("") : '<div class="cap" style="margin:0">还没有练习记录</div>';
 }
 
@@ -3031,7 +3169,7 @@ function renderGrid() {
     ? '<i></i>已作答<i class="dash"></i>当前'
     : "<i></i>答对<i class=\"dash\"></i>答错<i></i>当前";
 }
-function jump(i) { S.idx = i; closeTop(); render(); }
+function jump(i) { S.idx = i; closeTop(); render(); save(); }
 
 function glass(o) {
   var g = document.getElementById("glass");
@@ -3675,6 +3813,7 @@ function removeBank(sid) {
     localStorage.removeItem(LS.j);
     document.getElementById("quiz").classList.remove("on");
   }
+  Object.keys(resume).forEach(function (k) { if (k.indexOf(sid + "|") === 0) delete resume[k]; });
   if (set.hidden) delete set.hidden[sid];
   /* 组卷选择里也要摘掉：否则卷名和「全选」标签会继续把已删题库算进去 */
   if (set.paper && set.paper.subs) delete set.paper.subs[sid];
@@ -4044,27 +4183,63 @@ function chatSyncConv() {
     }
   }
 }
+/* 没有消息的会话不算会话：真实网页在发出第一条消息前不会把它写进历史。
+   当前这一个空会话要留着（新对话界面），其余一律清掉。 */
+function chatConvEmpty(c) { return !c || !c.msgs || c.msgs.length === 0; }
+/* 页面删会话时同步删网页侧那条；非内置/没登录时什么都不做 */
+function chatDeleteUpstream(id) {
+  if (!id || agentMode() !== "login" || !window.Android || !Android.dsDeleteChat) return;
+  try { Android.dsDeleteChat(id); } catch (e) { }
+}
+function chatPruneEmpty(keepId) {
+  var before = chatConvs.length;
+  var dropped = [];
+  chatConvs = chatConvs.filter(function (c) {
+    if (c.id === keepId || !chatConvEmpty(c)) return true;
+    dropped.push(c.id);
+    return false;
+  });
+  for (var i = 0; i < dropped.length; i++) chatDeleteUpstream(dropped[i]);
+  if (chatConvs.length !== before) chatConvSave();
+}
 function chatLoadConv(id) {
   var target = null;
   for (var i = 0; i < chatConvs.length; i++) if (chatConvs[i].id === id) target = chatConvs[i];
   if (!target) return;
+  /* 切走时把当前那个空会话删掉——它从没产生过对话 */
+  chatPruneEmpty(id);
   chatCurId = target.id;
   chatMsgs = (target.msgs || []).slice(-200);
   chatSave();
   chatConvSave();
   chatRender();
 }
-function chatNewConv() {
+function chatNewConv(force) {
   if (chatBusy) { toast("等这轮答完再开新会话"); return; }
+  /* 至少聊过一句（不管成功还是失败）才允许新开；空对话不能叠空对话 */
+  if (!force && chatMsgs.length === 0) {
+    toast("先问一句，再开新会话");
+    var box = document.getElementById("chatText");
+    if (box) box.focus();
+    return;
+  }
   chatSyncConv();
+  /* 当前已有对话；把其它没消息的会话（含历史遗留）一并清掉 */
+  chatPruneEmpty("");
   var c = { id: "cv_" + Date.now().toString(36) + "_" + (++chatSeq), title: "", at: Date.now(), msgs: [] };
   chatConvs.unshift(c);
   chatCurId = c.id;
   chatMsgs = [];
+  /* 内置通道：页面新开会话时让上游也立刻建一条，网页版的会话列表同步出现。
+     Key 模式没有这个概念。 */
+  if (agentMode() === "login" && window.Android && Android.dsNewChat) {
+    try { Android.dsNewChat(chatCurId); } catch (e) { }
+  }
   chatSave();
   chatConvSave();
   chatRender();
-  closeTop();
+  /* 这里不再 closeTop：从大肥鱼头部的「+」新建时，面板要留在原地切到空会话界面。
+     只有从历史面板删光会话时由 convDel 负责关掉那一层。 */
   toast("新会话已开");
 }
 function openConvList() {
@@ -4073,11 +4248,13 @@ function openConvList() {
   chatConvSave();
   var sh = document.getElementById("sheet3");
   var h = '<div class="handle"></div><h2>历史会话</h2>';
-  if (!chatConvs.length) {
-    h += '<div class="chat-empty">还没有会话。点右上角「+」开一个。</div>';
+  /* 没有消息的会话不列出来：它们不算“对话”，页面上当前那个空会话也不列 */
+  var shown = chatConvs.filter(function (c) { return !chatConvEmpty(c); });
+  if (!shown.length) {
+    h += '<div class="chat-empty">还没有会话。回到对话问一句，就会出现在这里。</div>';
   } else {
     h += '<div class="conv-list">';
-    chatConvs.forEach(function (c) {
+    shown.forEach(function (c) {
       var n = (c.msgs || []).length;
       var t = c.title || "新会话";
       var d = c.at ? new Date(c.at) : null;
@@ -4102,6 +4279,7 @@ function convPick(id) {
   toast("已切到该会话");
 }
 function convDel(id) {
+  chatDeleteUpstream(id);
   var i;
   for (i = 0; i < chatConvs.length; i++) {
     if (chatConvs[i].id === id) { chatConvs.splice(i, 1); break; }
@@ -4112,11 +4290,14 @@ function convDel(id) {
       chatCurId = chatConvs[0].id;
       chatMsgs = (chatConvs[0].msgs || []).slice(-200);
     } else {
-      chatNewConv();
+      /* 删光时关的是历史面板；大肥鱼面板留在下面显示新的空会话 */
+      closeTop();
+      chatNewConv(true);
       return;
     }
     chatSave();
   }
+  chatPruneEmpty(chatCurId);
   chatConvSave();
   closeTop();
   chatRender();
@@ -4141,6 +4322,8 @@ function convDel(id) {
     chatSyncConv();
     chatConvSave();
   }
+  /* 启动时清掉“没有消息”的历史会话；当前这个空会话留着当新对话界面 */
+  chatPruneEmpty(chatCurId);
 })();
 function chatSave() {
   store.write(LS.c, { messages: chatMsgs.slice(-200) });
@@ -4280,42 +4463,6 @@ function agFontHtml() {
       '<div class="ag-fs-demo">这条消息就按现在的字号显示。</div>' +
     '</div>';
 }
-/* 配额与护栏：只在手机号登录模式下显示（API Key 走官方额度，不受这里限制）。 */
-function agGuardHtml() {
-  if (agentMode() !== "login") return "";
-  var g = dsGuard();
-  if (!g) return "";
-  var line;
-  if (g.frozen) {
-    line = '<div class="note" style="margin:0 0 10px">上游刚有异常，已暂停 '
-      + Math.ceil(g.frozenMs / 1000) + ' 秒以免继续触发风控。'
-      + '<button class="sheet-act2" style="width:100%;margin:8px 0 0" onclick="dsGuardReset()">我知道了，继续</button>'
-      + '</div>';
-  } else {
-    line = '<div class="sl-hint" style="margin:0">今日已用 ' + g.used + ' / ' + g.limit
-      + ' 次（正常问答足够；需要更多请切到 API Key）'
-      /* 复用次数是「缓存有没有用」的唯一证据，摆在额度旁边才有说服力 */
-      + (typeof g.cacheHits === "number" && g.cacheHits > 0
-          ? '<br>已直接复用上次答案 ' + g.cacheHits + ' 次（这些没有请求上游）' : '')
-      + '</div>';
-  }
-  var btns = '<div class="ag-fs-row" style="margin-top:10px">'
-    + '<button class="ag-fs-b" onclick="dsClearCache()">清空答案缓存'
-    + (g.cacheSize ? "（" + g.cacheSize + "）" : "") + '</button></div>';
-  return '<div class="ag-sep"></div><div class="ag-fs">'
-    + '<div class="ag-fs-h"><b>使用额度</b></div>' + line + btns + '</div>';
-}
-function dsGuardReset() {
-  try { if (window.Android && Android.dsGuardReset) Android.dsGuardReset(); } catch (e) { }
-  openAgentCfg();
-  renderAll();
-  toast("已恢复");
-}
-function dsClearCache() {
-  try { if (window.Android && Android.dsClearCache) Android.dsClearCache(); } catch (e) { }
-  openAgentCfg();
-  toast("答案缓存已清空");
-}
 /* 顶部的切换按钮：第一行是「现在」，第二行是「点下去会变成什么」。 */
 function agSwitchHtml() {
   var login = agentMode() === "login";
@@ -4338,7 +4485,7 @@ function openAgentCfg() {
           '<button class="sheet-act" style="margin:0" onclick="dsLoginNow()">用手机号登录 DeepSeek</button>';
     sh.innerHTML = head + line +
       '<div class="sl-hint" style="margin:18px 0 0">登录态只存在本机。换设备或过期后，重新登录一次即可。</div>' +
-      agFontHtml() + agGuardHtml();
+      agFontHtml();
   } else {
     sh.innerHTML = head +
       '<div class="sl-hint" style="margin:0 0 10px">填任何 OpenAI 兼容接口，Key 只存在本机。</div>' +
@@ -4350,7 +4497,7 @@ function openAgentCfg() {
       '<input class="rn-box" id="agKey" type="password" value="' + esc(a.key || "") + '" placeholder="sk-...">' +
       '<button class="sheet-act" style="margin-top:18px" onclick="agentCfgSave()">保存</button>' +
       '<div class="sl-hint" style="margin:16px 0 0">按标准 /chat/completions 调，Key 不会离开这台手机。</div>' +
-      agFontHtml() + agGuardHtml();
+      agFontHtml();
   }
   openLayer(sh);
 }
@@ -4405,6 +4552,143 @@ function chatThinkToggle(id, open) {
     if (chatMsgs[i].id === id) { chatMsgs[i].thinkOpen = !!open; chatSave(); return; }
   }
 }
+/* ---- Markdown：只给大肥鱼正文用；思考链和用户消息保持纯文本 ----
+   先 esc 再套自己的标签，原文里的 HTML 永远不会变成标签。
+   链接不用 <a>：WebView 里点 <a> 会把页面自身导航走；改成 data-md-href + 原生打开。 */
+var MD_CACHE = {};
+function mdSafeUrl(u) {
+  var s = String(u || "").trim().replace(/^<|>$/g, "");
+  return /^https?:\/\//i.test(s) ? s : "";
+}
+function mdInline(s) {
+  var holds = [];
+  var t = String(s == null ? "" : s);
+  /* 行内代码先摘出来，免得里面的强调符被当成粗体/斜体 */
+  t = t.replace(/`([^`\n]+)`/g, function (_, c) {
+    holds.push("<code>" + esc(c) + "</code>");
+    return "\u0000H" + (holds.length - 1) + "\u0000";
+  });
+  t = esc(t);
+  /* 图片不加载远程资源，退化成 alt + 地址文本 */
+  t = t.replace(/!\[([^\]\n]*)\]\(([^)\s]+)\)/g, function (_, alt, url) {
+    return (alt || "图片") + "（" + url + "）";
+  });
+  /* 链接也先摘出来：否则 URL 里的 _ 会被斜体规则改写，属性直接坏掉 */
+  t = t.replace(/\[([^\]\n]+)\]\(([^)\s]+)\)/g, function (_, label, url) {
+    var safe = mdSafeUrl(url);
+    if (!safe) return label + " (" + url + ")";
+    holds.push('<span class="md-link" data-md-href="' + esc(safe) + '">' + label + "</span>");
+    return "\u0000H" + (holds.length - 1) + "\u0000";
+  });
+  t = t.replace(/\*\*([^*\n]+)\*\*/g, "<strong>$1</strong>");
+  t = t.replace(/__([^_\n]+)__/g, "<strong>$1</strong>");
+  t = t.replace(/(^|[^*])\*([^*\n]+)\*/g, "$1<em>$2</em>");
+  t = t.replace(/(^|[^_])_([^_\n]+)_/g, "$1<em>$2</em>");
+  t = t.replace(/~~([^~\n]+)~~/g, "<del>$1</del>");
+  t = t.replace(/\u0000H(\d+)\u0000/g, function (_, i) { return holds[+i] || ""; });
+  return t;
+}
+function mdToHtml(src) {
+  var lines = String(src == null ? "" : src).replace(/\r\n?/g, "\n").split("\n");
+  var out = [];
+  var p = [];
+  var i = 0;
+  function flushP() {
+    if (!p.length) return;
+    out.push("<p>" + p.map(mdInline).join("<br>") + "</p>");
+    p = [];
+  }
+  while (i < lines.length) {
+    var line = lines[i];
+    var fence = line.match(/^\s*```([A-Za-z0-9_+-]*)\s*$/);
+    if (fence) {
+      flushP();
+      var code = [];
+      i++;
+      while (i < lines.length && !/^\s*```\s*$/.test(lines[i])) { code.push(lines[i]); i++; }
+      if (i < lines.length) i++;   /* 跳过结束围栏 */
+      out.push('<pre class="md-pre"><code>' + esc(code.join("\n")) + "</code></pre>");
+      continue;
+    }
+    var h = line.match(/^(#{1,6})\s+(.*)$/);
+    if (h) {
+      flushP();
+      var n = h[1].length;
+      out.push("<h" + n + ">" + mdInline(h[2]) + "</h" + n + ">");
+      i++; continue;
+    }
+    if (/^\s*([-*_])(\s*\1){2,}\s*$/.test(line)) {
+      flushP(); out.push("<hr>"); i++; continue;
+    }
+    if (/^\s*>\s?/.test(line)) {
+      flushP();
+      var q = [];
+      while (i < lines.length && /^\s*>\s?/.test(lines[i])) {
+        q.push(lines[i].replace(/^\s*>\s?/, ""));
+        i++;
+      }
+      out.push("<blockquote>" + mdToHtml(q.join("\n")) + "</blockquote>");
+      continue;
+    }
+    var li = line.match(/^\s*([-*+]|\d+[.)])\s+(.*)$/);
+    if (li) {
+      flushP();
+      var ordered = /\d/.test(li[1]);
+      var items = [];
+      while (i < lines.length) {
+        var m = lines[i].match(/^\s*([-*+]|\d+[.)])\s+(.*)$/);
+        if (!m || /\d/.test(m[1]) !== ordered) break;
+        var item = [m[2]];
+        i++;
+        while (i < lines.length && /^\s{2,}\S/.test(lines[i]) &&
+               !/^\s*([-*+]|\d+[.)])\s+/.test(lines[i])) {
+          item.push(lines[i].replace(/^\s+/, ""));
+          i++;
+        }
+        items.push("<li>" + item.map(mdInline).join("<br>") + "</li>");
+      }
+      var tag = ordered ? "ol" : "ul";
+      out.push("<" + tag + ">" + items.join("") + "</" + tag + ">");
+      continue;
+    }
+    if (!line.trim()) { flushP(); i++; continue; }
+    p.push(line);
+    i++;
+  }
+  flushP();
+  return out.join("");
+}
+/* 已落盘的回答不会变，按 id 缓存；换文字或超量就重算/清空 */
+function mdFor(m) {
+  var id = (m && m.id) || "";
+  var text = String((m && m.text) || "");
+  var c = MD_CACHE[id];
+  if (c && c.t === text) return c.h;
+  var h = mdToHtml(text);
+  if (Object.keys(MD_CACHE).length > 300) MD_CACHE = {};
+  MD_CACHE[id] = { t: text, h: h };
+  return h;
+}
+
+/* 链接不交给 WebView 自己导航（会把整个页面带走），走原生 Intent */
+document.addEventListener("click", function (e) {
+  var el = e.target;
+  while (el && el !== document) {
+    if (el.getAttribute) {
+      var href = el.getAttribute("data-md-href");
+      if (href) {
+        e.preventDefault();
+        try {
+          if (window.Android && Android.openUrl) { Android.openUrl(href); return; }
+        } catch (err) { }
+        toast(href);
+        return;
+      }
+    }
+    el = el.parentNode;
+  }
+});
+
 /* 流式气泡的内部结构：思考链在上、正文在下。纯函数，回归测试直接调。 */
 function chatLiveHtml(m) {
   var think = String((m && m.reasoning) || "");
@@ -4428,7 +4712,13 @@ function chatLiveHtml(m) {
            label + "</summary>" +
            '<div class="think-body">' + esc(think).replace(/\n/g, "<br>") + "</div></details>";
   }
-  if (text) out += '<div class="bubble">' + esc(text).replace(/\n/g, "<br>") + "</div>";
+  if (text) {
+    /* 流式期间保持纯文本（每 40ms 重排一次 Markdown 又慢又闪）；
+       答完后一次性按 Markdown 渲染。思考链永远不解析。 */
+    var live = !!m.live;
+    out += '<div class="bubble' + (live ? "" : " md") + '">' +
+           (live ? esc(text).replace(/\n/g, "<br>") : mdFor(m)) + "</div>";
+  }
   if (!out) {
     out = '<div class="bubble typing">' + (tooling ? "正在调用工具…" : "大肥鱼正在想…") + "</div>";
   }
@@ -4454,19 +4744,56 @@ function syncAskDot() {
   var t = document.getElementById("tabAsk");
   if (t) t.classList.toggle("unread", !!chatUnread);
 }
+/* 空会话布局：大头像/名字/输入框居中；发出第一条后输入框回到底部。
+   只搬 .chat-in 这一个节点，不复制输入框，避免两份状态对不上。 */
+function chatLayout() {
+  var panel = document.getElementById("chat");
+  var hero = document.getElementById("chatHero");
+  var slot = document.getElementById("chatHeroSlot");
+  var foot = document.getElementById("chatFoot");
+  var list = document.getElementById("chatList");
+  var hint = document.getElementById("chatHint");
+  var input = document.getElementById("chatIn");
+  if (!panel || !hero || !slot || !foot || !input) return;
+  var wasEmpty = panel.classList.contains("empty");
+  var empty = chatMsgs.length === 0 && !chatBusy;
+  var r0 = input.getBoundingClientRect ? input.getBoundingClientRect() : null;
+  panel.classList.toggle("empty", empty);
+  hero.hidden = !empty;
+  if (list) list.style.display = empty ? "none" : "";
+  if (hint) hint.style.display = empty ? "none" : "";
+  if (empty) {
+    if (input.parentNode !== slot) slot.appendChild(input);
+    foot.style.display = "none";
+  } else {
+    if (input.parentNode !== foot) foot.appendChild(input);
+    foot.style.display = "";
+  }
+  /* 从空会话发出的第一条：输入框从中间滑到底部，而不是瞬移 */
+  if (wasEmpty && !empty && r0 && input.getBoundingClientRect &&
+      typeof requestAnimationFrame === "function") {
+    var r1 = input.getBoundingClientRect();
+    var dx = r0.left - r1.left, dy = r0.top - r1.top;
+    if (dx || dy) {
+      input.style.transition = "none";
+      input.style.transform = "translate(" + dx + "px," + dy + "px)";
+      requestAnimationFrame(function () {
+        input.style.transition = "transform 180ms ease";
+        input.style.transform = "";
+        setTimeout(function () { input.style.transition = ""; }, 220);
+      });
+    }
+  }
+}
 function chatRender() {
   var list = document.getElementById("chatList");
   if (!list) return;
+  /* 头部始终是 agent 的名字；对话标题只在历史列表里出现。
+     空会话时它由 CSS 隐藏，名字显示在中间的 hero 里。 */
   var ttl = document.getElementById("chatTitle");
-  if (ttl) {
-    var cc = chatCurConv();
-    ttl.textContent = (cc && cc.title) ? cc.title : "蓝色大肥鱼";
-  }
+  if (ttl) ttl.textContent = "蓝色大肥鱼";
   var h = "";
-  if (!chatMsgs.length) {
-    h += '<div class="chat-empty">问大肥鱼这道题。它会读取当前题目和题库来回答；' +
-         '需要时还能把解析写回题库。</div>';
-  }
+  /* 空会话不再往列表里塞提示：中间的 hero 自带虚线提示 */
   chatMsgs.forEach(function (m) {
     if (m.role === "error" || m.role === "note") {
       h += '<div class="chat-note">' + esc(m.text) + "</div>";
@@ -4477,7 +4804,8 @@ function chatRender() {
        回答结束后默认收起（想看再点开，不占地方）。用户手动点过就按用户的选择。 */
     var inner = (m.live || m.reasoning)
       ? '<div class="live">' + chatLiveHtml(m) + "</div>"
-      : '<div class="bubble">' + esc(m.text).replace(/\n/g, "<br>") + "</div>";
+      : '<div class="bubble' + (me ? "" : " md") + '">' +
+        (me ? esc(m.text).replace(/\n/g, "<br>") : mdFor(m)) + "</div>";
     h += '<div class="msg' + (me ? " me" : " ai") + '" data-mid="' + esc(m.id || "") + '">' +
          (me ? "" : agentAvaHtml()) + inner + "</div>";
   });
@@ -4502,6 +4830,7 @@ function chatRender() {
           ? "还没登录：点右上角「设置」用手机号登录一次。"
           : "还没配置 API：点右上角「设置」填地址、模型和 Key。");
   }
+  chatLayout();
   list.scrollTop = list.scrollHeight;
   syncAskDot();
 }
@@ -4571,22 +4900,7 @@ async function chatRun(cfg) {
   chatMsgs.slice(-8).forEach(function (m) {
     if (m.role === "user" || m.role === "assistant") messages.push({ role: m.role, content: m.text });
   });
-  /* API Key 模式没有原生护栏，重复提问在这里先挡一层：同一道题问同一句话，
-     直接回放上次的回答，一个 token 都不花。 */
   var isBuiltin = /^builtin:/.test(String(cfg.url || ""));
-  var askNow = chatLastUserText();
-  var akey = isBuiltin ? "" : apiCacheKey(ctx, askNow);
-  if (akey) {
-    var hit = apiCacheGet(akey);
-    if (hit) {
-      chatPush({ role: "note", text: "这道题问过同样的话，直接复用上次回答，没有再请求模型" }, true);
-      chatPush({ role: "assistant", text: hit, cached: true });
-      chatSave();
-      chatRender();
-      return;
-    }
-  }
-  var usedTools = false;
   for (var round = 0; round < CHAT_ROUNDS; round++) {
     /* 最后一轮不再给工具定义：逼模型直接作答，省掉那几百 token 的 schema，
        也避免它没完没了地继续调工具。 */
@@ -4601,6 +4915,9 @@ async function chatRun(cfg) {
     };
     var data;
     var body = { model: cfg.model, messages: messages, temperature: 0.3, max_tokens: 1200 };
+    /* 内置通道按「页面对话」复用上游会话：把会话 id 传下去，换会话就是换一条上游链路，
+       不会带着上一段历史回答这一问。API Key 模式不加这个字段，别给第三方接口塞它没要的东西。 */
+    if (isBuiltin && chatCurId) body.user = chatCurId;
     if (!lastRound) { body.tools = CHAT_TOOLS; body.tool_choice = "auto"; }
     try {
       data = await chatRequest(cfg, body, onDelta);
@@ -4612,7 +4929,6 @@ async function chatRun(cfg) {
     if (!msg) { chatDrop(live); throw new Error("API 返回里没有 choices[0].message"); }
     var calls = msg.tool_calls || [];
     if (calls.length) {
-      usedTools = true;
       /* 这一轮只是在调工具，不是给用户看的回答：把流式气泡收掉，别留一串工具 JSON。 */
       chatDrop(live);
       messages.push({ role: "assistant", content: msg.content || "", tool_calls: calls });
@@ -4648,8 +4964,6 @@ async function chatRun(cfg) {
     if (answer) live.text = answer;
     else if (!live.text) live.text = "（大肥鱼没有返回文字）";
     if (!live.reasoning) live.reasoning = String(msg.reasoning_content || "");
-    /* 只缓存「纯问答」的最终稿：带工具调用的结果和题库状态有关，回放可能已经过时。 */
-    if (akey && !usedTools && live.text) apiCachePut(akey, answer || live.text);
     chatSave();
     chatRender();
     return;
@@ -4657,9 +4971,6 @@ async function chatRun(cfg) {
   throw new Error("工具调用轮次过多，先停在这里");
 }
 var CHAT_ROUNDS = 3;
-/* API Key 模式的页面缓存：同一道题、同样的选项、同样的问法，回放上次的答案。
-   内置通道的答案是原生护缓存着的，这里只补 API Key 这一档。 */
-var API_CACHE_KEY = "stk.acache.v1", API_CACHE_MAX = 30;
 function chatSysBase() {
   return "你是一只乐于助人的蓝色大肥鱼，用中文回答：先给结论，再讲依据；" +
          "简洁但把关键步骤说清，不要编造题库里没有的内容。你可以调用工具读取题库、查题、" +
@@ -4668,47 +4979,6 @@ function chatSysBase() {
 function chatCtxMsg(ctx) { return "当前题目上下文（JSON）：" + JSON.stringify(ctx); }
 /* 合起来的一份仍保留：单测和「没人问题时」的旧调用点都用它。 */
 function chatSystem(ctx) { return chatSysBase() + chatCtxMsg(ctx); }
-function chatLastUserText() {
-  for (var i = chatMsgs.length - 1; i >= 0; i--) {
-    if (chatMsgs[i].role === "user") return String(chatMsgs[i].text || "");
-  }
-  return "";
-}
-function apiCacheKey(ctx, ask) {
-  var norm = String(ask || "").replace(/\s+/g, "").toLowerCase()
-    .replace(/^[?？!！.。~～、,]+/, "").replace(/[?？!！.。~～、,]+$/, "")
-    /* 句尾语气词也归掉：「这题怎么解呢」和「这题怎么解」是同一问。
-       实词差异（为什么选 B / 为什么不选 B）不在这条范围内。 */
-    .replace(/[呢呀吧啊嘛哦咯啦呐]+$/, "");
-  if (!norm) return "";
-  /* 选项与「判没判分」都要进键：同一句话在「选了 A」和「选了 C」、
-     在「刚答完」和「已判分」下答案不一样，混用就会拿旧话套新状态。
-     选项排序后再拼，选的顺序不同不该等于换了个问题。 */
-  var pick = ctx && ctx.userPick ? ctx.userPick.slice().sort().join(",") : "";
-  var graded = ctx && ctx.graded ? "1" : "0";
-  return (ctx && ctx.id ? String(ctx.id) : "") + "|" + pick + "|" + graded + "|" + norm;
-}
-function apiCacheGet(k) {
-  var all = store.read(API_CACHE_KEY, {});
-  var e = all[k];
-  if (!e || typeof e.t !== "string") return "";
-  /* 命中就刷新时间戳：否则「常用的那几条」会先被淘汰，留下没人再看的。 */
-  e.at = Date.now();
-  store.write(API_CACHE_KEY, all);
-  return e.t;
-}
-function apiCachePut(k, text) {
-  if (!k || !text) return;
-  if (String(text).length > 8000) return;   // 一条大答案不该把整个缓存挤掉
-  var all = store.read(API_CACHE_KEY, {});
-  all[k] = { t: text, at: Date.now() };
-  var keys = Object.keys(all);
-  if (keys.length > API_CACHE_MAX) {
-    keys.sort(function (a, b) { return (all[a].at || 0) - (all[b].at || 0); });
-    keys.slice(0, keys.length - API_CACHE_MAX).forEach(function (x) { delete all[x]; });
-  }
-  store.write(API_CACHE_KEY, all);
-}
 function chatTool(name, args) {
   if (name === "get_current_question") return chatQuestionCtx();
   var cur = S && S.order && S.order.length ? q() : null;
@@ -4783,28 +5053,6 @@ window.onChatThrottle = function (id, ms) {
       Math.max(1, Math.round(ms / 1000)) + " 秒）…";
   }
 };
-/* 命中了答案缓存：原生侧根本没发请求。提示一下免得用户以为是秒回的假答案。 */
-window.onChatCached = function (id) {
-  if (!chatWait[id]) return;
-  var hint = document.getElementById("chatHint");
-  if (hint) hint.textContent = "这题刚问过，直接复用了上次的答案（没有再次请求上游）。";
-};
-/* 护栏状态：今日剩余次数、是否熔断。页面在设置页和提示里用它。 */
-function dsGuard() {
-  try { return window.Android && Android.dsGuard ? JSON.parse(Android.dsGuard() || "{}") : null; }
-  catch (e) { return null; }
-}
-function guardSub() {
-  var g = dsGuard();
-  if (!g) return "";
-  if (g.frozen) {
-    return "上游有异常，已暂停 " + Math.ceil(g.frozenMs / 1000) + " 秒";
-  }
-  if (typeof g.remaining === "number") {
-    return "今日剩余 " + g.remaining + "/" + g.limit + " 次";
-  }
-  return "";
-}
 window.onChatStream = function (id, kind, text) {
   var w = chatWait[id];
   if (!w || !w.onDelta) return;

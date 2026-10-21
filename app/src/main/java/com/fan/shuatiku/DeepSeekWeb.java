@@ -32,8 +32,9 @@ import org.json.JSONObject;
  *   <li>{@link #stream} —— 发起流式对话，把方言帧解析成 thinking / content / meta / usage。</li>
  * </ol>
  *
- * <p><b>凭证只需要一个 Authorization</b>。实测确认：Cookie、x-hif-leim、x-device-id、
- * x-client-* 全部可以省略，上游不校验（缺 Authorization 才回 40003 INVALID_TOKEN）。
+ * <p><b>凭证只需要一个 Authorization</b>：实测上游只校验它，Cookie / x-device-id /
+ * x-client-* 缺了也能通。但真实浏览器每个请求都会带，所以这些全部照带——
+ * 缺它们不是「上游不让」，而是「一看就不是浏览器」。
  * 这让「手机号登录后只存一个 token」成为可行方案。
  *
  * <p><b>PoW 是一次性的</b>：同一个 x-ds-pow-response 用第二次会回 40301
@@ -46,11 +47,49 @@ public final class DeepSeekWeb {
     private static final String CREATE_SESSION_PATH = "/api/v0/chat_session/create";
     private static final String POW_CHALLENGE_PATH = "/api/v0/chat/create_pow_challenge";
     private static final String USER_PATH = "/api/v0/users/current";
+    private static final String DELETE_SESSION_PATH = "/api/v0/chat_session/delete";
 
-    /** 与网页端一致的 UA。上游对 UA 宽松，但带上更稳。 */
-    private static final String UA =
-            "Mozilla/5.0 (Linux; Android 13) AppleWebKit/537.36 "
+    /**
+     * 与登录 WebView 完全同一份 UA。
+     *
+     * <p>2026-10-21 实测：登录页发出的请求里 UA 带 {@code ; Pixel 7}，而原生请求原先
+     * 少了这一段——同一个账号在登录和问答两条链路上报出两种浏览器，属于白送的分叉。
+     * 现在两边共用这一个常量。
+     */
+    static final String UA =
+            "Mozilla/5.0 (Linux; Android 13; Pixel 7) AppleWebKit/537.36 "
                     + "(KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36";
+
+    /**
+     * 网页前端的客户端标识。
+     *
+     * <p>2026-10-21 从登录 WebView 抓到的真实请求头（GET /api/v0/client/settings）：
+     * {@code x-client-version: 2.5.0}、{@code x-client-bundle-id: com.deepseek.chat}、
+     * {@code x-device-model:}（空）。这三个是前端全局拦截器加的，对话请求同样会带；
+     * 前端升级时按新抓包改这里。
+     */
+    private static final String CLIENT_VERSION = "2.5.0";
+    private static final String CLIENT_BUNDLE_ID = "com.deepseek.chat";
+
+    /**
+     * 完成请求上的两枚防机器人令牌来源。
+     *
+     * <p>2026-10-21 从真实页面 bundle 与请求里确认：网页会把这两个接口拉到的
+     * value 缓存在 localStorage（hif_leim_cached / hif_dliq_cached），完成请求时
+     * 作为 x-hif-leim / x-hif-dliq 带上；响应头 x-hif-ttl 是有效期（默认 600 秒）。
+     * 接口是普通 GET、不带 Authorization，所以原生可以自己拉。必须从手机上拉：
+     * 令牌与出口 IP 绑定，绕到电脑上取会失效。
+     */
+    private static final String HIF_LEIM_URL = "https://hif-leim.deepseek.com/query";
+    private static final String HIF_DLIQ_URL = "https://hif-dliq.deepseek.com/query";
+    private static final long HIF_DEFAULT_TTL_MS = 600_000L;
+    /** 提前一分钟续期，别卡着过期点用。 */
+    private static final long HIF_REFRESH_MARGIN_MS = 60_000L;
+
+    private static final Object HIF_LOCK = new Object();
+    private static volatile String hifLeim = "";
+    private static volatile String hifDliq = "";
+    private static volatile long hifRefreshAt = 0;
 
     private static final int CONNECT_TIMEOUT = 10000;
     private static final int READ_TIMEOUT = 180000;   // 推理模型 thinking 阶段可能很久不出字
@@ -91,6 +130,14 @@ public final class DeepSeekWeb {
      */
     private volatile HttpURLConnection active;
 
+    /**
+     * 用户按了「停止」。
+     *
+     * <p>和看门狗掐断的区别很重要：看门狗掐断是「上游没响应」，重试有意义；
+     * 用户叫停是「别再发了」，再重试就是背着他继续打上游。
+     */
+    private volatile boolean cancelled;
+
     public DeepSeekWeb(String token) {
         this(token, "", "", null);
     }
@@ -118,14 +165,23 @@ public final class DeepSeekWeb {
      * {@code HWWAFSESID}/{@code smidV2}/{@code ds_session_id} 这串 Cookie
      * 和 {@code x-device-id}。能取到就一律带上，取不到才省略。
      */
-    private Map<String, String> headers(String accept) {
+    Map<String, String> headers(String accept) {
+        return headers(accept, null, false);
+    }
+
+    /**
+     * @param referer 真实页面的 Referer：会随所在会话路径变化；null 表示根路径
+     * @param post    POST 才带 Origin（2026-10-21 实测：真实页面的 GET 没有 Origin）
+     */
+    Map<String, String> headers(String accept, String referer, boolean post) {
         Map<String, String> h = new HashMap<String, String>();
+        java.util.Locale loc = java.util.Locale.getDefault();
         h.put("Content-Type", "application/json");
         h.put("Accept", accept);
-        h.put("Accept-Language", "zh-CN,zh;q=0.9,en;q=0.8");
+        h.put("Accept-Language", acceptLanguage(loc));
         h.put("User-Agent", UA);
-        h.put("Origin", ORIGIN);
-        h.put("Referer", ORIGIN + "/");
+        if (post) h.put("Origin", ORIGIN);
+        h.put("Referer", referer == null || referer.isEmpty() ? ORIGIN + "/" : referer);
         /* 浏览器必发的两类头，缺了就是「只抄了 UA 的脚本」：
            ① Client Hints（要与 UA 里的 Chrome/120 自洽）；
            ② Sec-Fetch-*（现代浏览器对每个请求都会自动带，不从代码里写就不会有）。
@@ -138,10 +194,16 @@ public final class DeepSeekWeb {
         h.put("Sec-Fetch-Dest", "empty");
         h.put("Cache-Control", "no-cache");
         h.put("Pragma", "no-cache");
-        // 网页端始终带这两个客户端标识
+        /* 网页端始终带这两个客户端标识。语言与时区取设备而不是写死 UTC+8：
+           写死的话，所有装了本 App 的设备都是同一份「指纹」，而且和登录时
+           那个 WebView 的 navigator.language / getTimezoneOffset 对不上。 */
         h.put("x-client-platform", "web");
-        h.put("x-client-locale", "zh_CN");
-        h.put("x-client-timezone-offset", "28800");
+        h.put("x-client-locale", localeTag(loc));
+        h.put("x-client-timezone-offset", String.valueOf(tzOffsetSeconds(java.util.TimeZone.getDefault())));
+        // 真实前端每个 /api 请求都带这三个（见 CLIENT_VERSION 的注释）
+        h.put("x-client-version", CLIENT_VERSION);
+        h.put("x-client-bundle-id", CLIENT_BUNDLE_ID);
+        h.put("x-device-model", "");
         if (!deviceId.isEmpty()) h.put("x-device-id", deviceId);
         // cookie 是 volatile：上游轮换之后，后续请求要立刻用新的那串
         String jar = cookie;
@@ -156,12 +218,73 @@ public final class DeepSeekWeb {
         return h;
     }
 
+    /**
+     * 客户端语言标识（网页端用下划线，如 {@code zh_CN}）。
+     *
+     * <p>取不到就退回中文：本 App 的界面与提示词都是中文。
+     */
+    static String localeTag(java.util.Locale l) {
+        if (l == null) return "zh_CN";
+        String lang = l.getLanguage();
+        if (lang == null || lang.isEmpty()) return "zh_CN";
+        String country = l.getCountry();
+        return (country == null || country.isEmpty()) ? lang : lang + "_" + country;
+    }
+
+    /**
+     * Accept-Language：与登录 WebView 的真实请求同形。
+     *
+     * <p>2026-10-21 实测（登录 WebView，系统语言 zh-CN）：
+     * {@code zh-CN,zh;q=0.9,en-US;q=0.8,en;q=0.7}。规律是「每种语言先列完整标签、
+     * 再列它的基础语言，q 从 0.9 往下递减」，并且浏览器默认还带一个第二语言 en-US。
+     * 原先只拼了设备语言 + en，少了 en-US 和基础语言两个条目。
+     */
+    static String acceptLanguage(java.util.Locale l) {
+        java.util.LinkedHashSet<String> tags = new java.util.LinkedHashSet<String>();
+        String tag = l == null ? "" : l.toLanguageTag();
+        if (tag == null || tag.isEmpty() || "und".equals(tag)) tag = "zh-CN";
+        tags.add(tag);
+        tags.add("en-US");
+        StringBuilder b = new StringBuilder();
+        int q = 10;
+        for (String one : tags) {
+            if (b.length() > 0) b.append(',');
+            b.append(one);
+            if (q < 10) b.append(";q=0.").append(q);
+            q--;
+            int dash = one.indexOf('-');
+            if (dash > 0) {
+                b.append(',').append(one.substring(0, dash));
+                if (q < 10) b.append(";q=0.").append(q);
+                q--;
+            }
+        }
+        return b.toString();
+    }
+
+    /**
+     * 时区偏移（秒，东为正），与浏览器 {@code -getTimezoneOffset()*60} 同口径。
+     *
+     * <p>不用固定值：写死 28800 等于告诉上游「这台设备永远是 UTC+8」，
+     * 而真人设备的时区会随时区、夏令时变化。
+     */
+    static int tzOffsetSeconds(java.util.TimeZone tz) {
+        if (tz == null) return 28800;
+        return tz.getOffset(System.currentTimeMillis()) / 1000;
+    }
+
     private HttpURLConnection open(String path, String method, String accept) throws Exception {
+        return open(path, method, accept, null);
+    }
+
+    private HttpURLConnection open(String path, String method, String accept, String referer)
+            throws Exception {
         HttpURLConnection c = (HttpURLConnection) new URL(ORIGIN + path).openConnection();
         c.setRequestMethod(method);
         c.setConnectTimeout(CONNECT_TIMEOUT);
         c.setReadTimeout(READ_TIMEOUT);
-        for (Map.Entry<String, String> e : headers(accept).entrySet()) {
+        boolean post = !"GET".equalsIgnoreCase(method);
+        for (Map.Entry<String, String> e : headers(accept, referer, post).entrySet()) {
             c.setRequestProperty(e.getKey(), e.getValue());
         }
         active = c;
@@ -274,9 +397,22 @@ public final class DeepSeekWeb {
         }
     }
 
+    /** 用户点「停止」：掐断，并记住这不是网络抖动，上层不该重试。 */
+    public void cancel() {
+        cancelled = true;
+        abort();
+    }
+
+    boolean isCancelled() { return cancelled; }
+
     /** 发一个 JSON 请求并读完整响应（非流式）。 */
     private String postJson(String path, String body) throws Exception {
-        HttpURLConnection c = open(path, "POST", "application/json");
+        return postJson(path, body, null);
+    }
+
+    private String postJson(String path, String body, String referer) throws Exception {
+        // 真实页面所有 /api 请求的 Accept 都是 */*（不是 application/json）
+        HttpURLConnection c = open(path, "POST", "*/*", referer);
         byte[] b = body == null ? new byte[0] : body.getBytes(StandardCharsets.UTF_8);
         c.setDoOutput(true);
         c.setFixedLengthStreamingMode(b.length);
@@ -302,7 +438,7 @@ public final class DeepSeekWeb {
 
     /** 发一个 GET 请求并读完整响应（非流式）。 */
     private String getJson(String path) throws Exception {
-        HttpURLConnection c = open(path, "GET", "application/json");
+        HttpURLConnection c = open(path, "GET", "*/*");
         try {
             int code = c.getResponseCode();
             harvest(c);
@@ -357,12 +493,41 @@ public final class DeepSeekWeb {
     }
 
     /**
+     * 删除上游会话（网页版同步删除）。
+     *
+     * <p>2026-10-21 从网页 bundle 确认：{@code POST /api/v0/chat_session/delete}，
+     * body 是 {@code {"chat_session_ids":["<id>"]}}（接口本身支持批量），
+     * 不需要 PoW。
+     */
+    public void deleteSession(String sessionId) throws Exception {
+        if (sessionId == null || sessionId.isEmpty()) return;
+        JSONObject body = new JSONObject();
+        body.put("chat_session_ids", new JSONArray().put(sessionId));
+        String raw = postJson(DELETE_SESSION_PATH, body.toString(),
+                ORIGIN + "/a/chat/s/" + sessionId);
+        JSONObject j = new JSONObject(raw);
+        int code = j.optInt("code", -1);
+        JSONObject data = j.optJSONObject("data");
+        int biz = data == null ? -1 : data.optInt("biz_code", -1);
+        if (code != 0 || biz != 0) {
+            throw new DeepSeekException(code != 0 ? code : biz, "删除上游会话失败");
+        }
+    }
+
+    /**
      * 取挑战 → 本地暴破 → 拼出 x-ds-pow-response 头值（base64(JSON)）。
      *
      * <p>难度通常 144000，Java 单线程每秒约 37 万次，最坏半秒、平均 0.2 秒。
      */
     public String powHeader() throws Exception {
-        String raw = postJson(POW_CHALLENGE_PATH, "{\"target_path\":\"" + CHAT_PATH + "\"}");
+        return powHeader(null);
+    }
+
+    /**
+     * @param referer 真实页面取挑战时的 Referer：首轮新会话是根路径，后续轮是会话路径
+     */
+    String powHeader(String referer) throws Exception {
+        String raw = postJson(POW_CHALLENGE_PATH, "{\"target_path\":\"" + CHAT_PATH + "\"}", referer);
         JSONObject j = new JSONObject(raw);
         if (j.optInt("code", -1) != 0) {
             throw new DeepSeekException(j.optInt("code", -1), j.optString("msg", "取挑战失败"));
@@ -434,6 +599,121 @@ public final class DeepSeekWeb {
         void onDone();
     }
 
+    /** 本次实例的完成请求是否真的带上了 HIF 头（只给调试日志看，不含令牌值）。 */
+    private volatile boolean hifAttached;
+
+    /** 令牌缓存：过期就重新拉；两个接口各自失败不影响另一枚。 */
+    void ensureHif() {
+        long now = System.currentTimeMillis();
+        if (now < hifRefreshAt && (!hifLeim.isEmpty() || !hifDliq.isEmpty())) return;
+        synchronized (HIF_LOCK) {
+            now = System.currentTimeMillis();
+            if (now < hifRefreshAt && (!hifLeim.isEmpty() || !hifDliq.isEmpty())) return;
+            HifToken leim = fetchHif(HIF_LEIM_URL);
+            HifToken dliq = fetchHif(HIF_DLIQ_URL);
+            if (leim != null) hifLeim = leim.value;
+            if (dliq != null) hifDliq = dliq.value;
+            long ttl = 0;
+            if (leim != null) ttl = leim.ttlMs;
+            if (dliq != null) ttl = ttl == 0 ? dliq.ttlMs : Math.min(ttl, dliq.ttlMs);
+            // 都失败：一分钟后再试，别每问一句都打两次 HIF
+            if (ttl == 0) ttl = 60_000L;
+            hifRefreshAt = now + Math.max(30_000L, ttl - HIF_REFRESH_MARGIN_MS);
+        }
+    }
+
+    /**
+     * 拉一枚 HIF 令牌。刻意不带 Cookie / Authorization：
+     * 这是另一个 host，把 chat.deepseek.com 的 WAF 会话 Cookie 发过去既不对，
+     * 也绝不能把它响应里的 Set-Cookie 吸收进聊天用的 Cookie 罐（同名会覆盖）。
+     */
+    private HifToken fetchHif(String url) {
+        HttpURLConnection c = null;
+        try {
+            c = (HttpURLConnection) new URL(url).openConnection();
+            c.setRequestMethod("GET");
+            c.setConnectTimeout(3000);
+            c.setReadTimeout(3000);
+            Map<String, String> h = headers("*/*", null, false);
+            h.remove("Cookie");
+            h.remove("Authorization");
+            h.put("Sec-Fetch-Site", "same-site");
+            for (Map.Entry<String, String> e : h.entrySet()) {
+                c.setRequestProperty(e.getKey(), e.getValue());
+            }
+            if (c.getResponseCode() != 200) return null;
+            long ttl = hifTtlMs(c.getHeaderField("x-hif-ttl"));
+            String value = hifValue(readAll(c.getInputStream()));
+            return value.isEmpty() ? null : new HifToken(value, ttl);
+        } catch (Exception e) {
+            return null;
+        } finally {
+            if (c != null) c.disconnect();
+        }
+    }
+
+    /** 解析 {@code {"data":{"biz_code":0,"biz_data":{"value":"..."}}}}。 */
+    static String hifValue(String raw) {
+        try {
+            JSONObject j = new JSONObject(raw);
+            JSONObject data = j.optJSONObject("data");
+            if (data == null || data.optInt("biz_code", -1) != 0) return "";
+            JSONObject biz = data.optJSONObject("biz_data");
+            return biz == null ? "" : biz.optString("value", "");
+        } catch (Exception e) {
+            return "";
+        }
+    }
+
+    /** {@code x-hif-ttl} 是秒；缺省或非法都按 600 秒。 */
+    static long hifTtlMs(String raw) {
+        if (raw == null) return HIF_DEFAULT_TTL_MS;
+        try {
+            long sec = Long.parseLong(raw.trim());
+            return sec <= 0 ? HIF_DEFAULT_TTL_MS : sec * 1000L;
+        } catch (Exception e) {
+            return HIF_DEFAULT_TTL_MS;
+        }
+    }
+
+    /** 调试用：只报长度与是否挂上，不泄露令牌值。 */
+    String hifState() {
+        return "leim=" + hifLeim.length() + ",dliq=" + hifDliq.length() + ",attached=" + hifAttached;
+    }
+
+    private static final class HifToken {
+        final String value;
+        final long ttlMs;
+        HifToken(String value, long ttlMs) {
+            this.value = value;
+            this.ttlMs = ttlMs;
+        }
+    }
+
+    /**
+     * 完成请求的 body：字段与顺序照 2026-10-21 抓到的真实页面。
+     *
+     * <p>真实页面是 {@code session, parent, model_type, prompt, ref_file_ids,
+     * thinking_enabled, search_enabled, action, preempt}；{@code model_type} 是
+     * {@code "default"}（不是 null），并且带一个 {@code preempt:false}。
+     */
+    static JSONObject completionBody(String sessionId, Long parentMessageId,
+                                     String prompt, boolean thinking)
+            throws org.json.JSONException {
+        JSONObject body = new JSONObject();
+        body.put("chat_session_id", sessionId);
+        body.put("parent_message_id", parentMessageId == null
+                ? JSONObject.NULL : parentMessageId);
+        body.put("model_type", "default");
+        body.put("prompt", prompt);
+        body.put("ref_file_ids", new JSONArray());
+        body.put("thinking_enabled", thinking);
+        body.put("search_enabled", false);
+        body.put("action", JSONObject.NULL);
+        body.put("preempt", false);
+        return body;
+    }
+
     /**
      * 发起一次流式对话，边收边回调。
      *
@@ -444,21 +724,24 @@ public final class DeepSeekWeb {
      */
     public void stream(String prompt, String sessionId, Long parentMessageId,
                        boolean thinking, Listener listener) throws Exception {
-        String pow = powHeader();
+        // 先确保两枚 HIF 令牌可用（过期才拉，正常是内存命中）
+        ensureHif();
+        /* 2026-10-21 实测真实页面：
+           - 首轮取挑战时页面还在根路径，完成请求发出前路由已经变成会话路径；
+           - 之后的轮次两条请求都带会话路径。 */
+        String sessionUrl = ORIGIN + "/a/chat/s/" + sessionId;
+        String pow = powHeader(parentMessageId == null ? ORIGIN + "/" : sessionUrl);
 
-        JSONObject body = new JSONObject();
-        body.put("prompt", prompt);
-        body.put("chat_session_id", sessionId);
-        body.put("parent_message_id", parentMessageId == null
-                ? JSONObject.NULL : parentMessageId);
-        body.put("model_type", JSONObject.NULL);
-        body.put("ref_file_ids", new JSONArray());
-        body.put("thinking_enabled", thinking);
-        body.put("search_enabled", false);
-        body.put("action", JSONObject.NULL);
+        JSONObject body = completionBody(sessionId, parentMessageId, prompt, thinking);
 
-        HttpURLConnection c = open(CHAT_PATH, "POST", "text/event-stream");
+        // 真实完成请求的 Accept 是 */*，服务端仍回 event-stream
+        HttpURLConnection c = open(CHAT_PATH, "POST", "*/*", sessionUrl);
         c.setRequestProperty("x-ds-pow-response", pow);
+        // 真实完成请求带这两枚（从 HIF 接口拉取并缓存；见 HIF_LEIM_URL 的注释）
+        String leim = hifLeim, dliq = hifDliq;
+        if (!leim.isEmpty()) c.setRequestProperty("x-hif-leim", leim);
+        if (!dliq.isEmpty()) c.setRequestProperty("x-hif-dliq", dliq);
+        hifAttached = !leim.isEmpty() || !dliq.isEmpty();
         byte[] b = body.toString().getBytes(StandardCharsets.UTF_8);
         c.setDoOutput(true);
         c.setFixedLengthStreamingMode(b.length);
@@ -531,7 +814,7 @@ public final class DeepSeekWeb {
      *
      * <p>上游正常只回 JSON；一旦回 HTML / WAF 页 / 人机校验，说明这一路已经被盯上了。
      * 这种错误必须单独标成 {@link #CODE_BLOCKED}，让上层按「上游在说别问了」处理
-     * （熔断停手），而不是当成一次普通失败去重试——重试就是继续撞。
+     * （停手、不重试），而不是当成一次普通失败去重试——重试就是继续撞。
      */
     private static DeepSeekException blockedOrCode(String raw, int httpCode) {
         String t = raw == null ? "" : raw.trim();
