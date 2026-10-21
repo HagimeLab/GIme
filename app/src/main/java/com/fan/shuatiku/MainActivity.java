@@ -510,36 +510,49 @@ public class MainActivity extends Activity {
                         if (url == null || !(url.startsWith("https://") || url.startsWith("http://"))) {
                             throw new IllegalArgumentException("接口地址要以 http(s):// 开头");
                         }
-                        c = (HttpURLConnection) new URL(url).openConnection();
-                        c.setRequestMethod("POST");
-                        c.setConnectTimeout(20000);
-                        c.setReadTimeout(90000);
-                        c.setRequestProperty("Content-Type", "application/json");
-                        c.setRequestProperty("Accept", "application/json");
-                        if (key != null && !key.isEmpty()) {
-                            c.setRequestProperty("Authorization", "Bearer " + key);
-                        }
-                        byte[] b = body == null ? new byte[0] : body.getBytes("UTF-8");
-                        c.setFixedLengthStreamingMode(b.length);
-                        c.setDoOutput(true);
-                        OutputStream os = c.getOutputStream();
-                        try { os.write(b); } finally { os.close(); }
-                        code = c.getResponseCode();
-                        InputStream in = code >= 400 ? c.getErrorStream() : c.getInputStream();
-                        ByteArrayOutputStream out = new ByteArrayOutputStream();
-                        if (in != null) {
-                            try {
-                                byte[] buf = new byte[8192];
-                                int n;
-                                while ((n = in.read(buf)) > 0) {
-                                    out.write(buf, 0, n);
-                                    if (out.size() > 4 * 1024 * 1024) break;
+                        /* 外部 OpenAI 兼容接口也走流式：边收边把增量推给页面，
+                           不再是「转圈半天、然后蹦出一大坨」。 */
+                        final String[] finish = {"stop"};
+                        final StringBuilder content = new StringBuilder();
+                        final StringBuilder reasoning = new StringBuilder();
+                        try {
+                            finish[0] = OpenAiStream.run(url, key, body, new OpenAiStream.Listener() {
+                                @Override public void onContent(String d) {
+                                    content.append(d);
+                                    js("window.onChatStream(" + quote(id) + ",\"text\"," + quote(d) + ")");
                                 }
-                            } finally {
-                                in.close();
-                            }
+                                @Override public void onReasoning(String d) {
+                                    reasoning.append(d);
+                                    js("window.onChatStream(" + quote(id) + ",\"think\"," + quote(d) + ")");
+                                }
+                                @Override public void onFinish(String reason) { finish[0] = reason; }
+                            });
+                        } catch (OpenAiStream.ApiException ae) {
+                            /* 上游明确报错：按它的状态码回，页面能显示可读原因 */
+                            code = ae.code > 0 ? ae.code : 502;
+                            text = ae.getMessage();
+                            js("window.onChatApi(" + quote(id) + "," + code + "," + quote(
+                                    "{\"error\":{\"message\":" + quote(text) + "}}") + ")");
+                            return;
                         }
-                        text = new String(out.toByteArray(), "UTF-8");
+
+                        // 收完拼成标准 OpenAI 非流式回包交给页面（页面两条路径都能吃）
+                        JSONObject msg = new JSONObject();
+                        msg.put("role", "assistant");
+                        msg.put("content", content.toString());
+                        if (reasoning.length() > 0) msg.put("reasoning_content", reasoning.toString());
+                        JSONObject choice = new JSONObject();
+                        choice.put("index", 0);
+                        choice.put("message", msg);
+                        choice.put("finish_reason", finish[0]);
+                        JSONObject resp = new JSONObject();
+                        resp.put("id", "chatcmpl-" + Long.toHexString(System.nanoTime()));
+                        resp.put("object", "chat.completion");
+                        resp.put("created", System.currentTimeMillis() / 1000);
+                        resp.put("model", "external");
+                        resp.put("choices", new JSONArray().put(choice));
+                        text = resp.toString();
+                        code = 200;
                     } catch (Exception e) {
                         code = 0;
                         text = e.getMessage() == null ? e.getClass().getSimpleName() : e.getMessage();

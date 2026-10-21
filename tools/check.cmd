@@ -88,6 +88,13 @@ javac -encoding UTF-8 -d "%OUT%" "%~dp0..\app\src\main\java\com\fan\shuatiku\Ris
 if errorlevel 1 goto fail
 java "-Dfile.encoding=UTF-8" -cp "%OUT%" com.fan.shuatiku.RiskGuardTest
 if errorlevel 1 goto fail
+echo.
+echo === openai stream (api-key mode sse parsing) ===
+rem 需要本地 mock（mock-openai-sse.py）；没起时测试自己 SKIP，不算失败。
+javac -encoding UTF-8 -cp "%JSON_JAR%" -d "%OUT%" "%~dp0..\app\src\main\java\com\fan\shuatiku\OpenAiStream.java" "%~dp0OpenAiStreamTest.java"
+if errorlevel 1 goto fail
+java "-Dfile.encoding=UTF-8" -cp "%OUT%;%JSON_JAR%" com.fan.shuatiku.OpenAiStreamTest
+if errorlevel 1 goto fail
 goto afterJson
 :nojson
 echo   [SKIP] org.json jar unavailable (no network on first run); deepseek checks skipped

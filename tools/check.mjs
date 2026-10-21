@@ -1575,6 +1575,35 @@ ok("Key 模式不显示本地配额", String(W.document.getElementById("sheet3")
    .indexOf("使用额度") < 0);
 while (W.openLayers.length) W.closeTop();
 
+/* ---------- 24. 两条接入都走流式 ---------- */
+section("[24] API Key 模式也是流式");
+
+const mainSrc = fs.readFileSync(JAVA, "utf8");
+const streamSrc = fs.readFileSync(path.join(ROOT, "app/src/main/java/com/fan/shuatiku/OpenAiStream.java"), "utf8");
+
+/* 页面侧：不能再有「只有内置通道才建流式气泡」的分支 */
+ok("页面不再按 builtin 决定是否流式", !/var live = cfg\.builtin \?/.test(html),
+   "仍有 cfg.builtin 三目");
+ok("两条通道共用同一个流式气泡", /var live = chatPush\(\{ role: "assistant", text: "", reasoning: "", live: true \}/.test(html));
+ok("onDelta 不再判空", /var onDelta = function \(kind, chunk\)/.test(html));
+
+/* 原生侧：API Key 走 OpenAiStream，且它解析的是标准 SSE */
+ok("chatApi 调用了 OpenAiStream", /OpenAiStream\.run\(url, key, body/.test(mainSrc));
+ok("流式增量回抛给页面",
+   /window\.onChatStream\([^)]*"text"/.test(mainSrc) || /onChatStream[\s\S]{0,60}text/.test(mainSrc));
+ok("思维链也回抛", /onChatStream[\s\S]{0,80}think/.test(mainSrc) || mainSrc.indexOf("onReasoning") >= 0);
+ok("发请求时带 stream:true", /body\.put\("stream", true\)/.test(streamSrc));
+ok("请求 Accept 是 event-stream", /setRequestProperty\("Accept", "text\/event-stream"\)/.test(streamSrc));
+ok("解析 data: 行", /startsWith\("data:"\)/.test(streamSrc));
+ok("遇到 [DONE] 收尾", /"\[DONE\]"\.equals\(payload\)/.test(streamSrc));
+ok("读 delta.content", /delta[\s\S]{0,200}content/.test(streamSrc));
+ok("读 reasoning_content（思维链）", /reasoning_content/.test(streamSrc));
+ok("上游不支持流式时能兜底", /非流式回包/.test(streamSrc) || /optJSONArray\("choices"\)/.test(streamSrc));
+ok("4xx 给可照做的提示", /httpHint/.test(streamSrc));
+
+/* 4xx 拿不到错误体是 JDK 的坑，注释里要留痕，免得以后又「修」回去 */
+ok("记录了 4xx 读不到错误体的坑", /HttpRetryException/.test(streamSrc));
+
 /* 清理：不留 API Key / 会话 / 改写过的解析 */
 delete W.Android;
 delete W.set.agent;

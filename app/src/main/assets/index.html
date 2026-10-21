@@ -4562,14 +4562,14 @@ async function chatRun(cfg) {
     if (m.role === "user" || m.role === "assistant") messages.push({ role: m.role, content: m.text });
   });
   for (var round = 0; round < 4; round++) {
-    /* 内置通道走流式：先摆一个空气泡，边收边往里填。
-       外部接口保持原来的一次性返回（不是所有兼容实现都真的支持 SSE）。 */
-    var live = cfg.builtin ? chatPush({ role: "assistant", text: "", reasoning: "", live: true }, true) : null;
-    var onDelta = live ? function (kind, chunk) {
+    /* 两条接入都走流式：内置通道是原生拆私有方言，API Key 是原生拆标准 SSE，
+       页面这边一视同仁——先摆一个空气泡，边收边往里填。 */
+    var live = chatPush({ role: "assistant", text: "", reasoning: "", live: true }, true);
+    var onDelta = function (kind, chunk) {
       if (kind === "think") live.reasoning += chunk;
       else live.text += chunk;
       chatLivePaint(live);
-    } : null;
+    };
     var data;
     try {
       data = await chatRequest(cfg, {
@@ -4577,15 +4577,15 @@ async function chatRun(cfg) {
         tool_choice: "auto", temperature: 0.3
       }, onDelta);
     } catch (e) {
-      if (live) chatDrop(live);
+      chatDrop(live);
       throw e;
     }
     var msg = data && data.choices && data.choices[0] && data.choices[0].message;
-    if (!msg) { if (live) chatDrop(live); throw new Error("API 返回里没有 choices[0].message"); }
+    if (!msg) { chatDrop(live); throw new Error("API 返回里没有 choices[0].message"); }
     var calls = msg.tool_calls || [];
     if (calls.length) {
       /* 这一轮只是在调工具，不是给用户看的回答：把流式气泡收掉，别留一串工具 JSON。 */
-      if (live) chatDrop(live);
+      chatDrop(live);
       messages.push({ role: "assistant", content: msg.content || "", tool_calls: calls });
       for (var i = 0; i < calls.length; i++) {
         var call = calls[i], fn = call.function || {}, args = {};
@@ -4607,20 +4607,14 @@ async function chatRun(cfg) {
       continue;
     }
     var answer = String(msg.content || "").trim();
-    if (live) {
-      /* 流式已经把正文填进去了；工具调用轮次之后正文可能没流全，用最终值兜底。
-         只在真的拿到正文时才覆盖 —— 否则上游「只调工具不回答」时会把已流出的字擦掉。 */
-      live.live = false;
-      if (answer) live.text = answer;
-      else if (!live.text) live.text = "（大肥鱼没有返回文字）";
-      if (!live.reasoning) live.reasoning = String(msg.reasoning_content || "");
-      chatSave();
-      chatRender();
-    } else {
-      chatPush({ role: "assistant", text: answer || "（大肥鱼没有返回文字）",
-                 reasoning: String(msg.reasoning_content || "") });
-      chatRender();
-    }
+    /* 流式已经把正文填进去了；工具调用轮次之后正文可能没流全，用最终值兜底。
+       只在真的拿到正文时才覆盖 —— 否则上游「只调工具不回答」时会把已流出的字擦掉。 */
+    live.live = false;
+    if (answer) live.text = answer;
+    else if (!live.text) live.text = "（大肥鱼没有返回文字）";
+    if (!live.reasoning) live.reasoning = String(msg.reasoning_content || "");
+    chatSave();
+    chatRender();
     return;
   }
   throw new Error("工具调用轮次过多，先停在这里");

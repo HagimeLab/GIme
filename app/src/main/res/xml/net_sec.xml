@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  网络策略：默认只允许 HTTPS。
+
+  为什么要单独写这个文件：Android 9（API 28）起系统默认禁止明文 HTTP，
+  而「我的 → 大肥鱼」允许用户自填接口地址。如果用户填的是局域网自建反代
+  （http://192.168.x.x:8080/v1）或本机 mock（http://127.0.0.1:9701/v1），
+  不开这个口子就会直接失败，且错误信息只有一句 ECONNREFUSED / cleartext not permitted，
+  用户根本不知道是系统拦的。
+
+  但也不能全局开明文（android:usesCleartextTraffic="true"）——那等于允许
+  任何 HTTP 地址，包括公网中间人。所以只对回环与私有网段放行：
+  流量本来就在本机或同一局域网里，被中间人劫持的风险与危害都有限。
+  公网地址仍然必须 https。
+-->
+<network-security-config>
+    <!-- 默认：禁止明文 -->
+    <base-config cleartextTrafficPermitted="false" />
+
+    <domain-config cleartextTrafficPermitted="true">
+        <!-- 本机回环：adb reverse 转出去的 mock / 本地反代 -->
+        <domain includeSubdomains="false">127.0.0.1</domain>
+        <domain includeSubdomains="false">localhost</domain>
+        <domain includeSubdomains="false">::1</domain>
+        <!-- 私有网段常见写法：自家路由器后面的反代 / Ollama / LM Studio 等 -->
+        <domain includeSubdomains="true">192.168.0.0</domain>
+        <domain includeSubdomains="true">10.0.0.0</domain>
+    </domain-config>
+</network-security-config>
