@@ -117,6 +117,25 @@ public final class RiskGuard {
 
     synchronized int cacheSize() { return cache.size(); }
 
+    /**
+     * 缓存快照：按最近使用顺序（最旧的在前）拷一份出来，调用方拿去落盘。
+     *
+     * <p>答案缓存原先只在内存里，App 一重启就清零——同一道题第二天再问又得打一次上游。
+     * 落盘之后重复提问才真的不产生请求，这对「少撞风控」和「少花 token」是同一件事。
+     */
+    synchronized Map<String, String> snapshot() {
+        return new LinkedHashMap<String, String>(cache);
+    }
+
+    /** 从快照恢复：按顺序放回，超出 {@link #CACHE_MAX} 的由淘汰规则丢掉最旧的。 */
+    synchronized void restoreCache(Map<String, String> saved) {
+        if (saved == null || saved.isEmpty()) return;
+        for (Map.Entry<String, String> e : saved.entrySet()) {
+            if (e.getKey() == null || e.getValue() == null || e.getKey().isEmpty()) continue;
+            cache.put(e.getKey(), e.getValue());
+        }
+    }
+
     // ── 判定 ────────────────────────────────────────────────────────────
 
     /**
@@ -137,16 +156,52 @@ public final class RiskGuard {
     }
 
     /**
-     * 缓存键：整段 prompt 的 SHA-256 前 16 位。
+     * 缓存键：**只由「哪道题 + 问的什么」决定**，不含历史。
      *
-     * <p>用完整 prompt 而不是「用户这句话」当键，是因为 prompt 里带着当前题目上下文——
-     * 同一句话在另一道题下面应该算是不同的问题，不能命中同一份答案。
+     * <p>为什么不再用整段 prompt：拍平后的 prompt 里塞着最近 12 条对话，多聊一句
+     * 键就全变了——同一道题重复问也几乎命中不了，缓存形同虚设。
+     *
+     * <p>现在只拼两样东西：
+     * <ol>
+     *   <li>题目指纹：题干 + 选项 + 答案（同一道题每次都一样）；</li>
+     *   <li>本轮提问：最后一条 user 消息（去空白、折大小写）。</li>
+     * </ol>
+     * 工具调用轮的 prompt 会带上「工具返回」内容，那种不该进缓存（调用方已排除）。
+     *
+     * <p>不把历史算进去是对的：同一道题问「这题怎么解」，答案就该一样；
+     * 若用户带上了前文语境（「那 B 为什么不对」），问题的措辞本身不同，键也不同。
      */
-    static String cacheKey(String prompt) {
-        if (prompt == null || prompt.isEmpty()) return "";
+    static String cacheKey(String questionFingerprint, String ask) {
+        String q = questionFingerprint == null ? "" : questionFingerprint;
+        String a = normalizeAsk(ask);
+        if (q.isEmpty() && a.isEmpty()) return "";
+        return sha16(q + "\u0001" + a);
+    }
+
+    /** 提问归一：去掉所有空白、折叠大小写、去掉首尾标点。
+     *  这样「这题怎么解？」和「这题怎么解」会命中同一份答案。 */
+    static String normalizeAsk(String ask) {
+        if (ask == null) return "";
+        StringBuilder b = new StringBuilder(ask.length());
+        for (int i = 0; i < ask.length(); i++) {
+            char c = ask.charAt(i);
+            if (Character.isWhitespace(c)) continue;
+            b.append(Character.toLowerCase(c));
+        }
+        // 去掉首尾的常见标点（中文问号/感叹号/句号/英文对应）
+        String s = b.toString();
+        int from = 0, to = s.length();
+        while (from < to && "?？!！.。~～、,".indexOf(s.charAt(from)) >= 0) from++;
+        while (to > from && "?？!！.。~～、,".indexOf(s.charAt(to - 1)) >= 0) to--;
+        return s.substring(from, to);
+    }
+
+    /** SHA-256 前 16 位十六进制。 */
+    private static String sha16(String text) {
+        if (text == null || text.isEmpty()) return "";
         try {
             MessageDigest md = MessageDigest.getInstance("SHA-256");
-            byte[] d = md.digest(prompt.getBytes("UTF-8"));
+            byte[] d = md.digest(text.getBytes("UTF-8"));
             StringBuilder b = new StringBuilder(16);
             for (int i = 0; i < 8; i++) {
                 int v = d[i] & 0xff;
@@ -156,7 +211,12 @@ public final class RiskGuard {
             return b.toString();
         } catch (Exception e) {
             // 罕见（算法缺失）：退回字符串哈希，宁可偶尔碰撞也不要崩
-            return Integer.toHexString(prompt.hashCode());
+            return Integer.toHexString(text.hashCode());
         }
+    }
+
+    /** 旧签名保留：整段 prompt 的哈希（单测与向后兼容用）。 */
+    static String cacheKey(String prompt) {
+        return sha16(prompt);
     }
 }

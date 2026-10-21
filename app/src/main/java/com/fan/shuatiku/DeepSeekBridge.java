@@ -71,6 +71,9 @@ public final class DeepSeekBridge {
     private final RiskGuard guard = new RiskGuard();
     private static final String PREF_GUARD_DAY = "guard_day";
     private static final String PREF_GUARD_USED = "guard_used";
+    /** 答案缓存落盘的上限：只留最近用过的，别让正文把私有配置撑大。 */
+    private static final String PREF_GUARD_CACHE = "guard_cache";
+    private static final int CACHE_BYTES_MAX = 256 * 1024;
 
     /** 网络类失败最多重试几次（总共最多跑 MAX_RETRY+1 次）。 */
     private static final int MAX_RETRY = 2;
@@ -156,6 +159,8 @@ public final class DeepSeekBridge {
         this.prefs = activity.getSharedPreferences(PREFS, Activity.MODE_PRIVATE);
         // 每日用量要跨重启保留，否则切一下 App 就能把预算重置掉
         guard.restore(prefs.getString(PREF_GUARD_DAY, ""), prefs.getInt(PREF_GUARD_USED, 0));
+        // 答案缓存也要跨重启：否则「昨天问过这道题」今天还要再打一次上游
+        restoreCache();
     }
 
     /** 本地日期字符串，用于「今日已用」的换天判断。 */
@@ -169,6 +174,48 @@ public final class DeepSeekBridge {
     private void persistUsage() {
         prefs.edit().putString(PREF_GUARD_DAY, guard.day())
                 .putInt(PREF_GUARD_USED, guard.used()).apply();
+    }
+
+    /**
+     * 把答案缓存写进应用私有配置。
+     *
+     * <p>只存最近用过的、总量不超过 {@link #CACHE_BYTES_MAX} 的那些：缓存是「省一次请求」，
+     * 不该反过来把几十万字节的正文长期压在一个 XML 里。写盘用 apply()，不挡问答线程。
+     */
+    private void persistCache() {
+        try {
+            java.util.Map<String, String> snap = guard.snapshot();
+            java.util.List<java.util.Map.Entry<String, String>> items =
+                    new java.util.ArrayList<java.util.Map.Entry<String, String>>(snap.entrySet());
+            JSONArray arr = new JSONArray();
+            int bytes = 0;
+            // snapshot 是最旧→最新，这里从最新往回塞，超预算就停
+            for (int i = items.size() - 1; i >= 0; i--) {
+                java.util.Map.Entry<String, String> e = items.get(i);
+                bytes += e.getKey().length() + e.getValue().length();
+                if (bytes > CACHE_BYTES_MAX) break;
+                arr.put(new JSONArray().put(e.getKey()).put(e.getValue()));
+            }
+            prefs.edit().putString(PREF_GUARD_CACHE, arr.toString()).apply();
+        } catch (Exception ignored) { }
+    }
+
+    /** 启动时把上次落盘的答案缓存读回来；坏了就当没有，不影响问答。 */
+    private void restoreCache() {
+        String raw = prefs.getString(PREF_GUARD_CACHE, "");
+        if (raw == null || raw.isEmpty()) return;
+        try {
+            JSONArray arr = new JSONArray(raw);
+            java.util.Map<String, String> saved = new java.util.LinkedHashMap<String, String>();
+            for (int i = 0; i < arr.length(); i++) {
+                JSONArray one = arr.optJSONArray(i);
+                if (one == null || one.length() < 2) continue;
+                saved.put(one.getString(0), one.getString(1));
+            }
+            guard.restoreCache(saved);
+        } catch (Exception ignored) {
+            prefs.edit().remove(PREF_GUARD_CACHE).apply();
+        }
     }
 
     /** 护栏状态（页面用来显示「今日还剩几次」「熔断还剩多久」）。 */
@@ -190,8 +237,11 @@ public final class DeepSeekBridge {
     /** 用户主动解除熔断。 */
     void resetGuard() { guard.resetFreeze(); }
 
-    /** 清空答案缓存。 */
-    void clearCache() { guard.cacheClear(); }
+    /** 清空答案缓存（连带磁盘上那份）。 */
+    void clearCache() {
+        guard.cacheClear();
+        prefs.edit().remove(PREF_GUARD_CACHE).apply();
+    }
 
     /** 当前登录态（给页面显示用）。 */
     static String statusJson(Activity a) {
@@ -345,6 +395,20 @@ public final class DeepSeekBridge {
                 prefs.getString(PREF_DEVICE_ID, ""));
         cancelOf.put(id, web);
 
+        /* ③ 答案缓存：键只看「哪道题 + 问的什么」，不含历史。
+           刷题场景里同一道题常被反复问，这条能实打实省掉相当一部分请求
+           （对手机号登录是不撞风控，对 API Key 是省 token）。 */
+        final String askNow = DeepSeekClient.lastUserText(messages);
+        final String quesPrint = DeepSeekClient.questionFingerprint(messages);
+        final String cacheKey = RiskGuard.cacheKey(quesPrint, askNow);
+        if (!cacheKey.isEmpty()) {
+            String cached = guard.cacheGet(cacheKey);
+            if (cached != null) {
+                cancelOf.remove(id);
+                sink.toJs("window.onChatCached(" + quote(id) + ")");
+                return cached;
+            }
+        }
         /* 拿会话：命中就用，过期就重建。
            复用时只发「最新这一轮」，历史由上游会话链负责，
            所以既不会把历史灌两遍，也不用每句都 create_session。 */
@@ -366,16 +430,6 @@ public final class DeepSeekBridge {
             sid = web.createSession();
             parent = null;
             prompt = DeepSeekClient.buildPrompt(messages, tools);
-        }
-
-        /* ③ 答案缓存：同一段 prompt（= 同一道题 + 同一句问话）再问一遍就直接复用。
-           刷题场景里重复提问很常见，这一条能实打实省掉相当一部分请求。 */
-        final String cacheKey = RiskGuard.cacheKey(prompt);
-        String cached = guard.cacheGet(cacheKey);
-        if (cached != null) {
-            cancelOf.remove(id);
-            sink.toJs("window.onChatCached(" + quote(id) + ")");
-            return cached;
         }
 
         final StringBuilder content = new StringBuilder();
@@ -485,6 +539,7 @@ public final class DeepSeekBridge {
            工具轮次是中间态，缓存它会让下次直接卡在调工具那一步。 */
         if (parsed.toolCalls.length() == 0 && parsed.text != null && !parsed.text.isEmpty()) {
             guard.cachePut(cacheKey, resp.toString());
+            persistCache();
         }
         return resp.toString();
     }

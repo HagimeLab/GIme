@@ -1060,8 +1060,14 @@ ok("请求带模型、Key 与工具", chatReqs.length === 2 && chatReqs[0].key =
    && chatReqs[0].body.model === "m1"
    && chatReqs[0].body.tools.some((t) => t.function.name === "write_explanations"),
    JSON.stringify(chatReqs[0] && { model: chatReqs[0].body.model, key: chatReqs[0].key }));
-ok("系统消息带上当前题上下文", chatReqs[0].body.messages[0].content.indexOf("甲题") >= 0
-   && chatReqs[0].body.messages[0].content.indexOf("当前题目上下文") >= 0);
+/* 系统提示拆成「固定段 + 题目段」：固定段每次逐字相同，上游前缀缓存才命得中；
+   题目单独一条，换题只让这一条变。 */
+ok("固定段不带题目", chatReqs[0].body.messages[0].role === "system"
+   && chatReqs[0].body.messages[0].content.indexOf("当前题目上下文") < 0
+   && chatReqs[0].body.messages[0].content.indexOf("甲题") < 0);
+ok("题目上下文单独一条 system 消息", chatReqs[0].body.messages[1].role === "system"
+   && chatReqs[0].body.messages[1].content.indexOf("甲题") >= 0
+   && chatReqs[0].body.messages[1].content.indexOf("当前题目上下文") >= 0);
 ok("工具结果作为 tool 消息回填", chatReqs[1].body.messages.some((m) => m.role === "tool"
    && String(m.content).indexOf("\"updated\":1") >= 0));
 
@@ -1616,6 +1622,53 @@ W.chatConvs = [];
 W.chatCurId = "";
 W.S = null;
 W.byId["nb1-0"].explain = "";
+
+/* ---------- 25. v1.0.7：缓存落盘 / 前缀缓存 / token 裁剪 ---------- */
+section("[25] v1.0.7：缓存落盘、固定前缀、token 裁剪");
+
+/* ① 答案缓存跨重启：护栏只负责快照，落盘归桥接层 */
+ok("护栏能导出缓存快照", /synchronized Map<String, String> snapshot\(\)/.test(guardSrc));
+ok("护栏能从快照恢复", /synchronized void restoreCache\(Map<String, String> saved\)/.test(guardSrc));
+ok("缓存有独立落盘键", /PREF_GUARD_CACHE = "guard_cache"/.test(bridgeSrc));
+ok("启动时读回缓存", /restoreCache\(\);/.test(bridgeSrc) && /guard\.restoreCache\(saved\)/.test(bridgeSrc));
+ok("写完缓存就落盘",
+   /cachePut\(cacheKey, resp\.toString\(\)\);[\s\S]{0,80}?persistCache\(\)/.test(bridgeSrc));
+ok("清缓存连带清磁盘", /cacheClear\(\);[\s\S]{0,140}?remove\(PREF_GUARD_CACHE\)/.test(bridgeSrc));
+ok("落盘有体积上限", /CACHE_BYTES_MAX = \d+ \* 1024/.test(bridgeSrc));
+ok("快照按新到旧取、超出预算就停", /从最新往回塞/.test(bridgeSrc));
+
+/* ② 固定前缀：系统提示拆两段，固定段逐字不变 */
+ok("固定段单独成函数", typeof W.chatSysBase === "function");
+ok("固定段不含题目", W.chatSysBase().indexOf("当前题目上下文") < 0);
+ok("固定段两次调用逐字相同", W.chatSysBase() === W.chatSysBase());
+ok("题目段以标记开头", W.chatCtxMsg({ id: "x" }).indexOf("当前题目上下文（JSON）：") === 0);
+ok("聊天请求里题目单独一条 system 消息",
+   /messages = \[\{ role: "system", content: chatSysBase\(\) \}\][\s\S]{0,120}?chatCtxMsg\(ctx\)/.test(html));
+
+/* ③ 省 token：窗口、轮次、schema、输出、工具结果 */
+ok("历史窗口缩到 8 条", /chatMsgs\.slice\(-8\)/.test(html));
+ok("工具轮次 3 轮", /var CHAT_ROUNDS = 3;/.test(html));
+ok("最后一轮不再给工具定义", /if \(!lastRound\) \{ body\.tools = CHAT_TOOLS/.test(html));
+ok("回答有输出上限", /max_tokens: 1200/.test(html));
+ok("工具结果缩到 3000 字", /payload\.length > 3000/.test(html));
+ok("超长先砍题数再切串", /while \(out\.questions\.length > 1 && JSON\.stringify\(out\)\.length > 3000\)/.test(html));
+ok("对话取题默认 5 条", /limit: args\.limit \|\| 5/.test(html));
+
+/* ④ API Key 模式的页面缓存（内置通道的缓存在原生护栏里） */
+ok("缓存键含选项", (() => {
+  const a = W.apiCacheKey({ id: "q1", userPick: ["A"] }, "这题怎么解？");
+  const b = W.apiCacheKey({ id: "q1", userPick: ["C"] }, "这题怎么解？");
+  return a !== b && a.indexOf("q1") === 0;
+})());
+ok("缓存键忽略空白与首尾问号",
+   W.apiCacheKey({ id: "q1" }, "这题 怎么解？") === W.apiCacheKey({ id: "q1" }, "这题怎么解"));
+ok("不同题目不同键",
+   W.apiCacheKey({ id: "q1" }, "怎么解") !== W.apiCacheKey({ id: "q2" }, "怎么解"));
+ok("空提问不建键", W.apiCacheKey({ id: "q1" }, "  ？？ ") === "");
+ok("页面缓存可写可读", (() => { W.apiCachePut("k1", "答案一"); return W.apiCacheGet("k1") === "答案一"; })());
+ok("内置通道不走页面缓存", /isBuiltin \? "" : apiCacheKey/.test(html));
+ok("只有纯问答才进缓存", /if \(akey && !usedTools && live\.text\) apiCachePut/.test(html));
+ok("命中时说明没有请求模型", /直接复用上次回答，没有再请求模型/.test(html));
 
 /* ---------- 结果 ---------- */
 console.log("\n" + "=".repeat(46));

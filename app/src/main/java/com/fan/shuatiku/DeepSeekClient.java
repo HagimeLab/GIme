@@ -168,6 +168,74 @@ public final class DeepSeekClient {
         return out;
     }
 
+    /**
+     * 最后一条 user 消息的纯文本 = 本轮「问的是什么」。
+     *
+     * <p>缓存键要用它，而不是整段拍平后的 prompt：后者带着历史，多聊一句就不命中。
+     * 没有 user 消息时返回空串（调用方据此跳过缓存）。
+     */
+    static String lastUserText(JSONArray messages) {
+        if (messages == null) return "";
+        for (int i = messages.length() - 1; i >= 0; i--) {
+            JSONObject m = messages.optJSONObject(i);
+            if (m != null && "user".equals(m.optString("role"))) {
+                return extractText(m.opt("content"));
+            }
+        }
+        return "";
+    }
+
+    /**
+     * 题目指纹：从 system 消息里挖出「当前题目上下文（JSON）」那一截。
+     *
+     * <p>页面把题目当作 system 消息的一部分发过来（见 {@code chatSystem}）。
+     * 这里只取那道 JSON，并按题干/选项/答案重组，这样：
+     * <ul>
+     *   <li>同一道题每次的指纹都一样 → 缓存能命中；</li>
+     *   <li>换了题目指纹就变 → 不会把 A 题的答案套到 B 题上。</li>
+     * </ul>
+     * 挖不到就返回空串（比如没有题目上下文时的闲聊），此时缓存键只剩提问本身。
+     */
+    static String questionFingerprint(JSONArray messages) {
+        if (messages == null) return "";
+        final String MARK = "当前题目上下文（JSON）：";
+        for (int i = 0; i < messages.length(); i++) {
+            JSONObject m = messages.optJSONObject(i);
+            if (m == null || !"system".equals(m.optString("role"))) continue;
+            String text = extractText(m.opt("content"));
+            int at = text.indexOf(MARK);
+            if (at < 0) continue;
+            String json = text.substring(at + MARK.length()).trim();
+            try {
+                JSONObject ctx = new JSONObject(json);
+                // 只取与「这道题是什么」有关的字段，顺序固定，保证指纹稳定
+                StringBuilder b = new StringBuilder();
+                b.append(ctx.optString("id", "")).append('\u0001');
+                b.append(ctx.optString("stem", "")).append('\u0001');
+                JSONArray opts = ctx.optJSONArray("options");
+                if (opts != null) {
+                    for (int k = 0; k < opts.length(); k++) {
+                        JSONObject o = opts.optJSONObject(k);
+                        if (o == null) continue;
+                        b.append(o.optString("key", "")).append('=')
+                         .append(o.optString("text", "")).append('\u0002');
+                    }
+                }
+                JSONArray ans = ctx.optJSONArray("answer");
+                if (ans != null) {
+                    for (int k = 0; k < ans.length(); k++) {
+                        b.append(String.valueOf(ans.opt(k))).append('\u0002');
+                    }
+                }
+                return b.toString();
+            } catch (Exception e) {
+                // 解析不动就当没有题目上下文，别让缓存整体失效
+                return "";
+            }
+        }
+        return "";
+    }
+
     /** 解析结果：可见正文 + OpenAI 风格 tool_calls。 */
     static final class Parsed {
         final String text;

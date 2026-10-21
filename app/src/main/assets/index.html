@@ -4557,11 +4557,36 @@ async function chatSend() {
 }
 async function chatRun(cfg) {
   var ctx = chatQuestionCtx();
-  var messages = [{ role: "system", content: chatSystem(ctx) }];
-  chatMsgs.slice(-12).forEach(function (m) {
+  /* 系统提示拆成两段：第一段永远不变，第二段才是题目。
+     上游（DeepSeek 等）按前缀命中缓存，题目要是拼在第一段末尾，
+     用户一换题整段前缀就分叉，固定那部分永远命不中。 */
+  var messages = [{ role: "system", content: chatSysBase() }];
+  if (ctx) messages.push({ role: "system", content: chatCtxMsg(ctx) });
+  /* 历史只带最近 8 条：API Key 模式每轮都要重发，12 条纯属多花钱；
+     内置通道复用上游会话时本来也不发历史。 */
+  chatMsgs.slice(-8).forEach(function (m) {
     if (m.role === "user" || m.role === "assistant") messages.push({ role: m.role, content: m.text });
   });
-  for (var round = 0; round < 4; round++) {
+  /* API Key 模式没有原生护栏，重复提问在这里先挡一层：同一道题问同一句话，
+     直接回放上次的回答，一个 token 都不花。 */
+  var isBuiltin = /^builtin:/.test(String(cfg.url || ""));
+  var askNow = chatLastUserText();
+  var akey = isBuiltin ? "" : apiCacheKey(ctx, askNow);
+  if (akey) {
+    var hit = apiCacheGet(akey);
+    if (hit) {
+      chatPush({ role: "note", text: "这道题问过同样的话，直接复用上次回答，没有再请求模型" }, true);
+      chatPush({ role: "assistant", text: hit, cached: true });
+      chatSave();
+      chatRender();
+      return;
+    }
+  }
+  var usedTools = false;
+  for (var round = 0; round < CHAT_ROUNDS; round++) {
+    /* 最后一轮不再给工具定义：逼模型直接作答，省掉那几百 token 的 schema，
+       也避免它没完没了地继续调工具。 */
+    var lastRound = round === CHAT_ROUNDS - 1;
     /* 两条接入都走流式：内置通道是原生拆私有方言，API Key 是原生拆标准 SSE，
        页面这边一视同仁——先摆一个空气泡，边收边往里填。 */
     var live = chatPush({ role: "assistant", text: "", reasoning: "", live: true }, true);
@@ -4571,11 +4596,10 @@ async function chatRun(cfg) {
       chatLivePaint(live);
     };
     var data;
+    var body = { model: cfg.model, messages: messages, temperature: 0.3, max_tokens: 1200 };
+    if (!lastRound) { body.tools = CHAT_TOOLS; body.tool_choice = "auto"; }
     try {
-      data = await chatRequest(cfg, {
-        model: cfg.model, messages: messages, tools: CHAT_TOOLS,
-        tool_choice: "auto", temperature: 0.3
-      }, onDelta);
+      data = await chatRequest(cfg, body, onDelta);
     } catch (e) {
       chatDrop(live);
       throw e;
@@ -4584,6 +4608,7 @@ async function chatRun(cfg) {
     if (!msg) { chatDrop(live); throw new Error("API 返回里没有 choices[0].message"); }
     var calls = msg.tool_calls || [];
     if (calls.length) {
+      usedTools = true;
       /* 这一轮只是在调工具，不是给用户看的回答：把流式气泡收掉，别留一串工具 JSON。 */
       chatDrop(live);
       messages.push({ role: "assistant", content: msg.content || "", tool_calls: calls });
@@ -4596,8 +4621,14 @@ async function chatRun(cfg) {
         var out;
         try { out = chatTool(fn.name, args); }
         catch (e) { out = { error: e && e.message ? e.message : String(e) }; }
+        /* 工具结果会随后续每次请求重发。先按「少给几道题」缩，实在还超再硬截——
+           直接切字符串会把 JSON 切坏，模型拿到半截括号更容易胡编。 */
         var payload = JSON.stringify(out);
-        if (payload.length > 12000) payload = payload.slice(0, 12000) + "…(截断)";
+        if (payload.length > 3000 && out && Array.isArray(out.questions)) {
+          while (out.questions.length > 1 && JSON.stringify(out).length > 3000) out.questions.pop();
+          payload = JSON.stringify(out);
+        }
+        if (payload.length > 3000) payload = payload.slice(0, 3000) + "…(截断)";
         messages.push({ role: "tool", tool_call_id: call.id, content: payload });
         if (fn.name === "write_explanations" && out && out.updated) {
           chatPush({ role: "note", text: "已把 " + out.updated + " 条解析写回题库" });
@@ -4613,16 +4644,55 @@ async function chatRun(cfg) {
     if (answer) live.text = answer;
     else if (!live.text) live.text = "（大肥鱼没有返回文字）";
     if (!live.reasoning) live.reasoning = String(msg.reasoning_content || "");
+    /* 只缓存「纯问答」的最终稿：带工具调用的结果和题库状态有关，回放可能已经过时。 */
+    if (akey && !usedTools && live.text) apiCachePut(akey, answer || live.text);
     chatSave();
     chatRender();
     return;
   }
   throw new Error("工具调用轮次过多，先停在这里");
 }
-function chatSystem(ctx) {
+var CHAT_ROUNDS = 3;
+/* API Key 模式的页面缓存：同一道题、同样的选项、同样的问法，回放上次的答案。
+   内置通道的答案是原生护缓存着的，这里只补 API Key 这一档。 */
+var API_CACHE_KEY = "stk.acache.v1", API_CACHE_MAX = 30;
+function chatSysBase() {
   return "你是一只乐于助人的蓝色大肥鱼，用中文回答：先给结论，再讲依据；" +
          "简洁但把关键步骤说清，不要编造题库里没有的内容。你可以调用工具读取题库、查题、" +
-         "把解析或参考答案写回题库。当前题目上下文（JSON）：" + JSON.stringify(ctx);
+         "把解析或参考答案写回题库。";
+}
+function chatCtxMsg(ctx) { return "当前题目上下文（JSON）：" + JSON.stringify(ctx); }
+/* 合起来的一份仍保留：单测和「没人问题时」的旧调用点都用它。 */
+function chatSystem(ctx) { return chatSysBase() + chatCtxMsg(ctx); }
+function chatLastUserText() {
+  for (var i = chatMsgs.length - 1; i >= 0; i--) {
+    if (chatMsgs[i].role === "user") return String(chatMsgs[i].text || "");
+  }
+  return "";
+}
+function apiCacheKey(ctx, ask) {
+  var norm = String(ask || "").replace(/\s+/g, "").toLowerCase()
+    .replace(/^[?？!！.。~～、,]+/, "").replace(/[?？!！.。~～、,]+$/, "");
+  if (!norm) return "";
+  /* 选项要进键：同一句话在「选了 A」和「选了 C」下答案不一样，不能混用。 */
+  var pick = ctx && ctx.userPick ? ctx.userPick.join(",") : "";
+  return (ctx && ctx.id ? String(ctx.id) : "") + "|" + pick + "|" + norm;
+}
+function apiCacheGet(k) {
+  var all = store.read(API_CACHE_KEY, {});
+  var e = all[k];
+  return e && typeof e.t === "string" ? e.t : "";
+}
+function apiCachePut(k, text) {
+  if (!k || !text) return;
+  var all = store.read(API_CACHE_KEY, {});
+  all[k] = { t: text, at: Date.now() };
+  var keys = Object.keys(all);
+  if (keys.length > API_CACHE_MAX) {
+    keys.sort(function (a, b) { return (all[a].at || 0) - (all[b].at || 0); });
+    keys.slice(0, keys.length - API_CACHE_MAX).forEach(function (x) { delete all[x]; });
+  }
+  store.write(API_CACHE_KEY, all);
 }
 function chatTool(name, args) {
   if (name === "get_current_question") return chatQuestionCtx();
@@ -4630,8 +4700,9 @@ function chatTool(name, args) {
   var bank = args.bank || (cur && cur.subject) || "";
   if (!bank) throw new Error("当前没有题库");
   if (name === "list_questions") {
+    /* 对话里默认只取 5 道：拿一堆题会全部塞进下一轮的输入，token 翻几倍。 */
     return mcpListQuestions({ bank: bank, ids: args.ids, offset: args.offset,
-                              limit: args.limit, type: args.type, query: args.query });
+                              limit: args.limit || 5, type: args.type, query: args.query });
   }
   if (name === "write_explanations") {
     var r = mcpWriteExplanations({ bank: bank, items: args.items, mode: args.mode });

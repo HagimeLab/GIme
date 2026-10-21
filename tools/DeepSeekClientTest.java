@@ -247,6 +247,53 @@ public class DeepSeekClientTest {
         eq("没有 user 时整段返回", 1, DeepSeekClient.latestTurn(noUser).length());
         eq("空消息返回空", 0, DeepSeekClient.latestTurn(new JSONArray()).length());
 
+        // ── lastUserText / questionFingerprint：缓存键的两块原料 ──
+        JSONArray real = new JSONArray();
+        real.put(new JSONObject().put("role", "system").put("content",
+                "你是大肥鱼。当前题目上下文（JSON）："
+                + "{\"id\":\"nb1-0\",\"num\":1,\"type\":\"single\",\"stem\":\"TCP三次握手\","
+                + "\"options\":[{\"key\":\"A\",\"text\":\"可以携带数据\"},"
+                + "{\"key\":\"B\",\"text\":\"SYN必须携带数据\"}],\"answer\":[\"A\"]}"));
+        real.put(new JSONObject().put("role", "user").put("content", "旧的一问"));
+        real.put(new JSONObject().put("role", "assistant").put("content", "旧的一答"));
+        real.put(new JSONObject().put("role", "user").put("content", "这题为什么选A？"));
+
+        eq("取到本轮提问", "这题为什么选A？", DeepSeekClient.lastUserText(real));
+        String qFp = DeepSeekClient.questionFingerprint(real);
+        ok("挖到题目指纹", qFp.length() > 0, qFp);
+        ok("指纹含题干", qFp.indexOf("TCP三次握手") >= 0, qFp);
+        ok("指纹含选项", qFp.indexOf("可以携带数据") >= 0, qFp);
+        ok("指纹不含历史", qFp.indexOf("旧的一") < 0, qFp);
+
+        /* 关键：历史变了，指纹不变 —— 这是缓存能命中的前提 */
+        JSONArray moreHistory = new JSONArray();
+        moreHistory.put(real.getJSONObject(0));
+        moreHistory.put(new JSONObject().put("role", "user").put("content", "第一问"));
+        moreHistory.put(new JSONObject().put("role", "assistant").put("content", "第一答"));
+        moreHistory.put(new JSONObject().put("role", "user").put("content", "第二问"));
+        moreHistory.put(new JSONObject().put("role", "assistant").put("content", "第二答"));
+        moreHistory.put(new JSONObject().put("role", "user").put("content", "这题为什么选A？"));
+        eq("历史多了指纹不变", qFp, DeepSeekClient.questionFingerprint(moreHistory));
+        eq("历史多了本轮提问也能取到", "这题为什么选A？",
+                DeepSeekClient.lastUserText(moreHistory));
+
+        /* 换一道题，指纹必须变（否则会把 A 题答案套到 B 题） */
+        JSONArray otherQ = new JSONArray();
+        otherQ.put(new JSONObject().put("role", "system").put("content",
+                "你是大肥鱼。当前题目上下文（JSON）：{\"id\":\"nb1-1\",\"stem\":\"另一道题\","
+                + "\"options\":[{\"key\":\"A\",\"text\":\"甲\"}],\"answer\":[\"B\"]}"));
+        otherQ.put(new JSONObject().put("role", "user").put("content", "这题为什么选A？"));
+        ok("换了题目指纹就变", !qFp.equals(DeepSeekClient.questionFingerprint(otherQ)),
+           DeepSeekClient.questionFingerprint(otherQ));
+
+        /* 没有题目上下文（闲聊）时返回空，不报错 */
+        JSONArray chatOnly = new JSONArray();
+        chatOnly.put(new JSONObject().put("role", "system").put("content", "你是大肥鱼"));
+        chatOnly.put(new JSONObject().put("role", "user").put("content", "你是谁"));
+        eq("没有题目指纹返回空", "", DeepSeekClient.questionFingerprint(chatOnly));
+        eq("闲聊也能取提问", "你是谁", DeepSeekClient.lastUserText(chatOnly));
+        eq("没 user 时提问为空", "", DeepSeekClient.lastUserText(new JSONArray()));
+
         System.out.println("\n" + pass + " passed, " + fail + " failed");
         if (fail > 0) System.exit(1);
     }
