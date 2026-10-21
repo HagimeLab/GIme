@@ -81,6 +81,13 @@ javac -encoding UTF-8 -cp "%JSON_JAR%" -d "%OUT%" "%~dp0..\app\src\main\java\com
 if errorlevel 1 goto fail
 java "-Dfile.encoding=UTF-8" -cp "%OUT%;%JSON_JAR%" com.fan.shuatiku.DeepSeekClientTest
 if errorlevel 1 goto fail
+echo.
+echo === risk guard (freeze / daily budget / answer cache) ===
+rem 纯逻辑类，不依赖 Android 也不需要 org.json，单独编一遍即可。
+javac -encoding UTF-8 -d "%OUT%" "%~dp0..\app\src\main\java\com\fan\shuatiku\RiskGuard.java" "%~dp0RiskGuardTest.java"
+if errorlevel 1 goto fail
+java "-Dfile.encoding=UTF-8" -cp "%OUT%" com.fan.shuatiku.RiskGuardTest
+if errorlevel 1 goto fail
 goto afterJson
 :nojson
 echo   [SKIP] org.json jar unavailable (no network on first run); deepseek checks skipped

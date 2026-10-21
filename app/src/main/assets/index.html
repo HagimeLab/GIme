@@ -4280,6 +4280,38 @@ function agFontHtml() {
       '<div class="ag-fs-demo">这条消息就按现在的字号显示。</div>' +
     '</div>';
 }
+/* 配额与护栏：只在手机号登录模式下显示（API Key 走官方额度，不受这里限制）。 */
+function agGuardHtml() {
+  if (agentMode() !== "login") return "";
+  var g = dsGuard();
+  if (!g) return "";
+  var line;
+  if (g.frozen) {
+    line = '<div class="note" style="margin:0 0 10px">上游刚有异常，已暂停 '
+      + Math.ceil(g.frozenMs / 1000) + ' 秒以免继续触发风控。'
+      + '<button class="sheet-act2" style="width:100%;margin:8px 0 0" onclick="dsGuardReset()">我知道了，继续</button>'
+      + '</div>';
+  } else {
+    line = '<div class="sl-hint" style="margin:0">今日已用 ' + g.used + ' / ' + g.limit
+      + ' 次（正常问答足够；需要更多请切到 API Key）</div>';
+  }
+  var btns = '<div class="ag-fs-row" style="margin-top:10px">'
+    + '<button class="ag-fs-b" onclick="dsClearCache()">清空答案缓存'
+    + (g.cacheSize ? "（" + g.cacheSize + "）" : "") + '</button></div>';
+  return '<div class="ag-sep"></div><div class="ag-fs">'
+    + '<div class="ag-fs-h"><b>使用额度</b></div>' + line + btns + '</div>';
+}
+function dsGuardReset() {
+  try { if (window.Android && Android.dsGuardReset) Android.dsGuardReset(); } catch (e) { }
+  openAgentCfg();
+  renderAll();
+  toast("已恢复");
+}
+function dsClearCache() {
+  try { if (window.Android && Android.dsClearCache) Android.dsClearCache(); } catch (e) { }
+  openAgentCfg();
+  toast("答案缓存已清空");
+}
 /* 顶部的切换按钮：第一行是「现在」，第二行是「点下去会变成什么」。 */
 function agSwitchHtml() {
   var login = agentMode() === "login";
@@ -4302,7 +4334,7 @@ function openAgentCfg() {
           '<button class="sheet-act" style="margin:0" onclick="dsLoginNow()">用手机号登录 DeepSeek</button>';
     sh.innerHTML = head + line +
       '<div class="sl-hint" style="margin:18px 0 0">登录态只存在本机。换设备或过期后，重新登录一次即可。</div>' +
-      agFontHtml();
+      agFontHtml() + agGuardHtml();
   } else {
     sh.innerHTML = head +
       '<div class="sl-hint" style="margin:0 0 10px">填任何 OpenAI 兼容接口，Key 只存在本机。</div>' +
@@ -4314,7 +4346,7 @@ function openAgentCfg() {
       '<input class="rn-box" id="agKey" type="password" value="' + esc(a.key || "") + '" placeholder="sk-...">' +
       '<button class="sheet-act" style="margin-top:18px" onclick="agentCfgSave()">保存</button>' +
       '<div class="sl-hint" style="margin:16px 0 0">按标准 /chat/completions 调，Key 不会离开这台手机。</div>' +
-      agFontHtml();
+      agFontHtml() + agGuardHtml();
   }
   openLayer(sh);
 }
@@ -4671,7 +4703,28 @@ window.onChatThrottle = function (id, ms) {
       Math.max(1, Math.round(ms / 1000)) + " 秒）…";
   }
 };
-/* 流式增量：原生侧边收上游边推过来，kind 是 "think"（思考链）或 "text"（正文）。 */
+/* 命中了答案缓存：原生侧根本没发请求。提示一下免得用户以为是秒回的假答案。 */
+window.onChatCached = function (id) {
+  if (!chatWait[id]) return;
+  var hint = document.getElementById("chatHint");
+  if (hint) hint.textContent = "这题刚问过，直接复用了上次的答案（没有再次请求上游）。";
+};
+/* 护栏状态：今日剩余次数、是否熔断。页面在设置页和提示里用它。 */
+function dsGuard() {
+  try { return window.Android && Android.dsGuard ? JSON.parse(Android.dsGuard() || "{}") : null; }
+  catch (e) { return null; }
+}
+function guardSub() {
+  var g = dsGuard();
+  if (!g) return "";
+  if (g.frozen) {
+    return "上游有异常，已暂停 " + Math.ceil(g.frozenMs / 1000) + " 秒";
+  }
+  if (typeof g.remaining === "number") {
+    return "今日剩余 " + g.remaining + "/" + g.limit + " 次";
+  }
+  return "";
+}
 window.onChatStream = function (id, kind, text) {
   var w = chatWait[id];
   if (!w || !w.onDelta) return;

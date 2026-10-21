@@ -67,6 +67,11 @@ public final class DeepSeekBridge {
     /** 一分钟内最多发几次上游请求（含建会话/PoW/对话，按实际 HTTP 请求算）。 */
     private static final int MAX_PER_MINUTE = 12;
 
+    /** 护栏：熔断、每日预算、答案缓存。 */
+    private final RiskGuard guard = new RiskGuard();
+    private static final String PREF_GUARD_DAY = "guard_day";
+    private static final String PREF_GUARD_USED = "guard_used";
+
     /** 网络类失败最多重试几次（总共最多跑 MAX_RETRY+1 次）。 */
     private static final int MAX_RETRY = 2;
     /** 退避基数：第 n 次重试前等 n 倍（1s、2s），不要一断就狂打上游。 */
@@ -149,7 +154,44 @@ public final class DeepSeekBridge {
         this.activity = activity;
         this.sink = sink;
         this.prefs = activity.getSharedPreferences(PREFS, Activity.MODE_PRIVATE);
+        // 每日用量要跨重启保留，否则切一下 App 就能把预算重置掉
+        guard.restore(prefs.getString(PREF_GUARD_DAY, ""), prefs.getInt(PREF_GUARD_USED, 0));
     }
+
+    /** 本地日期字符串，用于「今日已用」的换天判断。 */
+    private static String today() {
+        java.util.Calendar c = java.util.Calendar.getInstance();
+        return String.format(java.util.Locale.US, "%04d-%02d-%02d",
+                c.get(java.util.Calendar.YEAR), c.get(java.util.Calendar.MONTH) + 1,
+                c.get(java.util.Calendar.DAY_OF_MONTH));
+    }
+
+    private void persistUsage() {
+        prefs.edit().putString(PREF_GUARD_DAY, guard.day())
+                .putInt(PREF_GUARD_USED, guard.used()).apply();
+    }
+
+    /** 护栏状态（页面用来显示「今日还剩几次」「熔断还剩多久」）。 */
+    String guardJson() {
+        long now = System.currentTimeMillis();
+        String today = today();
+        JSONObject o = new JSONObject();
+        try {
+            o.put("frozen", guard.isFrozen(now));
+            o.put("frozenMs", guard.frozenRemainingMs(now));
+            o.put("used", guard.touchDay(today));
+            o.put("limit", RiskGuard.DAILY_LIMIT);
+            o.put("remaining", guard.remaining(today));
+            o.put("cacheSize", guard.cacheSize());
+        } catch (Exception ignored) { }
+        return o.toString();
+    }
+
+    /** 用户主动解除熔断。 */
+    void resetGuard() { guard.resetFreeze(); }
+
+    /** 清空答案缓存。 */
+    void clearCache() { guard.cacheClear(); }
 
     /** 当前登录态（给页面显示用）。 */
     static String statusJson(Activity a) {
@@ -283,6 +325,22 @@ public final class DeepSeekBridge {
         String convKey = req.optString("user", "");
         if (convKey.isEmpty()) convKey = "default";
 
+        final String today = today();
+        long now = System.currentTimeMillis();
+
+        // ① 熔断中：直接拒绝，不发任何请求
+        if (guard.isFrozen(now)) {
+            long sec = (guard.frozenRemainingMs(now) + 999) / 1000;
+            throw new DeepSeekWeb.DeepSeekException(-3,
+                    "上游刚有异常，已暂停 " + sec + " 秒（避免继续触发风控）。稍后再试，或点设置切到 API Key。");
+        }
+        // ② 今日预算用尽
+        if (!guard.budgetLeft(today)) {
+            throw new DeepSeekWeb.DeepSeekException(-4,
+                    "今天已经问了 " + RiskGuard.DAILY_LIMIT + " 次，先歇一歇。"
+                            + "需要更多可以把接入方式切到 API Key。");
+        }
+
         final DeepSeekWeb web = new DeepSeekWeb(token, prefs.getString(PREF_COOKIE, ""),
                 prefs.getString(PREF_DEVICE_ID, ""));
         cancelOf.put(id, web);
@@ -308,6 +366,16 @@ public final class DeepSeekBridge {
             sid = web.createSession();
             parent = null;
             prompt = DeepSeekClient.buildPrompt(messages, tools);
+        }
+
+        /* ③ 答案缓存：同一段 prompt（= 同一道题 + 同一句问话）再问一遍就直接复用。
+           刷题场景里重复提问很常见，这一条能实打实省掉相当一部分请求。 */
+        final String cacheKey = RiskGuard.cacheKey(prompt);
+        String cached = guard.cacheGet(cacheKey);
+        if (cached != null) {
+            cancelOf.remove(id);
+            sink.toJs("window.onChatCached(" + quote(id) + ")");
+            return cached;
         }
 
         final StringBuilder content = new StringBuilder();
@@ -346,6 +414,18 @@ public final class DeepSeekBridge {
             } catch (Exception e) {
                 boolean gotSomething = content.length() > 0 || reasoning.length() > 0;
                 attempt++;
+
+                /* 上游表达「别问了」就直接计一次风险并停手，不重试。
+                   这是防封的核心：被提醒之后继续重试，等于把警告当耳旁风。 */
+                if (e instanceof DeepSeekWeb.DeepSeekException) {
+                    DeepSeekWeb.DeepSeekException de = (DeepSeekWeb.DeepSeekException) e;
+                    if (RiskGuard.isRisk(de.code, de.getMessage())) {
+                        guard.onRisk(System.currentTimeMillis());
+                        cancelOf.remove(id);
+                        throw de;
+                    }
+                }
+
                 if (gotSomething || attempt > MAX_RETRY || !isTransient(e)) throw e;
                 // 建会话可能是它先挂的：一并重建，别拿着一个可能已经失效的 sid 重试
                 try {
@@ -366,6 +446,9 @@ public final class DeepSeekBridge {
         thinkOut.finish();
         textOut.finish();
         cancelOf.remove(id);
+        guard.onSuccess();          // 真出了一轮结果，连续失败计数清零
+        guard.onUsed(today);
+        persistUsage();
 
         if (REUSE_SESSION && respId[0] >= 0) {
             turns.put(convKey, new Turn(sid, respId[0], System.currentTimeMillis()));
@@ -398,6 +481,11 @@ public final class DeepSeekBridge {
         resp.put("model", MODEL);
         resp.put("choices", new JSONArray().put(choice));
         resp.put("usage", buildUsage(prompt, parsed.text, reasoning.toString(), usage[0]));
+        /* 只有「没有工具调用」的最终回答才进缓存：
+           工具轮次是中间态，缓存它会让下次直接卡在调工具那一步。 */
+        if (parsed.toolCalls.length() == 0 && parsed.text != null && !parsed.text.isEmpty()) {
+            guard.cachePut(cacheKey, resp.toString());
+        }
         return resp.toString();
     }
 

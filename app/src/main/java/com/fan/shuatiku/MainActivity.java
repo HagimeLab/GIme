@@ -581,6 +581,24 @@ public class MainActivity extends Activity {
             if (dsBridge != null) dsBridge.cancel(id);
         }
 
+        /** 护栏状态：熔断剩余时间、今日已用/上限、缓存条数。页面用它显示配额。 */
+        @JavascriptInterface
+        public String dsGuard() {
+            return dsBridge == null ? "{}" : dsBridge.guardJson();
+        }
+
+        /** 用户看完提示后主动解除熔断（「我知道了，继续」）。 */
+        @JavascriptInterface
+        public void dsGuardReset() {
+            if (dsBridge != null) dsBridge.resetGuard();
+        }
+
+        /** 清空答案缓存（题库改过、或想要新答案时用）。 */
+        @JavascriptInterface
+        public void dsClearCache() {
+            if (dsBridge != null) dsBridge.clearCache();
+        }
+
         /** 页面换肤时同步系统栏图标深浅和窗口底色。 */
         @JavascriptInterface
         public void themeHint(final boolean light) {

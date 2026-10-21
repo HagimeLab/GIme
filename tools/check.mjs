@@ -1502,6 +1502,79 @@ ok("对话前过闸", /throttle\.acquire\([^\n]*\);\s*\n\s*web\.stream\(/.test(b
 ok("页面有节流提示回调", html.indexOf("window.onChatThrottle") >= 0);
 ok("节流提示写明原因", html.indexOf("为了账号安全") >= 0);
 
+/* ---------- 23. 护栏接线：熔断 / 预算 / 缓存 ---------- */
+section("[23] 护栏接线：熔断、每日预算、答案缓存");
+
+const guardSrc = fs.readFileSync(path.join(ROOT, "app/src/main/java/com/fan/shuatiku/RiskGuard.java"), "utf8");
+
+/* 拦截点要在发请求之前，否则拦了也白拦 */
+ok("熔断检查在 createSession 之前",
+   bridgeSrc.indexOf("guard.isFrozen") >= 0
+   && bridgeSrc.indexOf("guard.isFrozen") < bridgeSrc.indexOf("web.createSession"));
+ok("预算检查在 createSession 之前",
+   bridgeSrc.indexOf("budgetLeft") >= 0
+   && bridgeSrc.indexOf("budgetLeft") < bridgeSrc.indexOf("web.createSession"));
+ok("缓存命中直接返回、不发请求",
+   /cacheGet\(cacheKey\)[\s\S]{0,220}?return cached/.test(bridgeSrc));
+
+/* 成功/失败要正确记账 */
+ok("成功会清零连续失败", /guard\.onSuccess\(\)/.test(bridgeSrc));
+ok("成功会计一次用量", /guard\.onUsed\(today\)/.test(bridgeSrc));
+ok("风险错误不重试、直接计风险", /RiskGuard\.isRisk\([\s\S]{0,120}?guard\.onRisk/.test(bridgeSrc));
+ok("每日用量落盘（跨重启保留）", /PREF_GUARD_USED/.test(bridgeSrc) && /persistUsage\(\)/.test(bridgeSrc));
+ok("启动时恢复用量", /guard\.restore\([\s\S]{0,120}?PREF_GUARD_USED/.test(bridgeSrc));
+
+/* 只有最终回答进缓存：中间的工具轮次不能缓存 */
+ok("工具轮次不写缓存", /toolCalls\.length\(\) == 0[\s\S]{0,120}?cachePut/.test(bridgeSrc));
+
+/* 常量约束 */
+ok("熔断阈值是 2 次", /MAX_CONSECUTIVE = 2/.test(guardSrc));
+ok("熔断 10 分钟", /COOLDOWN_MS = 10 \* 60 \* 1000/.test(guardSrc));
+ok("每日上限有明确数值", /DAILY_LIMIT = \d+/.test(guardSrc));
+ok("40300 算风险", /code == 40300/.test(guardSrc));
+/* 40301 是「挑战只能用一次」，偶发、重试即好，不该算进熔断；
+   只看 isRisk 函数体，别被注释里提到的 40301 带偏。 */
+const isRiskBody = (guardSrc.match(/static boolean isRisk\([\s\S]*?\n    \}/) || [""])[0];
+ok("isRisk 里不把 40301 当风险", isRiskBody.length > 0 && isRiskBody.indexOf("40301") < 0,
+   isRiskBody.slice(0, 120));
+
+/* 页面：配额展示与解除按钮 */
+ok("页面能读护栏状态", html.indexOf("Android.dsGuard") >= 0);
+ok("页面能解除熔断", html.indexOf("Android.dsGuardReset") >= 0);
+ok("页面能清缓存", html.indexOf("Android.dsClearCache") >= 0);
+ok("命中缓存有提示", html.indexOf("window.onChatCached") >= 0);
+ok("设置页有使用额度区", html.indexOf("agGuardHtml") >= 0 && html.indexOf("使用额度") >= 0);
+
+/* 配额面板只在登录模式出现：API Key 走官方额度，不该被本地限制 */
+W.Android = {
+  dsStatus: () => JSON.stringify({ loggedIn: true, mobile: "199******41" }),
+  dsGuard: () => JSON.stringify({ frozen: false, frozenMs: 0, used: 3, limit: 60,
+                                  remaining: 57, cacheSize: 5 })
+};
+W.set.agent = { base: "builtin://deepseek", model: "deepseek-web", key: "", mode: "login" };
+W.openAgentCfg();
+const guardPanel = String(W.document.getElementById("sheet3").innerHTML);
+ok("登录模式显示今日用量", guardPanel.indexOf("今日已用 3 / 60") >= 0, guardPanel.slice(0, 200));
+ok("登录模式显示缓存数", guardPanel.indexOf("清空答案缓存（5）") >= 0);
+ok("未熔断时不显示解除按钮", guardPanel.indexOf("dsGuardReset()") < 0);
+while (W.openLayers.length) W.closeTop();
+
+/* 熔断中要显示剩余秒数 + 解除按钮 */
+W.Android.dsGuard = () => JSON.stringify({ frozen: true, frozenMs: 42000, used: 3, limit: 60,
+                                           remaining: 57, cacheSize: 0 });
+W.openAgentCfg();
+const frozenPanel = String(W.document.getElementById("sheet3").innerHTML);
+ok("熔断时显示剩余秒数", frozenPanel.indexOf("已暂停 42 秒") >= 0, frozenPanel.slice(0, 200));
+ok("熔断时给解除按钮", frozenPanel.indexOf("dsGuardReset()") >= 0);
+while (W.openLayers.length) W.closeTop();
+
+/* Key 模式不显示本地配额 */
+W.set.agent = { base: "https://api.example.com/v1", model: "m1", key: "sk", mode: "key" };
+W.openAgentCfg();
+ok("Key 模式不显示本地配额", String(W.document.getElementById("sheet3").innerHTML)
+   .indexOf("使用额度") < 0);
+while (W.openLayers.length) W.closeTop();
+
 /* 清理：不留 API Key / 会话 / 改写过的解析 */
 delete W.Android;
 delete W.set.agent;
