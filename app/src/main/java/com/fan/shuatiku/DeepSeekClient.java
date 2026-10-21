@@ -140,6 +140,34 @@ public final class DeepSeekClient {
         return b.toString();
     }
 
+    /**
+     * 只截出「最新一轮」的消息，供复用上游会话时用。
+     *
+     * <p>复用上游会话时历史由上游维护，若再把整段历史拍平发过去，模型会看到两遍。
+     * 这里保留：所有 system 消息（含本轮工具规则）+ 最后一条 user 及其之后的内容
+     * （assistant 的工具调用轮次 + tool 结果）。
+     *
+     * <p>如果没有 user 消息（异常情况），退回整段，宁可重复也不要丢上下文。
+     */
+    static JSONArray latestTurn(JSONArray messages) {
+        if (messages == null || messages.length() == 0) return new JSONArray();
+        int lastUser = -1;
+        for (int i = messages.length() - 1; i >= 0; i--) {
+            JSONObject m = messages.optJSONObject(i);
+            if (m != null && "user".equals(m.optString("role"))) { lastUser = i; break; }
+        }
+        if (lastUser < 0) return messages;
+        JSONArray out = new JSONArray();
+        for (int i = 0; i < messages.length(); i++) {
+            JSONObject m = messages.optJSONObject(i);
+            if (m == null) continue;
+            String role = m.optString("role");
+            if ("system".equals(role)) { out.put(m); continue; }
+            if (i >= lastUser) out.put(m);
+        }
+        return out;
+    }
+
     /** 解析结果：可见正文 + OpenAI 风格 tool_calls。 */
     static final class Parsed {
         final String text;

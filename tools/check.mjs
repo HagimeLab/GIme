@@ -1461,6 +1461,47 @@ ok("提示词保留工具说明", sysPrompt.indexOf("你可以调用工具读取
 ok("提示词仍带当前题上下文", sysPrompt.indexOf("当前题目上下文") >= 0
    && sysPrompt.indexOf("甲题") >= 0);
 
+/* ---------- 22. 防封号：请求头、会话复用、出站节流 ---------- */
+section("[22] 防封号：Cookie/指纹、会话复用、节流");
+
+const webSrc = fs.readFileSync(path.join(ROOT, "app/src/main/java/com/fan/shuatiku/DeepSeekWeb.java"), "utf8");
+const bridgeSrc = fs.readFileSync(path.join(ROOT, "app/src/main/java/com/fan/shuatiku/DeepSeekBridge.java"), "utf8");
+const loginSrc = fs.readFileSync(path.join(ROOT, "app/src/main/java/com/fan/shuatiku/DeepSeekLoginActivity.java"), "utf8");
+
+/* ① 登录必须把 Cookie 与设备指纹一起收下（只带 token 的流量最像脚本） */
+ok("登录页存 Cookie", loginSrc.indexOf("PREF_COOKIE") >= 0 && loginSrc.indexOf("cookieHeader()") >= 0);
+ok("登录页存设备指纹", loginSrc.indexOf("PREF_DEVICE_ID") >= 0 && loginSrc.indexOf("deepseek-device-id:chat") >= 0);
+ok("退出登录会一起清掉", bridgeSrc.indexOf(".remove(PREF_COOKIE)") >= 0
+   && bridgeSrc.indexOf(".remove(PREF_DEVICE_ID)") >= 0);
+
+/* ② 请求头要带 Cookie / x-device-id / x-client-* */
+ok("请求头带 Cookie", /h\.put\("Cookie", cookie\)/.test(webSrc));
+ok("请求头带 x-device-id", /h\.put\("x-device-id", deviceId\)/.test(webSrc));
+ok("请求头带 x-client-platform", /x-client-platform/.test(webSrc));
+ok("空 Cookie 时不发空头", /if \(!cookie\.isEmpty\(\)\) h\.put\("Cookie"/.test(webSrc));
+ok("构造器接受 cookie/deviceId", /DeepSeekWeb\(String token, String cookie, String deviceId\)/.test(webSrc));
+ok("桥接层把 Cookie 传进去",
+   /new DeepSeekWeb\(token, prefs\.getString\(PREF_COOKIE/.test(bridgeSrc));
+
+/* ③ 会话复用：不再每问一句 create_session */
+ok("默认复用上游会话", /REUSE_SESSION = true/.test(bridgeSrc));
+ok("复用时只发最新一轮", /DeepSeekClient\.latestTurn\(messages\)/.test(bridgeSrc));
+ok("会话有 TTL 会过期重建", /SESSION_TTL_MS/.test(bridgeSrc) && /t\.at < SESSION_TTL_MS/.test(bridgeSrc));
+ok("latestTurn 已有实现与用例",
+   fs.readFileSync(path.join(ROOT, "app/src/main/java/com/fan/shuatiku/DeepSeekClient.java"), "utf8")
+     .indexOf("static JSONArray latestTurn") >= 0);
+
+/* ④ 节流：最小间隔 + 每分钟上限，且建会话与对话都过一遍 */
+ok("有最小间隔常量", /MIN_GAP_MS = \d+/.test(bridgeSrc));
+ok("有每分钟上限常量", /MAX_PER_MINUTE = \d+/.test(bridgeSrc));
+ok("建会话前过闸", /throttle\.acquire\([\s\S]{0,120}?createSession\(\)/.test(bridgeSrc));
+ok("对话前过闸", /throttle\.acquire\([^\n]*\);\s*\n\s*web\.stream\(/.test(bridgeSrc),
+   (bridgeSrc.match(/throttle\.acquire/g) || []).length + " 处 acquire");
+
+/* ⑤ 页面提示：节流与重试都不要静默 */
+ok("页面有节流提示回调", html.indexOf("window.onChatThrottle") >= 0);
+ok("节流提示写明原因", html.indexOf("为了账号安全") >= 0);
+
 /* 清理：不留 API Key / 会话 / 改写过的解析 */
 delete W.Android;
 delete W.set.agent;

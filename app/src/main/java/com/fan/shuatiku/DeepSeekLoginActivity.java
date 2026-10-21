@@ -42,6 +42,10 @@ public class DeepSeekLoginActivity extends Activity {
     static final String PREF_TOKEN = "token";
     static final String PREF_MOBILE = "mobile";
     static final String PREF_LOGIN_AT = "login_at";
+    /** 登录时的整串 Cookie。真实浏览器每次请求都带它，不带就成了“没有会话的程序”。 */
+    static final String PREF_COOKIE = "cookie";
+    /** x-device-id / x-hif-leim：设备指纹，网页端每个请求都带。 */
+    static final String PREF_DEVICE_ID = "device_id";
 
     private static final String SIGN_IN_URL = DeepSeekWeb.ORIGIN + "/sign_in";
 
@@ -167,14 +171,11 @@ public class DeepSeekLoginActivity extends Activity {
 
     private void onVerified(String token, String mobile, String err, boolean rejectedByUpstream) {
         if (mobile != null) {
-            getSharedPreferences(PREFS, MODE_PRIVATE).edit()
-                    .putString(PREF_TOKEN, token)
-                    .putString(PREF_MOBILE, mobile)
-                    .putLong(PREF_LOGIN_AT, System.currentTimeMillis())
-                    .apply();
-            setHint("登录成功（" + mobile + "），正在返回…");
-            setResult(RESULT_OK);
-            if (web != null) web.postDelayed(this::finish, 350);
+            /* 顺手把 Cookie 和设备指纹一起收下。
+               真实浏览器每个 API 请求都带 Cookie + x-device-id，
+               只带 Authorization 的流量在风控眼里就是「没有会话的程序」。 */
+            final String cookie = cookieHeader();
+            readDeviceId(deviceId -> finishSave(token, mobile, cookie, deviceId));
             return;
         }
         // 没成功：退回继续等
@@ -191,6 +192,56 @@ public class DeepSeekLoginActivity extends Activity {
                     ? "还连不上 DeepSeek（" + err + "），请检查网络后重试"
                     : "还没登录成功。请完成手机号登录（游客状态下不算）");
         }
+    }
+
+    /** 从 WebView 的 CookieManager 取整串 Cookie（含 httpOnly 的 ds_session_id）。 */
+    private String cookieHeader() {
+        try {
+            String c = android.webkit.CookieManager.getInstance().getCookie(DeepSeekWeb.ORIGIN);
+            if (c == null) return "";
+            // 去掉空项；保留原顺序，上游按它认会话
+            StringBuilder b = new StringBuilder();
+            for (String part : c.split(";")) {
+                String s = part.trim();
+                if (s.isEmpty()) continue;
+                if (b.length() > 0) b.append("; ");
+                b.append(s);
+            }
+            return b.toString();
+        } catch (Exception e) {
+            return "";
+        }
+    }
+
+    /**
+     * 设备 id：网页端存在 localStorage 的 {@code deepseek-device-id:chat}，
+     * 也是它拼进 {@code x-device-id} 头的值。取不到就不带这个头。
+     */
+    private void readDeviceId(final DeviceSink sink) {
+        if (web == null) { sink.got(""); return; }
+        web.evaluateJavascript(
+                "(function(){try{"
+                + "var v=localStorage.getItem('deepseek-device-id:chat')||'';"
+                + "return v"
+                + "}catch(e){return ''}})()",
+                value -> sink.got(unquote(value)));
+    }
+
+    private interface DeviceSink { void got(String deviceId); }
+
+    /** 真正落盘并收尾（Cookie 与设备 id 都是异步取到的，所以单独一步）。 */
+    private void finishSave(String token, String mobile, String cookie, String deviceId) {
+        if (destroyed) return;
+        getSharedPreferences(PREFS, MODE_PRIVATE).edit()
+                .putString(PREF_TOKEN, token)
+                .putString(PREF_MOBILE, mobile)
+                .putLong(PREF_LOGIN_AT, System.currentTimeMillis())
+                .putString(PREF_COOKIE, cookie == null ? "" : cookie)
+                .putString(PREF_DEVICE_ID, deviceId == null ? "" : deviceId)
+                .apply();
+        setHint("登录成功（" + mobile + "），正在返回…");
+        setResult(RESULT_OK);
+        if (web != null) web.postDelayed(this::finish, 350);
     }
 
     /**

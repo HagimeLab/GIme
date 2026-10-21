@@ -32,25 +32,40 @@ public final class DeepSeekBridge {
     private static final String PREF_TOKEN = DeepSeekLoginActivity.PREF_TOKEN;
     private static final String PREF_MOBILE = DeepSeekLoginActivity.PREF_MOBILE;
     private static final String PREF_LOGIN_AT = DeepSeekLoginActivity.PREF_LOGIN_AT;
+    private static final String PREF_COOKIE = DeepSeekLoginActivity.PREF_COOKIE;
+    private static final String PREF_DEVICE_ID = DeepSeekLoginActivity.PREF_DEVICE_ID;
 
     /** 会话缓存：页面传的 user 字段 → (chat_session_id, 上一轮 response_message_id)。 */
     private static final class Turn {
         final String sessionId;
         final Long parent;
-        Turn(String sessionId, Long parent) {
+        final long at;
+        Turn(String sessionId, Long parent, long at) {
             this.sessionId = sessionId;
             this.parent = parent;
+            this.at = at;
         }
     }
 
     /**
-     * 是否复用上游会话。
+     * 是否复用上游会话：**开**。
      *
-     * <p>默认**关闭**：页面每轮都会把完整历史拍平发过来（工具调用循环里还会连发几轮），
-     * 再让上游会话自己累积一遍，历史就会重复一遍。无状态（每次新建会话、只发完整 prompt）
-     * 是唯一不会出错的做法，代价只是一次建会话的往返。
+     * <p>以前是关的（怕历史重复），代价是**每问一句就在上游新建一个会话**——
+     * 真人不会每说一句话换一个会话，这在风控眼里就是脚本。现在按会话键复用，
+     * 并且每个会话只发「最新一轮」的 prompt（历史交给上游会话链维护），
+     * 所以既不会重复，也不再刷 create_session。
+     *
+     * <p>页面「新建会话」会换一个新的 user 值，自然就落到新会话上。
      */
-    private static final boolean REUSE_SESSION = false;
+    private static final boolean REUSE_SESSION = true;
+
+    /** 上游会话闲置多久就丢掉、下次重建（上游 ttl 约 3 天，这里保守取 1 小时）。 */
+    private static final long SESSION_TTL_MS = 60 * 60 * 1000L;
+
+    /** 两次上游请求的最小间隔：真人打字没那么快。 */
+    private static final long MIN_GAP_MS = 1200;
+    /** 一分钟内最多发几次上游请求（含建会话/PoW/对话，按实际 HTTP 请求算）。 */
+    private static final int MAX_PER_MINUTE = 12;
 
     /** 网络类失败最多重试几次（总共最多跑 MAX_RETRY+1 次）。 */
     private static final int MAX_RETRY = 2;
@@ -60,6 +75,62 @@ public final class DeepSeekBridge {
     /** 正在跑的请求 → 它的 DeepSeekWeb，用来支持「取消」。 */
     private final ConcurrentHashMap<String, DeepSeekWeb> cancelOf =
             new ConcurrentHashMap<String, DeepSeekWeb>();
+
+    /**
+     * 出站节流：串行化 + 最小间隔 + 每分钟上限。
+     *
+     * <p>封号的直接诱因就是「短时间内连续打上游」。真人在网页上打字有间隔，
+     * 工具调用循环则是连着几发。这里把节奏压回人类水平：两发之间至少
+     * {@link #MIN_GAP_MS}，任意 60 秒窗口内不超过 {@link #MAX_PER_MINUTE} 发。
+     */
+    private static final class Throttle {
+        private final java.util.ArrayDeque<Long> window = new java.util.ArrayDeque<Long>();
+        private long last = 0;
+
+        /**
+         * 取一个发送许可；不够就睡够。
+         *
+         * @param waitHint 第一次需要等待时回调，把「要等多久」告诉页面
+         * @return true 表示已等到（永远为 true，留个返回值便于将来改成可拒绝）
+         */
+        synchronized boolean acquire(WaitHint waitHint) throws InterruptedException {
+            boolean hinted = false;
+            while (true) {
+                long now = System.currentTimeMillis();
+                // 丢掉 60 秒之前的记录
+                while (!window.isEmpty() && now - window.peekFirst() > 60_000L) window.pollFirst();
+                long wait = 0;
+                if (now - last < MIN_GAP_MS) wait = MIN_GAP_MS - (now - last);
+                if (window.size() >= MAX_PER_MINUTE) {
+                    long oldest = window.peekFirst();
+                    long until = oldest + 60_000L - now;
+                    if (until > wait) wait = until;
+                }
+                if (wait <= 0) {
+                    window.addLast(now);
+                    last = now;
+                    return true;
+                }
+                if (!hinted && waitHint != null && wait >= 1000) {
+                    hinted = true;
+                    waitHint.waiting(wait);
+                }
+                Thread.sleep(Math.min(wait, 5_000L));
+            }
+        }
+    }
+
+    private interface WaitHint { void waiting(long ms); }
+
+    /**
+     * 出站节流：串行化 + 最小间隔 + 每分钟上限。
+     *
+     * <p>封号的直接诱因就是「短时间内连续打上游」。真人在网页上打字有间隔，
+     * 工具调用循环则是连着几发。这里把节奏压回人类水平：两发之间至少
+     * {@link #MIN_GAP_MS}，任意 60 秒窗口内不超过 {@link #MAX_PER_MINUTE} 发。
+     */
+
+    private final Throttle throttle = new Throttle();
 
     private final Activity activity;
     private final SharedPreferences prefs;
@@ -100,7 +171,8 @@ public final class DeepSeekBridge {
     /** 清掉登录态（退出登录）。 */
     static void clear(Activity a) {
         a.getSharedPreferences(PREFS, Activity.MODE_PRIVATE).edit()
-                .remove(PREF_TOKEN).remove(PREF_MOBILE).remove(PREF_LOGIN_AT).apply();
+                .remove(PREF_TOKEN).remove(PREF_MOBILE).remove(PREF_LOGIN_AT)
+                .remove(PREF_COOKIE).remove(PREF_DEVICE_ID).apply();
     }
 
     /** 打开登录页。 */
@@ -211,19 +283,31 @@ public final class DeepSeekBridge {
         String convKey = req.optString("user", "");
         if (convKey.isEmpty()) convKey = "default";
 
-        final DeepSeekWeb web = new DeepSeekWeb(token);
+        final DeepSeekWeb web = new DeepSeekWeb(token, prefs.getString(PREF_COOKIE, ""),
+                prefs.getString(PREF_DEVICE_ID, ""));
         cancelOf.put(id, web);
-        String prompt = DeepSeekClient.buildPrompt(messages, tools);
 
-        Turn prev = REUSE_SESSION ? turns.get(convKey) : null;
+        /* 拿会话：命中就用，过期就重建。
+           复用时只发「最新这一轮」，历史由上游会话链负责，
+           所以既不会把历史灌两遍，也不用每句都 create_session。 */
+        Turn prev = null;
+        if (REUSE_SESSION) {
+            Turn t = turns.get(convKey);
+            if (t != null && System.currentTimeMillis() - t.at < SESSION_TTL_MS) prev = t;
+            else if (t != null) turns.remove(convKey);
+        }
+        String prompt;
         String sid;
         Long parent;
         if (prev != null) {
             sid = prev.sessionId;
             parent = prev.parent;
+            prompt = DeepSeekClient.buildPrompt(DeepSeekClient.latestTurn(messages), tools);
         } else {
+            throttle.acquire(ms -> sink.toJs("window.onChatThrottle(" + quote(id) + "," + ms + ")"));
             sid = web.createSession();
             parent = null;
+            prompt = DeepSeekClient.buildPrompt(messages, tools);
         }
 
         final StringBuilder content = new StringBuilder();
@@ -244,6 +328,7 @@ public final class DeepSeekBridge {
             try {
                 content.setLength(0);
                 reasoning.setLength(0);
+                throttle.acquire(ms -> sink.toJs("window.onChatThrottle(" + quote(id) + "," + ms + ")"));
                 web.stream(prompt, sid, parent, true, new DeepSeekWeb.Listener() {
                     @Override public void onThinking(String t) {
                         reasoning.append(t);
@@ -264,8 +349,10 @@ public final class DeepSeekBridge {
                 if (gotSomething || attempt > MAX_RETRY || !isTransient(e)) throw e;
                 // 建会话可能是它先挂的：一并重建，别拿着一个可能已经失效的 sid 重试
                 try {
+                    throttle.acquire(null);
                     sid = web.createSession();
                     parent = null;
+                    turns.remove(convKey);
                 } catch (Exception ignored) { }
                 sink.toJs("window.onChatRetry(" + quote(id) + "," + attempt + ","
                         + quote(retryNote(attempt, e)) + ")");
@@ -281,7 +368,7 @@ public final class DeepSeekBridge {
         cancelOf.remove(id);
 
         if (REUSE_SESSION && respId[0] >= 0) {
-            turns.put(convKey, new Turn(sid, respId[0]));
+            turns.put(convKey, new Turn(sid, respId[0], System.currentTimeMillis()));
         }
 
         // 解析工具调用：只要本轮带了 tools 就必须解析，否则页面永远收不到 tool_calls

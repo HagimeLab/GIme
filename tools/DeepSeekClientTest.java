@@ -32,6 +32,13 @@ public class DeepSeekClientTest {
         eq(name, true, cond);
     }
 
+    /** 带失败详情：断言不成立时把实际值打出来，省得只知道「挂了」。 */
+    private static void ok(String name, boolean cond, String detail) {
+        if (cond) { pass++; return; }
+        fail++;
+        System.out.println("  [FAIL] " + name + " — " + detail);
+    }
+
     public static void main(String[] args) throws Exception {
         System.out.println("=== DeepSeekClient（OpenAI 协议层）===");
 
@@ -207,6 +214,38 @@ public class DeepSeekClientTest {
         ok("PoW 失败不重试", !new DeepSeekWeb.DeepSeekException(40301, "INVALID_POW_RESPONSE").isRetryable());
         ok("缺 PoW 头不重试", !new DeepSeekWeb.DeepSeekException(40300, "MISSING_HEADER").isRetryable());
         ok("登录失效仍被识别为鉴权错误", new DeepSeekWeb.DeepSeekException(40003, "x").isAuthError());
+
+        // ── latestTurn：复用上游会话时只发最新一轮，避免历史灌两遍 ──
+        JSONArray full = new JSONArray();
+        full.put(new JSONObject().put("role", "system").put("content", "系统提示"));
+        full.put(new JSONObject().put("role", "user").put("content", "第一问"));
+        full.put(new JSONObject().put("role", "assistant").put("content", "第一答"));
+        full.put(new JSONObject().put("role", "user").put("content", "第二问"));
+        JSONArray cut = DeepSeekClient.latestTurn(full);
+        eq("最新一轮只留 2 条", 2, cut.length());
+        ok("保留 system", "system".equals(cut.getJSONObject(0).getString("role")));
+        ok("保留最后一条 user", "第二问".equals(cut.getJSONObject(1).getString("content")));
+        ok("不再包含更早的问答",
+           !cut.toString().contains("第一问") && !cut.toString().contains("第一答"), cut.toString());
+
+        /* 工具调用轮次：assistant(tool_calls) 与 tool 结果都在最后一条 user 之后，必须保留 */
+        JSONArray toolHist = new JSONArray();
+        toolHist.put(new JSONObject().put("role", "system").put("content", "系统提示"));
+        toolHist.put(new JSONObject().put("role", "user").put("content", "看这题"));
+        toolHist.put(new JSONObject().put("role", "assistant").put("content", "")
+                .put("tool_calls", new JSONArray().put(new JSONObject()
+                        .put("function", new JSONObject().put("name", "get_current_question")))));
+        toolHist.put(new JSONObject().put("role", "tool").put("name", "get_current_question")
+                .put("content", "{\"stem\":\"甲题\"}"));
+        JSONArray toolCut = DeepSeekClient.latestTurn(toolHist);
+        eq("工具轮次保留 4 条（system + user + assistant + tool）", 4, toolCut.length());
+        ok("工具结果没被截掉", toolCut.toString().contains("甲题"), toolCut.toString());
+
+        /* 没有 user 消息时不截断，宁可重复也别丢上下文 */
+        JSONArray noUser = new JSONArray();
+        noUser.put(new JSONObject().put("role", "system").put("content", "只有系统"));
+        eq("没有 user 时整段返回", 1, DeepSeekClient.latestTurn(noUser).length());
+        eq("空消息返回空", 0, DeepSeekClient.latestTurn(new JSONArray()).length());
 
         System.out.println("\n" + pass + " passed, " + fail + " failed");
         if (fail > 0) System.exit(1);

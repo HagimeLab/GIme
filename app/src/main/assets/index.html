@@ -4662,6 +4662,15 @@ window.onChatRetry = function (id, n, note) {
   chatPush({ role: "note", text: String(note || ("正在重试 " + n)) }, true);
   chatRender();
 };
+/* 原生侧为了不撞风控主动放慢节奏（限流等待）时提示一下，免得用户以为卡住了。 */
+window.onChatThrottle = function (id, ms) {
+  if (!chatWait[id]) return;
+  var hint = document.getElementById("chatHint");
+  if (hint) {
+    hint.textContent = "为了账号安全，提问间隔会放慢一点（约 " +
+      Math.max(1, Math.round(ms / 1000)) + " 秒）…";
+  }
+};
 /* 流式增量：原生侧边收上游边推过来，kind 是 "think"（思考链）或 "text"（正文）。 */
 window.onChatStream = function (id, kind, text) {
   var w = chatWait[id];

@@ -74,6 +74,8 @@ public final class DeepSeekWeb {
             });
 
     private final String token;
+    private final String cookie;
+    private final String deviceId;
 
     /**
      * 当前正在用的连接，供 {@link #abort()} 从别的线程掐断。
@@ -85,21 +87,41 @@ public final class DeepSeekWeb {
     private volatile HttpURLConnection active;
 
     public DeepSeekWeb(String token) {
+        this(token, "", "");
+    }
+
+    public DeepSeekWeb(String token, String cookie, String deviceId) {
         this.token = token == null ? "" : token.trim();
+        this.cookie = cookie == null ? "" : cookie.trim();
+        this.deviceId = deviceId == null ? "" : deviceId.trim();
     }
 
     public boolean hasToken() {
         return !token.isEmpty();
     }
 
-    /** 请求头：只保留必需项。Cookie / 指纹头实测均可省。 */
+    /**
+     * 请求头：尽量对齐真实浏览器。
+     *
+     * <p><b>Cookie 和设备指纹不是可有可无的</b>：只带 Authorization 的请求
+     * 在风控看来就是「没有会话的脚本」。实测真实浏览器每一发都带着
+     * {@code HWWAFSESID}/{@code smidV2}/{@code ds_session_id} 这串 Cookie
+     * 和 {@code x-device-id}。能取到就一律带上，取不到才省略。
+     */
     private Map<String, String> headers(String accept) {
         Map<String, String> h = new HashMap<String, String>();
         h.put("Content-Type", "application/json");
         h.put("Accept", accept);
+        h.put("Accept-Language", "zh-CN,zh;q=0.9,en;q=0.8");
         h.put("User-Agent", UA);
         h.put("Origin", ORIGIN);
         h.put("Referer", ORIGIN + "/");
+        // 网页端始终带这两个客户端标识
+        h.put("x-client-platform", "web");
+        h.put("x-client-locale", "zh_CN");
+        h.put("x-client-timezone-offset", "28800");
+        if (!deviceId.isEmpty()) h.put("x-device-id", deviceId);
+        if (!cookie.isEmpty()) h.put("Cookie", cookie);
         if (!token.isEmpty()) {
             // 容错：用户可能连 "Bearer " 一起粘贴进来，别拼成 "Bearer Bearer x"
             String first = token.split(" ", 2)[0].toLowerCase();
