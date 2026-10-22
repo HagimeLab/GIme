@@ -966,7 +966,9 @@ public final class DeepSeekWeb {
                 String kind = "THINK".equals(f.optString("type")) ? "thinking" : "content";
                 fragType = kind;
                 if (fid >= 0) lastFid = fid;
-                emit(fid >= 0 ? fid : lastFid, kind, f.optString("content", ""));
+                /* 显式 null 在 Android 的 org.json 里 optString 会变成字符串 "null" */
+                emit(fid >= 0 ? fid : lastFid, kind,
+                        f.isNull("content") ? "" : f.optString("content", ""));
             }
         }
 

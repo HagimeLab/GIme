@@ -32,6 +32,19 @@ public class OpenAiStreamTest {
     public static void main(String[] args) {
         String base = args.length > 0 ? args[0] : "http://127.0.0.1:9701";
 
+        /* ⓪ Android org.json 的 optString 会把显式 null 变成字面量 "null"：
+           流式首帧/纯思维链帧的 content 都是 null，拼起来就是回复开头一长串 null。
+           这里先把取值口径钉死，再跑需要 mock 的流式用例。 */
+        System.out.println("=== OpenAiStream（null 取值）===");
+        eq("null content 当空串", "",
+                OpenAiStream.text(new org.json.JSONObject("{\"content\":null}"), "content"));
+        eq("缺字段当空串", "",
+                OpenAiStream.text(new org.json.JSONObject("{}"), "content"));
+        eq("正常字符串原样", "你好",
+                OpenAiStream.text(new org.json.JSONObject("{\"content\":\"你好\"}"), "content"));
+        eq("reasoning null 当空串", "",
+                OpenAiStream.text(new org.json.JSONObject("{\"reasoning_content\":null}"), "reasoning_content"));
+
         // 先探活；mock 没起就跳过（回归环境不保证有它）
         try {
             java.net.HttpURLConnection probe =
@@ -45,7 +58,10 @@ public class OpenAiStreamTest {
             probe.getResponseCode();
             probe.disconnect();
         } catch (Exception e) {
-            System.out.println("=== OpenAiStream ===\n  [SKIP] mock 未启动（" + base + "）");
+            System.out.println("=== OpenAiStream ===");
+            System.out.println("  null 取值 " + pass + " passed, " + fail + " failed");
+            System.out.println("  [SKIP] mock 未启动（" + base + "）");
+            if (fail > 0) System.exit(1);
             return;
         }
 

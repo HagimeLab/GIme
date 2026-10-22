@@ -294,7 +294,8 @@ public final class DeepSeekBridge {
                     throttle.acquire(null);
                     web.deleteSession(t.sessionId);
                     if (BuildConfig.DEBUG) {
-                        android.util.Log.d("GImeDS", "session deleted");
+                        android.util.Log.d("GImeDS", "session deleted key=" + shortSid(convKey)
+                                + " sid=" + shortSid(t.sessionId));
                     }
                 } catch (Exception ignored) {
                     // 本地已删；网页侧删失败不挡用户
@@ -429,14 +430,22 @@ public final class DeepSeekBridge {
             @Override public void run() {
                 Turn t = turns.get(convKey);
                 if (t != null && System.currentTimeMillis() - t.at < SESSION_TTL_MS) return;
+                /* 过期映射换成新会话时，顺手把旧的删掉：否则网页版会越攒越多
+                   与 App 对不上的那条走廊。新会话建成功前保留旧映射，
+                   建失败时下一条消息仍能复用旧会话。 */
+                String expiredSid = t == null ? "" : t.sessionId;
                 try {
                     DeepSeekWeb web = openWeb(token);
                     throttle.acquire(null);
                     String sid = web.createSession();
                     turns.put(convKey, new Turn(sid, null, System.currentTimeMillis()));
                     persistTurns();
+                    if (!expiredSid.isEmpty()) {
+                        try { web.deleteSession(expiredSid); } catch (Exception ignored) { }
+                    }
                     if (BuildConfig.DEBUG) {
-                        android.util.Log.d("GImeDS", "newChat session created");
+                        android.util.Log.d("GImeDS", "newChat session created key="
+                                + shortSid(convKey) + " sid=" + shortSid(sid));
                     }
                 } catch (Exception ignored) {
                     // 建会话失败不挡用户：第一次提问时还会再试
@@ -480,10 +489,13 @@ public final class DeepSeekBridge {
            convKey 来自页面传来的会话 id：不同页面对话走不同上游链路，
            免得新对话被上一段历史带偏。 */
         Turn prev = null;
+        /* 过期/失效被换掉的旧会话，等新的这一轮成功后再删：
+           建会话或流式失败时旧映射还在，下一条消息仍能拿它兜底。 */
+        String deleteAfter = null;
         if (REUSE_SESSION) {
             Turn t = turns.get(convKey);
             if (t != null && System.currentTimeMillis() - t.at < SESSION_TTL_MS) prev = t;
-            else if (t != null) { turns.remove(convKey); persistTurns(); }
+            else if (t != null) deleteAfter = t.sessionId;
         }
         String prompt;
         String sid;
@@ -501,6 +513,10 @@ public final class DeepSeekBridge {
         /* 这一轮是不是在复用一个已有会话：复用失败要能分辨「会话过期」和「真的出错」，
            前者重建一次就好，后者重试只会白撞上游。 */
         boolean reused = prev != null;
+        if (BuildConfig.DEBUG) {
+            android.util.Log.d("GImeDS", "ask key=" + shortSid(convKey)
+                    + " reused=" + reused + " sid=" + shortSid(sid));
+        }
 
         final StringBuilder content = new StringBuilder();
         final StringBuilder reasoning = new StringBuilder();
@@ -562,15 +578,25 @@ public final class DeepSeekBridge {
                    重建之后再错就照实报错，别把这个口子变成无限重发。 */
                 boolean staleSession = reused && e instanceof DeepSeekWeb.DeepSeekException;
                 if (!isTransient(e) && !staleSession) throw e;
-                // 建会话可能是它先挂的：一并重建，别拿着一个可能已经失效的 sid 重试
-                reused = false;
-                try {
-                    throttle.acquire(null);
-                    sid = web.createSession();
-                    parent = null;
-                    turns.remove(convKey);
-                    persistTurns();
-                } catch (Exception ignored) { }
+                /* 只有上游明确说这条会话不能用（业务错误）才重建。
+                   网络抖动（超时/断连）沿用原会话重试——以前这里一律重建，
+                   一次网络波动就把同一段页面对话拆成两条网页会话（用户报的 bug）。 */
+                String oldSid = sid;
+                if (staleSession) {
+                    reused = false;
+                    try {
+                        throttle.acquire(null);
+                        sid = web.createSession();
+                        parent = null;
+                        /* 旧会话已经失效；等这一轮成功后再删，避免网页版留下
+                           一条与 App 对不上的孤儿会话，也避免新建失败时无处可退。 */
+                        deleteAfter = oldSid;
+                    } catch (Exception ignored) { }
+                }
+                if (BuildConfig.DEBUG) {
+                    android.util.Log.d("GImeDS", "retry " + attempt + " key=" + shortSid(convKey)
+                            + " rebuilt=" + staleSession + " sid=" + shortSid(sid));
+                }
                 sink.toJs("window.onChatRetry(" + quote(id) + "," + attempt + ","
                         + quote(retryNote(attempt, e)) + ")");
                 try { Thread.sleep(RETRY_DELAY_MS * attempt); }
@@ -591,6 +617,9 @@ public final class DeepSeekBridge {
         if (REUSE_SESSION && respId[0] >= 0) {
             turns.put(convKey, new Turn(sid, respId[0], System.currentTimeMillis()));
             persistTurns();
+            if (deleteAfter != null && !deleteAfter.equals(sid)) {
+                try { web.deleteSession(deleteAfter); } catch (Exception ignored) { }
+            }
         }
 
         // 解析工具调用：只要本轮带了 tools 就必须解析，否则页面永远收不到 tool_calls
@@ -684,6 +713,12 @@ public final class DeepSeekBridge {
             sink.toJs("window.onChatStream(" + quote(id) + "," + quote(kind) + ","
                     + quote(chunk) + ")");
         }
+    }
+
+    /** 日志里只留前缀：够对上会话，又不把整串 id 写进 logcat。 */
+    private static String shortSid(String s) {
+        if (s == null || s.isEmpty()) return "-";
+        return s.length() <= 8 ? s : s.substring(0, 8);
     }
 
     /** 与 MainActivity.quote 同构：把字符串安全嵌进 JS 源码。 */

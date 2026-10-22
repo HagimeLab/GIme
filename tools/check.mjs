@@ -977,8 +977,9 @@ ok("未知协议版本回退到本机支持的版本",
    mcp(2, "initialize", { protocolVersion: "1999-01-01" }).result.protocolVersion);
 const mcpList = mcp(3, "tools/list");
 const toolNames = mcpList.result.tools.map((t) => t.name);
-ok("tools/list 给出四个工具",
-   ["list_banks", "import_bank", "list_questions", "write_explanations"].every((n) => toolNames.indexOf(n) >= 0),
+ok("tools/list 给出五个工具",
+   ["list_banks", "import_bank", "list_questions", "write_explanations", "write_answers"]
+     .every((n) => toolNames.indexOf(n) >= 0),
    toolNames.join(","));
 ok("每个工具都有 object 类 inputSchema",
    mcpList.result.tools.every((t) => t.inputSchema && t.inputSchema.type === "object"));
@@ -1043,6 +1044,33 @@ ok("写盘失败不改内存", W.byId[qid].explain === "第一版解析\n\n补�
 ok("未知工具返回工具错误",
    mcp(14, "tools/call", { name: "nope", arguments: {} }).result.isError === true);
 
+/* 改正确答案：只给客观题用；先整体校验，再落盘 */
+W.Android = { saveBank: (id, json) => { mcpSaved = [id, JSON.parse(json)]; return true; } };
+mcpSaved = null;
+const awQ = W.byId[qid];
+ok("测试题是可判分题型", !!awQ && W.isObjective(awQ.type), awQ && awQ.type);
+const awKey = awQ.options[0][0];
+const aw1 = mcp(15, "tools/call", { name: "write_answers", arguments: {
+  bank: imp.bank.id, items: [{ id: qid, answer: [awKey] }] } }).result.structuredContent;
+ok("改答案写盘一次", aw1.updated === 1 && mcpSaved
+   && mcpSaved[1].questions.some((q) => q.id === qid && q.answer.join("") === awKey),
+   JSON.stringify(aw1));
+ok("改答案同步内存", W.byId[qid].answer.join("") === awKey, W.byId[qid].answer.join(""));
+const awBad = mcp(16, "tools/call", { name: "write_answers", arguments: {
+  bank: imp.bank.id, items: [{ id: qid, answer: ["Z"] }] } }).result;
+ok("不存在的选项被拒", awBad.isError === true, JSON.stringify(awBad));
+const awTwo = mcp(17, "tools/call", { name: "write_answers", arguments: {
+  bank: imp.bank.id, items: [{ id: qid, answer: [awQ.options[0][0], awQ.options[1][0]] }] } }).result;
+ok("单选题不接受两个答案", awTwo.isError === true, JSON.stringify(awTwo));
+const subjQ = W.BANK.questions.find((q) => q.subject === imp.bank.id && W.isSubjective(q.type));
+if (subjQ) {
+  const awSubj = mcp(18, "tools/call", { name: "write_answers", arguments: {
+    bank: imp.bank.id, items: [{ id: subjQ.id, answer: ["A"] }] } }).result;
+  ok("主观题拒绝改选项答案", awSubj.isError === true, JSON.stringify(awSubj));
+} else {
+  ok("主观题拒绝改选项答案", true);
+}
+
 /* 清理测试库：不碰 nb1，也不留题目/索引 */
 delete W.Android;
 W.BANK.subjects = W.BANK.subjects.filter((s) => s.id !== imp.bank.id);
@@ -1060,6 +1088,13 @@ W.byId["nb1-1"] = chatQ1;
 W.S = { subject: "nb1", mode: "practice", order: ["nb1-0", "nb1-1"], idx: 0,
         picks: { "nb1-0": ["A"] }, graded: { "nb1-0": 1 }, text: {}, self: {},
         state: "", title: "", dur: 0 };
+/* 大肥鱼面板在首页也能打开；那时 S 里可能还留着上一组题，不能带给模型 */
+W.document.getElementById("quiz").classList.remove("on");
+ok("不在答题页时不带题目上下文", W.chatQuestionCtx() === null);
+ok("不在答题页时 get_current_question 报错", (() => {
+  try { W.chatTool("get_current_question", {}); return false; } catch (e) { return true; }
+})());
+W.document.getElementById("quiz").classList.add("on");
 const chatCtxT = W.chatQuestionCtx();
 ok("对话上下文带题目与选项", chatCtxT && chatCtxT.id === "nb1-0" && chatCtxT.options.length === 2);
 ok("对话上下文带用户选择与判分", chatCtxT.userPick[0] === "A" && chatCtxT.graded === true);
@@ -1115,8 +1150,15 @@ ok("最终回答进入对话", chatLast && chatLast.role === "assistant"
    && chatLast.text.indexOf("选 A") >= 0, JSON.stringify(chatLast));
 ok("请求带模型、Key 与工具", chatReqs.length === 2 && chatReqs[0].key === "sk-test"
    && chatReqs[0].body.model === "m1"
-   && chatReqs[0].body.tools.some((t) => t.function.name === "write_explanations"),
+   && chatReqs[0].body.tools.some((t) => t.function.name === "write_explanations")
+   && chatReqs[0].body.tools.some((t) => t.function.name === "write_answers"),
    JSON.stringify(chatReqs[0] && { model: chatReqs[0].body.model, key: chatReqs[0].key }));
+/* 大肥鱼自己也能改答案；工具描述里明确「只在用户要求时调用」 */
+const awTool = W.chatTool("write_answers", { items: [{ id: "nb1-1", answer: ["A"] }] });
+ok("大肥鱼工具能改客观题答案",
+   awTool.updated === 1 && W.byId["nb1-1"].answer.join("") === "A", JSON.stringify(awTool));
+ok("改答案工具描述写明要用户明确要求",
+   /只在用户明确要求/.test(JSON.stringify(W.CHAT_TOOLS)));
 /* 系统提示拆成「固定段 + 题目段」：固定段每次逐字相同，上游前缀缓存才命得中；
    题目单独一条，换题只让这一条变。 */
 ok("固定段不带题目", chatReqs[0].body.messages[0].role === "system"
@@ -1134,6 +1176,21 @@ try { await W.chatRun(W.agentCfg()); } catch (e) { chatErr = e; }
 ok("401 抛出可读错误", chatErr && chatErr.message.indexOf("401") >= 0
    && chatErr.message.indexOf("invalid api key") >= 0, chatErr && chatErr.message);
 ok("错误工具名会抛错", (() => { try { W.chatTool("nope", {}); return false; } catch (e) { return true; } })());
+
+/* 答题页关着：请求里只有固定 system 段，不带任何题目 */
+let noCtxReq = null;
+W.Android = { chatApi: (id, url, body) => {
+  noCtxReq = JSON.parse(body);
+  W.onChatApi(id, 200, JSON.stringify({ choices: [{ message: { role: "assistant", content: "好" } }] }));
+} };
+W.document.getElementById("quiz").classList.remove("on");
+W.chatMsgs = [];
+W.chatPush({ role: "user", text: "你好" });
+await W.chatRun(W.agentCfg());
+ok("答题页关着时请求里没有题目段",
+   noCtxReq && noCtxReq.messages.filter((m) => m.role === "system").length === 1,
+   JSON.stringify(noCtxReq && noCtxReq.messages.map((m) => m.role)));
+W.document.getElementById("quiz").classList.add("on");
 
 /* ---------- 16. 流式输出 + 思考链 ----------
    内置通道走 SSE：原生侧边收边推 window.onChatStream，
@@ -1248,6 +1305,7 @@ ok("会话落了盘", (() => {
 W.chatNewConv();
 ok("新建会话后消息清空", W.chatMsgs.length === 0);
 ok("新建会话后当前会话换了", W.chatCurId !== "cv_a", W.chatCurId);
+ok("新会话绑定当前接入方式", W.chatCurConv().mode === "key", W.chatCurConv().mode);
 ok("新建会话后列表有两个", W.chatConvs.length === 2, "实际 " + W.chatConvs.length);
 const newId = W.chatCurId;
 W.chatPush({ role: "user", text: "第二个会话的问题" });
@@ -1259,9 +1317,65 @@ ok("切换后当前会话 id 正确", W.chatCurId === "cv_a", W.chatCurId);
 ok("两个会话的内容互不污染",
    W.chatConvs.filter((c) => c.id === newId)[0].msgs[0].text === "第二个会话的问题");
 
+/* 会话切换 / 删除要落到网页侧：切到没有映射的会话要补建，删除不看当前接入方式 */
+W.set.agent = { base: "builtin://deepseek", model: "deepseek-web", key: "" };
+const dsCalls = [];
+W.Android = {
+  dsNewChat: (id) => dsCalls.push(["new", id]),
+  dsDeleteChat: (id) => dsCalls.push(["del", id])
+};
+W.chatLoadConv("cv_a");
+ok("切到旧会话会确保网页侧对应会话",
+   dsCalls.some((c) => c[0] === "new" && c[1] === "cv_a"), JSON.stringify(dsCalls));
+W.chatDeleteUpstream("cv_a");
+ok("删会话同步网页侧",
+   dsCalls.some((c) => c[0] === "del" && c[1] === "cv_a"), JSON.stringify(dsCalls));
+W.set.agent = { base: "https://api.example.com/v1", model: "m1", key: "sk-test" };
+const dsBefore = dsCalls.length;
+W.chatDeleteUpstream("cv_a");
+ok("Key 模式下删会话也照常通知网页侧",
+   dsCalls.length === dsBefore + 1 && dsCalls[dsCalls.length - 1][0] === "del",
+   JSON.stringify(dsCalls.slice(-2)));
+delete W.Android;
+
 W.chatLoadConv("cv_a");
 W.chatNewConv();
 ok("连续新建不重复用 id", W.chatConvs.length === 3);
+
+/* 切换接入方式：旧会话留在原方式里，另开一条新会话；历史标来源、跨方式禁止切换 */
+const keyConvId = W.chatCurId;
+W.chatPush({ role: "user", text: "Key 会话里的一句话" });
+W.chatSave();
+W.agSwitchMode();
+const loginConvId = W.chatCurId;
+ok("切换接入方式会新开一条会话", loginConvId !== keyConvId, keyConvId + " -> " + loginConvId);
+ok("新会话绑定切换后的方式", W.chatCurConv() && W.chatCurConv().mode === "login",
+   W.chatCurConv() && W.chatCurConv().mode);
+ok("旧会话保留原接入方式", (W.chatConvs.filter((c) => c.id === keyConvId)[0] || {}).mode === "key");
+W.chatPush({ role: "user", text: "网页版会话里的一句话" });
+W.chatSave();
+W.openConvList();
+const modeListHtml = String(doc.getElementById("sheet3").innerHTML);
+ok("历史会话标出接入方式",
+   modeListHtml.indexOf("网页版") >= 0 && modeListHtml.indexOf("API Key") >= 0, modeListHtml.slice(0, 240));
+W.closeTop();
+const keepLoginId = W.chatCurId;
+W.convPick(keyConvId);
+ok("不能切进另一接入方式的会话", W.chatCurId === keepLoginId, W.chatCurId);
+/* 就算绕过切换入口，锁定的会话也不能把消息发出去 */
+W.chatCurId = keyConvId;
+W.chatMsgs = (W.chatCurConv().msgs || []).slice();
+const beforeLockedSend = W.chatMsgs.length;
+W.document.getElementById("chatText").value = "这条不该发出去";
+await W.chatSend();
+ok("锁定的会话不能发送", W.chatMsgs.length === beforeLockedSend, "msgs=" + W.chatMsgs.length);
+W.chatCurId = keepLoginId;
+W.chatMsgs = (W.chatCurConv().msgs || []).slice();
+ok("设置里写明会话按接入方式隔离", W.agModeHintHtml().indexOf("互相隔开") >= 0);
+ok("会话接入方式已落盘",
+   JSON.parse(sandbox.localStorage.getItem("stk.convs.v1")).list.some((c) => c.mode === "login")
+   && JSON.parse(sandbox.localStorage.getItem("stk.convs.v1")).list.some((c) => c.mode === "key"));
+
 const beforeDel = W.chatConvs.length;
 W.chatCurId = W.chatConvs[1].id;
 W.chatMsgs = (W.chatCurConv().msgs || []).slice();
@@ -1521,7 +1635,10 @@ ok("提示词开头是乐于助人的蓝色大肥鱼",
    sysPrompt.indexOf("你是一只乐于助人的蓝色大肥鱼") === 0, sysPrompt.slice(0, 30));
 ok("提示词保留回答要求", sysPrompt.indexOf("先给结论，再讲依据") >= 0
    && sysPrompt.indexOf("不要编造题库里没有的内容") >= 0);
-ok("提示词保留工具说明", sysPrompt.indexOf("你可以调用工具读取题库") >= 0);
+ok("提示词保留工具说明", sysPrompt.indexOf("需要题库数据") >= 0
+   && sysPrompt.indexOf("才调用工具") >= 0);
+ok("提示词要求不要自发调用工具", sysPrompt.indexOf("不要为了补充上下文自发调用") >= 0
+   && sysPrompt.indexOf("不要主动改解析") >= 0);
 ok("提示词仍带当前题上下文", sysPrompt.indexOf("当前题目上下文") >= 0
    && sysPrompt.indexOf("甲题") >= 0);
 
@@ -1834,8 +1951,12 @@ ok("完成请求挂上两枚令牌",
 ok("令牌只在完成请求挂，不当成通用头",
    !/h\.put\("x-hif-(leim|dliq)"/.test(webSrc));
 
-/* 新会话：页面新开对话时，上游也立刻建一条 */
-ok("页面新开会话会通知上游", /Android\.dsNewChat\(chatCurId\)/.test(html));
+/* 新会话 / 切换会话：页面都会确保上游有一条对应会话 */
+ok("页面新开会话会通知上游",
+   /function chatUseUpstream/.test(html)
+   && /Android\.dsNewChat\(id\)/.test(html)
+   && /chatUseUpstream\(chatCurId\)/.test(html));
+ok("切换页面会话也同步网页侧", /function chatLoadConv[\s\S]{0,600}chatUseUpstream\(chatCurId\)/.test(html));
 ok("原生暴露 dsNewChat", /public void dsNewChat\(String convKey\)/.test(mainSrc));
 ok("桥接层预建会话并记入 turns",
    /void newChat\(final String convKey\)/.test(bridgeSrc)

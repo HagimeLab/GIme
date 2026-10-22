@@ -394,6 +394,9 @@ button.rec:active { opacity: .62; }
 .conv-main b { display: block; font-size: .875rem; font-weight: 600; color: var(--ink);
                overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .conv-main small { display: block; margin-top: 3px; font-size: .6875rem; color: var(--ink-3); }
+.conv-main small .cm { font-style: normal; margin-left: 6px; padding: 0 5px; border-radius: 4px;
+                       background: var(--raise); color: var(--ink-3); }
+.conv-row.locked .conv-main, .conv-row.locked .conv-del { opacity: .55; }
 .conv-del { flex: 0 0 44px; display: flex; align-items: center; justify-content: center;
             border-radius: var(--r-in); background: var(--surface); box-shadow: var(--sink);
             color: var(--ink-3); }
@@ -2648,7 +2651,7 @@ function askClear() {
 }
 
 /* ================= 检查更新 ================= */
-var APP_VER = "1.0.7";
+var APP_VER = "1.0.8";
 try { if (window.Android && Android.appVersion) APP_VER = Android.appVersion() || APP_VER; } catch (e) {}
 var updInfo = null;
 /* 更新状态拆成三份，别混在一个布尔里：
@@ -3943,13 +3946,23 @@ var MCP_TOOLS = [
       query: { type: "string", description: "题干包含的文字" }
     }, required: ["bank"], additionalProperties: false } },
   { name: "write_explanations",
-    description: "修改或撰写题目解析（explain）与主观题参考答案（ref）。items 可只给一条；mode=replace 覆盖，append 追加。",
+    description: "修改或撰写题目解析（explain）与主观题参考答案（ref）。items 可只给一条；mode=replace 覆盖，append 追加。只在用户明确要求改解析/参考答案时调用。",
     inputSchema: { type: "object", properties: {
       bank: { type: "string", description: "题库 id 或显示名" },
       items: { type: "array", items: { type: "object", properties: {
         id: { type: "string" }, explain: { type: "string" }, ref: { type: "string" }
       }, required: ["id"], additionalProperties: false } },
       mode: { type: "string", enum: ["replace", "append"] }
+    }, required: ["bank", "items"], additionalProperties: false } },
+  { name: "write_answers",
+    description: "修改客观题（单选题/多选题/判断题）的正确答案。items 每项给题目 id 和 answer 选项字母数组。" +
+      "只在用户明确要求改正确答案时调用；用户没要求就不要改动答案。主观题请用 write_explanations 改参考答案。",
+    inputSchema: { type: "object", properties: {
+      bank: { type: "string", description: "题库 id 或显示名" },
+      items: { type: "array", items: { type: "object", properties: {
+        id: { type: "string" },
+        answer: { type: "array", items: { type: "string" }, description: "如 [\"A\"] 或 [\"A\",\"C\"]" }
+      }, required: ["id", "answer"], additionalProperties: false } }
     }, required: ["bank", "items"], additionalProperties: false } }
 ];
 function mcpBankArg(v) {
@@ -4058,6 +4071,56 @@ function mcpWriteExplanations(args) {
   toast("agent 更新了 " + changes.length + " 条解析");
   return { updated: changes.length, missing: missing };
 }
+/* 改正确答案：只动客观题的 answer / ans_raw，主观题走 write_explanations 的 ref。
+   所有条目先校验完再落盘：不让一半题改了、一半题报错。 */
+function mcpWriteAnswers(args) {
+  var bank = mcpBankArg(args.bank);
+  var items = Array.isArray(args.items) ? args.items : [];
+  if (!items.length) throw new Error("items 不能为空");
+  var qs = BANK.questions.filter(function (q) { return q.subject === bank.id; });
+  var map = {}, missing = [], changes = [];
+  qs.forEach(function (q) { map[q.id] = q; });
+  items.forEach(function (it) {
+    var id = it && it.id != null ? String(it.id) : "";
+    var q = map[id];
+    if (!q) { missing.push(id); return; }
+    if (!isObjective(q.type)) {
+      throw new Error("第 " + id + " 题是主观题，没有选项答案；改参考答案请用 write_explanations");
+    }
+    var raw = it.answer;
+    if (!Array.isArray(raw) || !raw.length) throw new Error("第 " + id + " 题 answer 必须是非空选项字母数组");
+    var keys = (q.options || []).map(function (o) { return o[0]; });
+    var ans = [];
+    raw.forEach(function (k) {
+      var K = String(k == null ? "" : k).trim().toUpperCase();
+      if (keys.indexOf(K) < 0) throw new Error("第 " + id + " 题没有选项 " + (K || "(空)"));
+      if (ans.indexOf(K) < 0) ans.push(K);
+    });
+    ans.sort(function (a, b) { return keys.indexOf(a) - keys.indexOf(b); });
+    if ((q.type === "single" || q.type === "judge") && ans.length !== 1) {
+      throw new Error("第 " + id + " 题是" + (q.type === "judge" ? "判断题" : "单选题") + "，只能有一个答案");
+    }
+    changes.push({ q: q, ans: ans });
+  });
+  if (!changes.length) return { updated: 0, missing: missing };
+  if (!window.Android || !Android.saveBank) throw new Error("当前环境不能保存题库");
+  var clone = {};
+  qs.forEach(function (q) { clone[q.id] = Object.assign({}, q); });
+  changes.forEach(function (c) {
+    clone[c.q.id].answer = c.ans.slice();
+    clone[c.q.id].ans_raw = c.ans.join("");
+  });
+  var payload = { subject: bank, questions: qs.map(function (q) { return clone[q.id]; }) };
+  var saved = false;
+  try { saved = Android.saveBank(bank.id, JSON.stringify(payload)); } catch (e) { saved = false; }
+  if (!saved) throw new Error("题库写盘失败，答案没有改动");
+  changes.forEach(function (c) {
+    c.q.answer = c.ans.slice();
+    c.q.ans_raw = c.ans.join("");
+  });
+  toast("agent 改了 " + changes.length + " 题答案");
+  return { updated: changes.length, missing: missing };
+}
 function mcpErr(id, code, msg) {
   return { jsonrpc: "2.0", id: id === undefined ? null : id,
            error: { code: code, message: String(msg) } };
@@ -4086,7 +4149,9 @@ function mcpDispatch(req) {
       protocolVersion: pv,
       capabilities: { tools: {} },
       serverInfo: { name: "gime", version: APP_VER },
-      instructions: "GIme 题库工具：list_banks 看题库；import_bank 导入文本；list_questions 取题与选项；write_explanations 写或改解析。"
+      instructions: "GIme 题库工具：list_banks 看题库；import_bank 导入文本；list_questions 取题与选项；" +
+        "write_explanations 写或改解析；write_answers 改客观题正确答案。" +
+        "所有工具都只在用户明确要求时调用，尤其不要主动改动题库、解析或答案。"
     });
   }
   if (m === "ping") return mcpOk(id, {});
@@ -4101,6 +4166,7 @@ function mcpDispatch(req) {
       } else if (p.name === "import_bank") data = mcpImport(args);
       else if (p.name === "list_questions") data = mcpListQuestions(args);
       else if (p.name === "write_explanations") data = mcpWriteExplanations(args);
+      else if (p.name === "write_answers") data = mcpWriteAnswers(args);
       else return mcpOk(id, mcpToolError("未知工具：" + p.name));
       return mcpOk(id, mcpToolResult(data));
     } catch (e) {
@@ -4127,23 +4193,32 @@ window.__mcpHandle = function (rid, reqJson) {
    结果由 window.onChatApi 异步交回。工具调用复用 MCP 那套题库函数，口径只有一份。 */
 var CHAT_TOOLS = [
   { type: "function", function: { name: "get_current_question",
-    description: "读取当前答题页的题目、选项、用户选择与答案。",
+    description: "读取当前答题页的题目、选项、用户选择与答案。仅在用户问到当前题目时调用。",
     parameters: { type: "object", properties: {}, additionalProperties: false } } },
   { type: "function", function: { name: "list_questions",
-    description: "按题库 id 或名称取题与选项；bank 省略时用当前题库。",
+    description: "按题库 id 或名称取题与选项；bank 省略时用当前题库。仅在用户要求查题时调用。",
     parameters: { type: "object", properties: {
       bank: { type: "string" }, ids: { type: "array", items: { type: "string" } },
       offset: { type: "integer" }, limit: { type: "integer" },
       type: { type: "string" }, query: { type: "string" }
     }, additionalProperties: false } } },
   { type: "function", function: { name: "write_explanations",
-    description: "把解析（explain）或主观题参考答案（ref）写回题库；bank 省略时用当前题库。",
+    description: "把解析（explain）或主观题参考答案（ref）写回题库；bank 省略时用当前题库。只在用户明确要求改解析/参考答案时调用。",
     parameters: { type: "object", properties: {
       bank: { type: "string" },
       items: { type: "array", items: { type: "object", properties: {
         id: { type: "string" }, explain: { type: "string" }, ref: { type: "string" }
       }, required: ["id"], additionalProperties: false } },
       mode: { type: "string", enum: ["replace", "append"] }
+    }, required: ["items"], additionalProperties: false } } },
+  { type: "function", function: { name: "write_answers",
+    description: "修改客观题（单选/多选/判断）的正确答案；bank 省略时用当前题库。只在用户明确要求改答案时调用，不要主动改。",
+    parameters: { type: "object", properties: {
+      bank: { type: "string" },
+      items: { type: "array", items: { type: "object", properties: {
+        id: { type: "string" },
+        answer: { type: "array", items: { type: "string" } }
+      }, required: ["id", "answer"], additionalProperties: false } }
     }, required: ["items"], additionalProperties: false } } }
 ];
 var chatMsgs = [], chatBusy = false, chatUnread = false, chatSeq = 0;
@@ -4159,7 +4234,7 @@ function chatConvSave() {
   var keep = chatConvs.slice(0, 60);   /* 最多留 60 个会话，再多就砍最旧的 */
   chatConvs = keep;
   store.write(LS_CV, { cur: chatCurId, list: keep.map(function (c) {
-    return { id: c.id, title: c.title, at: c.at, msgs: c.msgs.slice(-200) };
+    return { id: c.id, title: c.title, at: c.at, mode: c.mode || "", msgs: c.msgs.slice(-200) };
   }) });
 }
 function chatCurConv() {
@@ -4167,6 +4242,18 @@ function chatCurConv() {
     if (chatConvs[i].id === chatCurId) return chatConvs[i];
   }
   return null;
+}
+/* 会话按接入方式隔离：网页版登录的会话和 API Key 的会话不能混着继续。
+   老版本存的会话没有 mode，标成「旧会话」，第一次发送时绑定当时的方式。 */
+function chatModeLabel(m) {
+  return m === "login" ? "网页版" : m === "key" ? "API Key" : "旧会话";
+}
+function chatConvLocked(c) {
+  return !!(c && c.mode && c.mode !== agentMode());
+}
+function chatConvLockTip(c) {
+  return "这条会话是" + chatModeLabel(c.mode) + "建立的，现在是" +
+         chatModeLabel(agentMode()) + "；切回对应接入方式才能继续。";
 }
 /* 把当前 chatMsgs 同步进所属会话；标题取第一条用户消息。 */
 function chatSyncConv() {
@@ -4186,10 +4273,18 @@ function chatSyncConv() {
 /* 没有消息的会话不算会话：真实网页在发出第一条消息前不会把它写进历史。
    当前这一个空会话要留着（新对话界面），其余一律清掉。 */
 function chatConvEmpty(c) { return !c || !c.msgs || c.msgs.length === 0; }
-/* 页面删会话时同步删网页侧那条；非内置/没登录时什么都不做 */
+/* 页面删会话时同步删网页侧那条。这里不按当前接入方式判断：
+   会话可能是在登录态下建的，之后切到 Key 模式，删了本地不等于网页侧也该留着。
+   原生侧没有映射时会直接返回，误调没有副作用。 */
 function chatDeleteUpstream(id) {
-  if (!id || agentMode() !== "login" || !window.Android || !Android.dsDeleteChat) return;
+  if (!id || !window.Android || !Android.dsDeleteChat) return;
   try { Android.dsDeleteChat(id); } catch (e) { }
+}
+/* 切到某个页面会话时，确保网页侧也有对应的一条：
+   已有映射就复用，没有就在登录态下补建一条；Key 模式不碰网页。 */
+function chatUseUpstream(id) {
+  if (!id || agentMode() !== "login" || !window.Android || !Android.dsNewChat) return;
+  try { Android.dsNewChat(id); } catch (e) { }
 }
 function chatPruneEmpty(keepId) {
   var before = chatConvs.length;
@@ -4206,15 +4301,18 @@ function chatLoadConv(id) {
   var target = null;
   for (var i = 0; i < chatConvs.length; i++) if (chatConvs[i].id === id) target = chatConvs[i];
   if (!target) return;
+  if (chatConvLocked(target)) { toast(chatConvLockTip(target)); return; }
   /* 切走时把当前那个空会话删掉——它从没产生过对话 */
   chatPruneEmpty(id);
   chatCurId = target.id;
   chatMsgs = (target.msgs || []).slice(-200);
+  /* 切换会话 = 切换网页侧那条链路：缺映射的在这里补建，之后的提问都落到它上面 */
+  chatUseUpstream(chatCurId);
   chatSave();
   chatConvSave();
   chatRender();
 }
-function chatNewConv(force) {
+function chatNewConv(force, quiet) {
   if (chatBusy) { toast("等这轮答完再开新会话"); return; }
   /* 至少聊过一句（不管成功还是失败）才允许新开；空对话不能叠空对话 */
   if (!force && chatMsgs.length === 0) {
@@ -4226,21 +4324,27 @@ function chatNewConv(force) {
   chatSyncConv();
   /* 当前已有对话；把其它没消息的会话（含历史遗留）一并清掉 */
   chatPruneEmpty("");
-  var c = { id: "cv_" + Date.now().toString(36) + "_" + (++chatSeq), title: "", at: Date.now(), msgs: [] };
+  var c = { id: "cv_" + Date.now().toString(36) + "_" + (++chatSeq), title: "", at: Date.now(),
+            mode: agentMode(), msgs: [] };
   chatConvs.unshift(c);
   chatCurId = c.id;
   chatMsgs = [];
   /* 内置通道：页面新开会话时让上游也立刻建一条，网页版的会话列表同步出现。
      Key 模式没有这个概念。 */
-  if (agentMode() === "login" && window.Android && Android.dsNewChat) {
-    try { Android.dsNewChat(chatCurId); } catch (e) { }
-  }
+  chatUseUpstream(chatCurId);
   chatSave();
   chatConvSave();
   chatRender();
   /* 这里不再 closeTop：从大肥鱼头部的「+」新建时，面板要留在原地切到空会话界面。
      只有从历史面板删光会话时由 convDel 负责关掉那一层。 */
-  toast("新会话已开");
+  if (!quiet) toast("新会话已开");
+}
+/* 接入方式换了：旧会话留在原来的模式里，另开一条属于新方式的会话。
+   两条链路的历史不能互相带，否则网页版那条会把 Key 模式的上下文当成自己的。 */
+function chatModeSplit(from) {
+  if (!from || from === agentMode() || chatBusy) return false;
+  chatNewConv(true, true);
+  return true;
 }
 function openConvList() {
   if (chatBusy) { toast("等这轮答完再看历史"); return; }
@@ -4260,10 +4364,12 @@ function openConvList() {
       var d = c.at ? new Date(c.at) : null;
       var when = d ? (d.getMonth() + 1) + "/" + d.getDate() + " " +
                      ("0" + d.getHours()).slice(-2) + ":" + ("0" + d.getMinutes()).slice(-2) : "";
-      h += '<div class="conv-row' + (c.id === chatCurId ? " on" : "") + '">' +
+      var lk = chatConvLocked(c);
+      h += '<div class="conv-row' + (c.id === chatCurId ? " on" : "") + (lk ? " locked" : "") + '">' +
            '<button class="conv-main" onclick="convPick(\'' + c.id + '\')">' +
            '<b>' + esc(t) + "</b>" +
-           '<small>' + when + " · " + n + " 条</small></button>" +
+           '<small>' + when + " · " + n + " 条" +
+             '<i class="cm">' + chatModeLabel(c.mode) + "</i></small></button>" +
            '<button class="conv-del" onclick="convDel(\'' + c.id + '\')" aria-label="删除">' +
            '<svg class="ico" viewBox="0 0 24 24"><path d="M6 7h12M9 7V5h6v2M8 7l1 12h6l1-12"/></svg>' +
            "</button></div>";
@@ -4274,6 +4380,9 @@ function openConvList() {
   openLayer(sh);
 }
 function convPick(id) {
+  var c = null, i;
+  for (i = 0; i < chatConvs.length; i++) if (chatConvs[i].id === id) c = chatConvs[i];
+  if (chatConvLocked(c)) { toast(chatConvLockTip(c)); return; }
   closeTop();
   chatLoadConv(id);
   toast("已切到该会话");
@@ -4378,8 +4487,10 @@ function agentCfg() {
 /* 切换接入方式：只翻 mode，另一套的地址/模型/Key 原样收进 saved，
    切回来时还原，用户不用重填自己那套接口。 */
 function agSwitchMode() {
+  if (chatBusy) { toast("等这轮答完再切换接入方式"); return; }
+  var from = agentMode();
   var a = set.agent || {};
-  var to = agentMode() === "login" ? "key" : "login";
+  var to = from === "login" ? "key" : "login";
   var next;
   if (to === "login") {
     /* 离开 Key 模式：把当前这套存起来，登录模式自己只关心 model */
@@ -4396,12 +4507,16 @@ function agSwitchMode() {
   }
   set.agent = next;
   save();
+  var split = chatModeSplit(from);
   openAgentCfg();
   renderAll();
   chatRender();
+  if (split) toast("已切换接入方式，并新开了一条会话");
 }
 /* 用户点「登录」：确保是登录模式，再拉起手机号登录页。 */
 function dsLoginNow() {
+  if (chatBusy) { toast("等这轮答完再切换接入方式"); return; }
+  var from = agentMode();
   var a = set.agent || {};
   var next = { base: BUILTIN_BASE, model: "deepseek-web", key: "", mode: "login" };
   /* 从 Key 模式点进来时，把那套配置留着，退出登录后还能切回去 */
@@ -4412,11 +4527,13 @@ function dsLoginNow() {
   }
   set.agent = next;
   save();
+  var split = chatModeSplit(from);
   try { if (window.Android && Android.dsLogin) Android.dsLogin(); }
   catch (e) { toast("仅手机版可用"); return; }
   closeTop();
   renderAll();
   chatRender();
+  if (split) toast("已切换接入方式，并新开了一条会话");
 }
 function dsLogoutNow() {
   try { if (window.Android && Android.dsLogout) Android.dsLogout(); } catch (e) { }
@@ -4470,6 +4587,12 @@ function agSwitchHtml() {
     '<span class="ag-now">当前：' + (login ? "手机号登录" : "API Key") + "</span>" +
     '<span class="ag-go">点这里换成 ' + (login ? "API Key" : "手机号登录") + " ›</span></button>";
 }
+/* 设置里把两条链路的边界说清楚：会话不通用，切换会自动新开 */
+function agModeHintHtml() {
+  return '<div class="sl-hint" style="margin:16px 0 0;border-top:1px solid var(--line);padding-top:12px">' +
+    "网页版登录和 API Key 的会话互相隔开：切换接入方式会自动新开一条会话，历史里标了来源；" +
+    "一边的会话不能拿到另一边继续。</div>";
+}
 function openAgentCfg() {
   var a = set.agent || {};
   var sh = document.getElementById("sheet3");
@@ -4485,6 +4608,7 @@ function openAgentCfg() {
           '<button class="sheet-act" style="margin:0" onclick="dsLoginNow()">用手机号登录 DeepSeek</button>';
     sh.innerHTML = head + line +
       '<div class="sl-hint" style="margin:18px 0 0">登录态只存在本机。换设备或过期后，重新登录一次即可。</div>' +
+      agModeHintHtml() +
       agFontHtml();
   } else {
     sh.innerHTML = head +
@@ -4497,6 +4621,7 @@ function openAgentCfg() {
       '<input class="rn-box" id="agKey" type="password" value="' + esc(a.key || "") + '" placeholder="sk-...">' +
       '<button class="sheet-act" style="margin-top:18px" onclick="agentCfgSave()">保存</button>' +
       '<div class="sl-hint" style="margin:16px 0 0">按标准 /chat/completions 调，Key 不会离开这台手机。</div>' +
+      agModeHintHtml() +
       agFontHtml();
   }
   openLayer(sh);
@@ -4515,8 +4640,14 @@ function agentCfgSave() {
   chatRender();
   toast("大肥鱼 API 已保存");
 }
+/* 只有答题页真的开着才带题目。大肥鱼面板能从首页/题库页打开，
+   那时 S 可能还留着上一组题——把旧题塞给模型会让它答非所问。 */
+function quizOpen() {
+  var el = document.getElementById("quiz");
+  return !!(el && el.classList && el.classList.contains("on"));
+}
 function chatQuestionCtx() {
-  if (!S || !S.order || !S.order.length) return null;
+  if (!quizOpen() || !S || !S.order || !S.order.length) return null;
   var cur = q();
   if (!cur) return null;
   var bank = subjectOf(cur.subject) || { id: cur.subject, name: cur.subject };
@@ -4869,6 +5000,11 @@ async function chatSend() {
     var st = dsStatus();
     if (st && !st.loggedIn) { toast("先登录 DeepSeek"); dsLoginNow(); return; }
   }
+  /* 会话与接入方式绑定：另一边的会话不能在当前链路里继续。
+     老会话（没有 mode）在第一次发送时绑定当前方式。 */
+  var conv = chatCurConv();
+  if (chatConvLocked(conv)) { toast(chatConvLockTip(conv)); return; }
+  if (conv && !conv.mode) { conv.mode = agentMode(); chatConvSave(); }
   el.value = "";
   chatPush({ role: "user", text: text, ctx: chatQuestionCtx() });
   chatBusy = true;
@@ -4973,17 +5109,24 @@ async function chatRun(cfg) {
 var CHAT_ROUNDS = 3;
 function chatSysBase() {
   return "你是一只乐于助人的蓝色大肥鱼，用中文回答：先给结论，再讲依据；" +
-         "简洁但把关键步骤说清，不要编造题库里没有的内容。你可以调用工具读取题库、查题、" +
-         "把解析或参考答案写回题库。";
+         "简洁但把关键步骤说清，不要编造题库里没有的内容。" +
+         "只有当用户的问题需要题库数据，或用户明确要求修改时，才调用工具；" +
+         "不要为了补充上下文自发调用任何工具，也不要主动改解析、参考答案或答案。";
 }
 function chatCtxMsg(ctx) { return "当前题目上下文（JSON）：" + JSON.stringify(ctx); }
 /* 合起来的一份仍保留：单测和「没人问题时」的旧调用点都用它。 */
 function chatSystem(ctx) { return chatSysBase() + chatCtxMsg(ctx); }
 function chatTool(name, args) {
-  if (name === "get_current_question") return chatQuestionCtx();
-  var cur = S && S.order && S.order.length ? q() : null;
+  if (name === "get_current_question") {
+    var now = chatQuestionCtx();
+    if (!now) throw new Error("现在没有打开答题页，读不到当前题目");
+    return now;
+  }
+  /* 不在答题页时没有「当前题库」：要么让用户说题库，要么用工具参数里给的 bank，
+     不能拿 S 里上一组题悄悄顶替。 */
+  var cur = quizOpen() && S && S.order && S.order.length ? q() : null;
   var bank = args.bank || (cur && cur.subject) || "";
-  if (!bank) throw new Error("当前没有题库");
+  if (!bank) throw new Error("当前没有题库，请指定 bank");
   if (name === "list_questions") {
     /* 对话里默认只取 5 道：拿一堆题会全部塞进下一轮的输入，token 翻几倍。 */
     return mcpListQuestions({ bank: bank, ids: args.ids, offset: args.offset,
@@ -4992,10 +5135,18 @@ function chatTool(name, args) {
   if (name === "write_explanations") {
     var r = mcpWriteExplanations({ bank: bank, items: args.items, mode: args.mode });
     if (cur && Array.isArray(args.items) && args.items.some(function (it) { return it.id === cur.id; })
-        && document.getElementById("quiz").classList.contains("on")) {
+        && quizOpen()) {
       render();
     }
     return r;
+  }
+  if (name === "write_answers") {
+    var ra = mcpWriteAnswers({ bank: bank, items: args.items });
+    if (cur && Array.isArray(args.items) && args.items.some(function (it) { return it.id === cur.id; })
+        && quizOpen()) {
+      render();
+    }
+    return ra;
   }
   throw new Error("未知工具：" + name);
 }

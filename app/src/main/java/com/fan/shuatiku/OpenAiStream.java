@@ -98,12 +98,13 @@ final class OpenAiStream {
                         : one.getJSONArray("choices").optJSONObject(0);
                 JSONObject m = msg == null ? null : msg.optJSONObject("message");
                 if (m != null) {
-                    String reasoning = m.optString("reasoning_content", "");
+                    String reasoning = text(m, "reasoning_content");
                     if (!reasoning.isEmpty()) listener.onReasoning(reasoning);
-                    String content = m.optString("content", "");
+                    String content = text(m, "content");
                     if (!content.isEmpty()) listener.onContent(content);
                 }
-                String fr = msg == null ? "stop" : msg.optString("finish_reason", "stop");
+                String fr = text(msg, "finish_reason");
+                if (fr.isEmpty()) fr = "stop";
                 listener.onFinish(fr);
                 return fr;
             }
@@ -136,10 +137,10 @@ final class OpenAiStream {
                 JSONObject d = ch.optJSONObject("delta");
                 if (d == null) d = ch.optJSONObject("message");
                 if (d != null) {
-                    String reasoning = d.optString("reasoning_content", "");
-                    if (reasoning.isEmpty()) reasoning = d.optString("reasoning", "");
+                    String reasoning = text(d, "reasoning_content");
+                    if (reasoning.isEmpty()) reasoning = text(d, "reasoning");
                     if (!reasoning.isEmpty()) listener.onReasoning(reasoning);
-                    String content = d.optString("content", "");
+                    String content = text(d, "content");
                     if (!content.isEmpty()) listener.onContent(content);
                 }
                 String fr = ch.optString("finish_reason", "");
@@ -150,6 +151,19 @@ final class OpenAiStream {
         }
         listener.onFinish(finish);
         return finish;
+    }
+
+    /**
+     * 取字符串字段，JSON null 当空串。
+     *
+     * <p>不能用 {@code optString(k, "")}：Android 的 org.json 在值显式为 null 时会返回
+     * 字面量 "null"。流式首帧（只有 role）和纯思维链帧的 content 都是 null，逐帧拼起来
+     * 就成了回复开头一长串 "null"——真机报过的那个 bug。
+     */
+    static String text(JSONObject o, String key) {
+        if (o == null || o.isNull(key)) return "";
+        String v = o.optString(key, "");
+        return v == null ? "" : v;
     }
 
     /** 错误体拿不到时的兜底文案：把状态码翻成「用户该改什么」。 */
