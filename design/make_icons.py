@@ -14,6 +14,10 @@ headless 两边都量过，挂上 mask 之后整只猫被裁没了，连一张�
       改色板之后重跑本脚本，猫跟着色板走。
   app/src/main/res/mipmap-{m,h,xh,xxh,xxxh}dpi/ic_launcher.png
       应用图标按用户裁定直接用第一张原图：黑墨白纸，五档密度。
+      图标单独用 12% 留白（2026-10-22 真机两轮裁定：22%→14%→12%，一路「再大一点」）：
+      脸占 tile 81%。代价记在案——纯圆遮罩下会切掉 2.9% 的墨迹，且从 y=19 起，
+      也就是两只耳尖开始被擦（14% 那档只切底部发梢 1.3%，是不吃耳的最后一档）。
+      这台 Freeme（M600 Pro）用圆角方形遮罩，12% 下真机截图耳尖仍完整。
   design/ic_master.png
       1024 母图，只是给人眼核对用的，不进包。
 """
@@ -33,8 +37,10 @@ RES = os.path.join(ROOT, "app", "src", "main", "res")
 MASTER = os.path.join(HERE, "ic_master.png")
 
 DENSITY = {"mdpi": 48, "hdpi": 72, "xhdpi": 96, "xxhdpi": 144, "xxxhdpi": 192}
-SPLASH_PX = 256              # 启动页只画 62 CSS px，dpr 3 也够
+SPLASH_PX = 256              # 启动页画 82 CSS px，dpr 3 也够
 MARGIN = 0.05                # 取景留白，按最长边算
+ICON_MARGIN = 0.12           # 图标单独一档（2026-10-22 真机裁定到 12%）：脸占 tile 81%
+                             # 纯圆启动器会从这里开始擦耳尖，本机圆角方形遮罩不受影响
 
 
 def coverage(path, white_ink):
@@ -43,15 +49,16 @@ def coverage(path, white_ink):
     return g if white_ink else g.point(lambda v: 255 - v)
 
 
-def framed(a, px):
-    """按墨迹外接方框裁切 → 补成正方形 → 缩到 px×px。两张原图取景一致，图标和启动页才对得上。"""
+def framed(a, px, margin=MARGIN):
+    """按墨迹外接方框裁切 → 补成正方形 → 缩到 px×px。
+    同一档留白下两张原图取景一致，浅深两版启动页才对得上；图标另用 ICON_MARGIN。"""
     box = a.point(lambda v: 255 if v > 8 else 0).getbbox()
     if not box:
         raise SystemExit("%s 上没找到墨迹，取不到取景框" % a)
     a = a.crop(box)
     w, h = a.size
     side = max(w, h)
-    pad = int(side * MARGIN)
+    pad = int(side * margin)
     canvas = Image.new("L", (side + pad * 2, side + pad * 2), 0)
     canvas.paste(a, ((canvas.width - w) // 2, (canvas.height - h) // 2))
     return canvas.resize((px, px), Image.LANCZOS)
@@ -83,7 +90,8 @@ if __name__ == "__main__":
               os.path.getsize(out) // 1024) + ink))
 
     icon = Image.new("RGB", (1024, 1024), (255, 255, 255))
-    icon.paste(Image.new("RGB", (1024, 1024), (0, 0, 0)), (0, 0), framed(coverage(LIGHT, False), 1024))
+    icon.paste(Image.new("RGB", (1024, 1024), (0, 0, 0)), (0, 0),
+               framed(coverage(LIGHT, False), 1024, ICON_MARGIN))
     icon.save(MASTER)
     print("  design/ic_master.png  1024x1024（核对用）")
     for d, px in sorted(DENSITY.items()):

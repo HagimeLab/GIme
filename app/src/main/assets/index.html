@@ -218,7 +218,7 @@ button.rec:active { opacity: .62; }
    --ink 令牌生成，改色板后重跑那个脚本即可。没走"一张图 + CSS mask 变色"：真机和桌面
    headless 两边都量过，挂上 mask 之后整只猫被裁没了（headless 连一张已知正确的 alpha
    圆点都画不出来），所以退回最笨但看得见的办法。 */
-.sp-cat { width: 62px; height: 62px; }
+.sp-cat { width: 82px; height: 82px; }   /* 新线稿笔画只有旧坐猫的一半粗：62 太小、84 偏大，真机裁到 82 */
 .sp-cat-d, [data-theme="dark"] .sp-cat-l { display: none; }
 [data-theme="dark"] .sp-cat-d { display: block; }
 .sp-word { margin-top: 22px; font-size: 1.0625rem; font-weight: 800; letter-spacing: 1.6px;
@@ -832,10 +832,8 @@ html.swap, html.swap * { transition: none !important; }
 <!-- ============ 启动页 ============ -->
 <div id="splash">
   <div class="sp-logo" id="spLogo">
-    <!-- 启动页这只猫和应用图标同一只，同源于 design/cat-light.png / cat-dark.png
-         （一条线稿的黑墨、白墨两版，在仓库里）。改猫：换那两张原图 → 跑
-         python3 design/make_icons.py，它会重出 assets/cat-light.png、cat-dark.png
-         和各密度的 ic_launcher.png。别手改产物 PNG。 -->
+    <!-- 启动页猫的黑白原图在 design/cat-light.png / cat-dark.png。
+         python3 design/make_icons.py 会重出启动页图片、应用图标母图和各密度的图标 PNG。 -->
     <img class="sp-cat sp-cat-l" src="cat-light.png" alt="">
     <img class="sp-cat sp-cat-d" src="cat-dark.png" alt="">
   </div>
