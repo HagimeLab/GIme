@@ -4,9 +4,6 @@ import java.io.BufferedReader;
 import java.io.ByteArrayOutputStream;
 import java.io.InputStream;
 import java.io.InputStreamReader;
-import java.io.OutputStream;
-import java.net.HttpURLConnection;
-import java.net.URL;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -50,15 +47,40 @@ public final class DeepSeekWeb {
     private static final String DELETE_SESSION_PATH = "/api/v0/chat_session/delete";
 
     /**
-     * 与登录 WebView 完全同一份 UA。
+     * 原生请求（Cronet）的身份。
      *
-     * <p>2026-10-21 实测：登录页发出的请求里 UA 带 {@code ; Pixel 7}，而原生请求原先
-     * 少了这一段——同一个账号在登录和问答两条链路上报出两种浏览器，属于白送的分叉。
-     * 现在两边共用这一个常量。
+     * <p>v1.0.9 起握手由 Cronet 155（cronet-bundled 500.1.0）完成，UA 与 Client Hints 都对齐 Chrome 155。
+     * 以前这里写 Chrome 120，但底层是 HttpURLConnection：UA 自称的浏览器版本和
+     * TLS/ALPN 完全对不上，是比“少一个头”更明显的破绽。
+     *
+     * <p>登录 WebView 走它自己的引擎版本（见 DeepSeekLoginActivity.loginUa），
+     * 不再和原生共用一份 UA——两份各自自洽，比一份两边都不像要好。
      */
-    static final String UA =
-            "Mozilla/5.0 (Linux; Android 13; Pixel 7) AppleWebKit/537.36 "
-                    + "(KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36";
+    static volatile String UA = uaFor("Pixel 7", "13");
+
+    /**
+     * 用真实设备型号 / 系统版本拼原生 UA。
+     *
+     * <p>登录 WebView 那边已经是从 {@code WebSettings.getDefaultUserAgent()} 读出的
+     * 真机型号与 Android 版本；原生这边再写死 Pixel 7 / Android 13，同一账号就会在
+     * 两条链路上报出两台设备。真机启动时由 {@link #setDevice} 换成 Build.MODEL /
+     * VERSION.RELEASE，桌面回归保留 Pixel 7 兜底。
+     */
+    static String uaFor(String model, String release) {
+        String m = model == null || model.trim().isEmpty() ? "Pixel 7" : model.trim();
+        String r = release == null || release.trim().isEmpty() ? "13" : release.trim();
+        return "Mozilla/5.0 (Linux; Android " + r + "; " + m + ") AppleWebKit/537.36 "
+                + "(KHTML, like Gecko) Chrome/155.0.8059.16 Mobile Safari/537.36";
+    }
+
+    /** 启动时注入真实设备信息；只影响 UA，不动 Chrome 版本与 Client Hints。 */
+    static void setDevice(String model, String release) {
+        UA = uaFor(model, release);
+    }
+
+    /** 与 Cronet 155 对齐的 Client Hints。 */
+    static final String CH_UA =
+            "\"Google Chrome\";v=\"155\", \"Chromium\";v=\"155\", \"Not?A_Brand\";v=\"24\"";
 
     /**
      * 网页前端的客户端标识。
@@ -124,11 +146,10 @@ public final class DeepSeekWeb {
     /**
      * 当前正在用的连接，供 {@link #abort()} 从别的线程掐断。
      *
-     * <p>为什么要这个：{@code HttpURLConnection} 一旦卡在 {@code read()} 上，
-     * 只有读到 {@link #READ_TIMEOUT} 才会醒 —— 三分钟。手机网络一断，
-     * 用户看到的就是「一直转圈」。掐断连接能让阻塞的读立刻抛 IOException。
+     * <p>为什么要这个：读流一旦卡住，只有读到 {@link #READ_TIMEOUT} 才会醒。
+     * 手机网络一断，用户看到的就是「一直转圈」。掐断连接能让阻塞的读立刻抛 IOException。
      */
-    private volatile HttpURLConnection active;
+    private volatile HttpNet.Conn active;
 
     /**
      * 用户按了「停止」。
@@ -186,7 +207,7 @@ public final class DeepSeekWeb {
            ① Client Hints（要与 UA 里的 Chrome/120 自洽）；
            ② Sec-Fetch-*（现代浏览器对每个请求都会自动带，不从代码里写就不会有）。
            这两组都不参与业务校验，但它们是「请求长得像不像浏览器」的免费分。 */
-        h.put("sec-ch-ua", "\"Chromium\";v=\"120\", \"Not:A-Brand\";v=\"99\"");
+        h.put("sec-ch-ua", CH_UA);
         h.put("sec-ch-ua-mobile", "?1");
         h.put("sec-ch-ua-platform", "\"Android\"");
         h.put("Sec-Fetch-Site", "same-origin");
@@ -273,20 +294,17 @@ public final class DeepSeekWeb {
         return tz.getOffset(System.currentTimeMillis()) / 1000;
     }
 
-    private HttpURLConnection open(String path, String method, String accept) throws Exception {
-        return open(path, method, accept, null);
-    }
-
-    private HttpURLConnection open(String path, String method, String accept, String referer)
-            throws Exception {
-        HttpURLConnection c = (HttpURLConnection) new URL(ORIGIN + path).openConnection();
-        c.setRequestMethod(method);
-        c.setConnectTimeout(CONNECT_TIMEOUT);
-        c.setReadTimeout(READ_TIMEOUT);
+    /**
+     * 发一次请求并等响应头。传输层由 {@link HttpNet} 决定：
+     * Android 上是 Cronet（浏览器 TLS/H2），桌面回归是 HttpURLConnection。
+     */
+    private HttpNet.Conn open(String path, String method, String accept, String referer,
+                              byte[] body, Map<String, String> extra) throws Exception {
         boolean post = !"GET".equalsIgnoreCase(method);
-        for (Map.Entry<String, String> e : headers(accept, referer, post).entrySet()) {
-            c.setRequestProperty(e.getKey(), e.getValue());
-        }
+        Map<String, String> h = headers(accept, referer, post);
+        if (extra != null) h.putAll(extra);
+        HttpNet.Conn c = HttpNet.open(new HttpNet.Request(ORIGIN + path, method, h, body,
+                CONNECT_TIMEOUT, READ_TIMEOUT));
         active = c;
         return c;
     }
@@ -301,16 +319,11 @@ public final class DeepSeekWeb {
      *
      * <p>合并规则交给 {@link #mergeCookies}（纯函数，桌面单测直接覆盖）。
      */
-    private void harvest(HttpURLConnection c) {
+    private void harvest(HttpNet.Conn c) {
         try {
-            List<String> raw = new ArrayList<String>();
-            for (Map.Entry<String, List<String>> e : c.getHeaderFields().entrySet()) {
-                String k = e.getKey();
-                if (k == null || !"set-cookie".equalsIgnoreCase(k)) continue;
-                List<String> vs = e.getValue();
-                if (vs != null) raw.addAll(vs);
-            }
-            if (raw.isEmpty()) return;
+            List<String> raw = c.headers("set-cookie");
+            if (raw == null || raw.isEmpty()) return;
+            raw = new ArrayList<String>(raw);
             String merged = mergeCookies(cookie, raw);
             if (merged.equals(cookie == null ? "" : cookie)) return;
             cookie = merged;
@@ -390,10 +403,10 @@ public final class DeepSeekWeb {
 
     /** 从别的线程掐断当前连接：让卡在 read() 上的请求立刻失败，而不是等满超时。 */
     public void abort() {
-        HttpURLConnection c = active;
+        HttpNet.Conn c = active;
         active = null;
         if (c != null) {
-            try { c.disconnect(); } catch (Exception ignored) { }
+            try { c.abort(); } catch (Exception ignored) { }
         }
     }
 
@@ -412,40 +425,24 @@ public final class DeepSeekWeb {
 
     private String postJson(String path, String body, String referer) throws Exception {
         // 真实页面所有 /api 请求的 Accept 都是 */*（不是 application/json）
-        HttpURLConnection c = open(path, "POST", "*/*", referer);
         byte[] b = body == null ? new byte[0] : body.getBytes(StandardCharsets.UTF_8);
-        c.setDoOutput(true);
-        c.setFixedLengthStreamingMode(b.length);
+        HttpNet.Conn c = open(path, "POST", "*/*", referer, b, null);
         try {
-            OutputStream os = c.getOutputStream();
-            try { os.write(b); } finally { os.close(); }
-            int code = c.getResponseCode();
             harvest(c);
-            InputStream in = code >= 400 ? c.getErrorStream() : c.getInputStream();
-            ByteArrayOutputStream out = new ByteArrayOutputStream();
-            if (in != null) {
-                try {
-                    byte[] buf = new byte[8192];
-                    int n;
-                    while ((n = in.read(buf)) > 0) out.write(buf, 0, n);
-                } finally { in.close(); }
-            }
-            return out.toString("UTF-8");
+            return readAll(c.body());
         } finally {
-            c.disconnect();
+            c.close();
         }
     }
 
     /** 发一个 GET 请求并读完整响应（非流式）。 */
     private String getJson(String path) throws Exception {
-        HttpURLConnection c = open(path, "GET", "*/*");
+        HttpNet.Conn c = open(path, "GET", "*/*", null, null, null);
         try {
-            int code = c.getResponseCode();
             harvest(c);
-            InputStream in = code >= 400 ? c.getErrorStream() : c.getInputStream();
-            return readAll(in);
+            return readAll(c.body());
         } finally {
-            c.disconnect();
+            c.close();
         }
     }
 
@@ -628,27 +625,23 @@ public final class DeepSeekWeb {
      * 也绝不能把它响应里的 Set-Cookie 吸收进聊天用的 Cookie 罐（同名会覆盖）。
      */
     private HifToken fetchHif(String url) {
-        HttpURLConnection c = null;
+        HttpNet.Conn c = null;
         try {
-            c = (HttpURLConnection) new URL(url).openConnection();
-            c.setRequestMethod("GET");
-            c.setConnectTimeout(3000);
-            c.setReadTimeout(3000);
             Map<String, String> h = headers("*/*", null, false);
             h.remove("Cookie");
             h.remove("Authorization");
             h.put("Sec-Fetch-Site", "same-site");
-            for (Map.Entry<String, String> e : h.entrySet()) {
-                c.setRequestProperty(e.getKey(), e.getValue());
-            }
-            if (c.getResponseCode() != 200) return null;
-            long ttl = hifTtlMs(c.getHeaderField("x-hif-ttl"));
-            String value = hifValue(readAll(c.getInputStream()));
+            c = HttpNet.open(new HttpNet.Request(url, "GET", h, null, 3000, 3000));
+            if (c.code() != 200) return null;
+            long ttl = hifTtlMs(c.header("x-hif-ttl"));
+            String value = hifValue(readAll(c.body()));
             return value.isEmpty() ? null : new HifToken(value, ttl);
         } catch (Exception e) {
             return null;
         } finally {
-            if (c != null) c.disconnect();
+            if (c != null) {
+                try { c.close(); } catch (Exception ignored) { }
+            }
         }
     }
 
@@ -694,8 +687,9 @@ public final class DeepSeekWeb {
      * 完成请求的 body：字段与顺序照 2026-10-21 抓到的真实页面。
      *
      * <p>真实页面是 {@code session, parent, model_type, prompt, ref_file_ids,
-     * thinking_enabled, search_enabled, action, preempt}；{@code model_type} 是
-     * {@code "default"}（不是 null），并且带一个 {@code preempt:false}。
+     * thinking_enabled, search_enabled, action, source, preempt}；{@code model_type}
+     * 是 {@code "default"}（不是 null），{@code source:"default"}（实测只接受 default/landing），并且带一个
+     * {@code preempt:false}。source 枚举实测：input 会被 422 拒绝，只接受 default / landing。
      */
     static JSONObject completionBody(String sessionId, Long parentMessageId,
                                      String prompt, boolean thinking)
@@ -710,6 +704,7 @@ public final class DeepSeekWeb {
         body.put("thinking_enabled", thinking);
         body.put("search_enabled", false);
         body.put("action", JSONObject.NULL);
+        body.put("source", "default");
         body.put("preempt", false);
         return body;
     }
@@ -735,27 +730,23 @@ public final class DeepSeekWeb {
         JSONObject body = completionBody(sessionId, parentMessageId, prompt, thinking);
 
         // 真实完成请求的 Accept 是 */*，服务端仍回 event-stream
-        HttpURLConnection c = open(CHAT_PATH, "POST", "*/*", sessionUrl);
-        c.setRequestProperty("x-ds-pow-response", pow);
-        // 真实完成请求带这两枚（从 HIF 接口拉取并缓存；见 HIF_LEIM_URL 的注释）
         String leim = hifLeim, dliq = hifDliq;
-        if (!leim.isEmpty()) c.setRequestProperty("x-hif-leim", leim);
-        if (!dliq.isEmpty()) c.setRequestProperty("x-hif-dliq", dliq);
         hifAttached = !leim.isEmpty() || !dliq.isEmpty();
+        Map<String, String> extra = new HashMap<String, String>();
+        extra.put("x-ds-pow-response", pow);
+        // 真实完成请求带这两枚（从 HIF 接口拉取并缓存；见 HIF_LEIM_URL 的注释）
+        if (!leim.isEmpty()) extra.put("x-hif-leim", leim);
+        if (!dliq.isEmpty()) extra.put("x-hif-dliq", dliq);
         byte[] b = body.toString().getBytes(StandardCharsets.UTF_8);
-        c.setDoOutput(true);
-        c.setFixedLengthStreamingMode(b.length);
+        HttpNet.Conn c = open(CHAT_PATH, "POST", "*/*", sessionUrl, b, extra);
         try {
-            OutputStream os = c.getOutputStream();
-            try { os.write(b); } finally { os.close(); }
-            int code = c.getResponseCode();
             harvest(c);
-            String ct = c.getContentType();
+            int code = c.code();
+            String ct = c.header("content-type");
 
             // 非 event-stream：上游把业务错误当 JSON 返回（40300/40301/40003…）
             if (code >= 400 || ct == null || !ct.contains("event-stream")) {
-                InputStream in = code >= 400 ? c.getErrorStream() : c.getInputStream();
-                String err = readAll(in);
+                String err = readAll(c.body());
                 throw businessError(err, code);
             }
 
@@ -774,8 +765,16 @@ public final class DeepSeekWeb {
                     @Override public void onMeta(long rid) { silent.set(false); listener.onMeta(rid); }
                     @Override public void onUsage(int total) { silent.set(false); listener.onUsage(total); }
                     @Override public void onDone() { silent.set(false); listener.onDone(); }
-                }).consume(c.getInputStream());
+                }).consume(c.body());
+                /* Cronet 的 abort() 只是关掉管道：读端看到的是正常 EOF，
+                   不会像断 socket 那样抛异常。这里补上「是用户停的」还是「上游没响应」。 */
+                if (cancelled) throw new java.io.IOException("已停止");
+                if (silent.get()) {
+                    throw new DeepSeekException(CODE_SILENT,
+                            "上游 " + (FIRST_FRAME_TIMEOUT / 1000) + " 秒没有响应，已中断");
+                }
             } catch (Exception e) {
+                if (cancelled) throw new java.io.IOException("已停止");
                 // 被看门狗掐断的连接抛的是 "Socket closed" 之类，翻成人话
                 if (silent.get()) {
                     throw new DeepSeekException(CODE_SILENT,
@@ -786,7 +785,7 @@ public final class DeepSeekWeb {
                 guard.cancel(false);
             }
         } finally {
-            c.disconnect();
+            c.close();
         }
     }
 

@@ -155,6 +155,7 @@ GIme
 
 -   **Android / Java**：承载原生应用窗口，处理系统级交互。
 -   **WebView**：呈现应用的主要界面。
+-   **Cronet（Chromium 网络栈）**：大肥鱼直连 DeepSeek 时负责 TLS / HTTP2 握手，UA 与 Client Hints 和 Cronet 版本对齐。
 -   **HTML、CSS、JavaScript**：实现题目展示、练习流程、组卷、判分、统计、主题及动画交互。
 -   **本地存储**：保存个人练习状态和相关数据，支持下次打开时继续使用。
 -   **文件解析与 JavaScript Bridge**：连接 Android 文件访问能力与 Web

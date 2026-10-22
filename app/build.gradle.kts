@@ -31,8 +31,10 @@ android {
         applicationId = "com.fan.shuatiku"
         minSdk = 24
         targetSdk = 36
-        versionCode = 9
-        versionName = "1.0.8"
+        versionCode = 10
+        versionName = "1.0.9"
+        // Cronet 只带 ARM 两种 ABI：x86/x86_64 的 so 每个 5MB，手机上用不到
+        ndk { abiFilters += listOf("arm64-v8a", "armeabi-v7a") }
     }
 
     // BuildConfig.DEBUG 用来区分构建变体：Release 里必须关掉 WebView 调试，
@@ -69,4 +71,7 @@ dependencies {
     implementation("com.tom-roush:pdfbox-android:2.0.27.0") {
         exclude(group = "org.bouncycastle")
     }
+    // v1.0.9：用 Chromium 的网络栈替换 HttpURLConnection，拿到浏览器系 TLS/ALPN/H2。
+    // 版本要和 UA/Client Hints 对齐；500.1.0 的 native 是 Chrome 155。
+    implementation("org.chromium.net:cronet-bundled:500.1.0")
 }

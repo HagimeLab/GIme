@@ -90,6 +90,8 @@ public class MainActivity extends Activity {
     @Override
     protected void onCreate(Bundle saved) {
         super.onCreate(saved);
+        CronetNet.install(this);
+        DeepSeekWeb.setDevice(android.os.Build.MODEL, android.os.Build.VERSION.RELEASE);
         bankDir = new File(getFilesDir(), "banks");
         if (!bankDir.isDirectory()) bankDir.mkdirs();
         BankStore.cleanup(bankDir);      // 清掉上次被打断留下的 .tmp/.bak
@@ -453,6 +455,33 @@ public class MainActivity extends Activity {
                     mcpStart();
                 }
             });
+        }
+
+        /**
+         * 仅 debug：用当前传输层（Cronet 或兜底）拉一次指纹体检页，
+         * 把原始 JSON 塞进 window.__fp。发布包里不联网、直接返回。
+         */
+        @JavascriptInterface
+        public void fpProbe(final String url) {
+            if (!BuildConfig.DEBUG) return;
+            new Thread(new Runnable() {
+                @Override public void run() {
+                    String out;
+                    try {
+                        java.util.Map<String, String> h = new java.util.HashMap<String, String>();
+                        h.put("User-Agent", DeepSeekWeb.UA);
+                        h.put("Accept", "*/*");
+                        HttpNet.Conn c = HttpNet.open(new HttpNet.Request(
+                                url == null || url.isEmpty() ? "https://tls.peet.ws/api/all" : url,
+                                "GET", h, null, 10000, 30000));
+                        out = HttpNet.readAll(c.body());
+                        c.close();
+                    } catch (Exception e) {
+                        out = "ERR " + e;
+                    }
+                    js("window.__fp = " + quote(out));
+                }
+            }, "fp-probe").start();
         }
 
         /** MCP 服务的运行状态（没有开关：服务跟着进程生命周期走）。 */

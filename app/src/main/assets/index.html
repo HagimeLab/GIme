@@ -187,10 +187,11 @@ button.rec:active { opacity: .62; }
    它不是第五个页面，只是「打开对话」的入口，所以永远没有 .on，也不参与胶囊的选中态。 */
 .tab.ask-tab { flex: 0 0 46px; padding: 0; }
 .tab.ask-tab .ask-fish { width: 34px; height: 34px; margin: 0 auto; position: relative; }
-.tab.ask-tab .ask-fish img { width: 100%; height: 100%; object-fit: contain; display: none; }
-.tab.ask-tab .ask-fish .ag-l { display: block; }
-[data-theme="dark"] .tab.ask-tab .ask-fish .ag-l { display: none; }
-[data-theme="dark"] .tab.ask-tab .ask-fish .ag-d { display: block; }
+.tab.ask-tab .ask-fish img { position: absolute; inset: 0; width: 100%; height: 100%;
+                              object-fit: contain; display: block; opacity: 0; }
+.tab.ask-tab .ask-fish .ag-l { opacity: 1; }
+[data-theme="dark"] .tab.ask-tab .ask-fish .ag-l { opacity: 0; }
+[data-theme="dark"] .tab.ask-tab .ask-fish .ag-d { opacity: 1; }
 .tab.ask-tab .ask-dot { display: none; position: absolute; top: -1px; right: 0; width: 9px; height: 9px;
                         border-radius: 50%; background: #E5484D; border: 2px solid var(--raise); }
 .tab.ask-tab.unread .ask-dot { display: block; }
@@ -372,6 +373,13 @@ button.rec:active { opacity: .62; }
 .ava .ag-l { display: block; }
 [data-theme="dark"] .ava .ag-l { display: none; }
 [data-theme="dark"] .ava .ag-d { display: block; }
+/* 回退换肤快照嵌在旧主题的 html 下，按快照自身主题覆盖祖先主题的鱼图选择。 */
+.reveal[data-theme="light"] .tab.ask-tab .ask-fish .ag-l { opacity: 1; }
+.reveal[data-theme="light"] .tab.ask-tab .ask-fish .ag-d { opacity: 0; }
+.reveal[data-theme="light"] .navrow .ask .ag-l,
+.reveal[data-theme="light"] .ava .ag-l { display: block; }
+.reveal[data-theme="light"] .navrow .ask .ag-d,
+.reveal[data-theme="light"] .ava .ag-d { display: none; }
 /* 大肥鱼对话：从底部上滑，消息区自己滚，输入条常驻 */
 .sheet.chat { height: 74vh; max-height: 74vh; overflow: hidden; display: flex; flex-direction: column;
               padding: 0 18px calc(var(--sb) + 10px); z-index: 990; }
@@ -2651,7 +2659,7 @@ function askClear() {
 }
 
 /* ================= 检查更新 ================= */
-var APP_VER = "1.0.8";
+var APP_VER = "1.0.9";
 try { if (window.Android && Android.appVersion) APP_VER = Android.appVersion() || APP_VER; } catch (e) {}
 var updInfo = null;
 /* 更新状态拆成三份，别混在一个布尔里：
@@ -4670,6 +4678,8 @@ function chatPush(m, quiet) {
 /* 丢掉一条还没落盘的气泡（工具调用轮次里临时建的流式消息）。 */
 function chatDrop(m) {
   if (!m) return;
+  m._pump = false;
+  m.live = false;
   var i = chatMsgs.indexOf(m);
   if (i >= 0) chatMsgs.splice(i, 1);
 }
@@ -4821,9 +4831,42 @@ document.addEventListener("click", function (e) {
 });
 
 /* 流式气泡的内部结构：思考链在上、正文在下。纯函数，回归测试直接调。 */
+/* 上游有时把整段正文攒到最后一次性发下来。网络层没丢帧，但一口气塞进气泡
+   看起来就是「没有流式」。这里把新到的正文按剩余量分几帧摊开，最多约 8 帧
+   （~250ms）；思考链本身是连续到达的，不参与节奏。
+   文本本身仍完整保存在 m.text，settleLive 会立即补到全量。 */
+function liveText(m) {
+  var full = String((m && m.text) || "");
+  if (!m || !m.live || m.shown == null) return full;
+  return full.slice(0, Math.min(m.shown, full.length));
+}
+function pokeLive(m, done) {
+  if (!m) return;
+  if (done) m._done = done;
+  if (m._pump) return;
+  if (m.shown == null) m.shown = 0;
+  m._pump = true;
+  function step() {
+    if (!m._pump) return;
+    var full = String(m.text || "");
+    if (m.shown < full.length) {
+      m.shown = Math.min(full.length, m.shown + Math.max(3, Math.ceil((full.length - m.shown) / 8)));
+      chatLivePaint(m);
+    }
+    if (m.shown >= full.length) {
+      m._pump = false;
+      var cb = m._done;
+      m._done = null;
+      if (cb) cb();
+      return;
+    }
+    setTimeout(step, 28);
+  }
+  setTimeout(step, 0);
+}
 function chatLiveHtml(m) {
   var think = String((m && m.reasoning) || "");
-  var text = String((m && m.text) || "");
+  var text = liveText(m);
   /* 工具轮次里上游吐的是 <tool_call>{...}，那是给解析器看的，别亮给用户。
      这一轮的气泡最后会被丢掉，但流式期间不能闪一串 JSON。 */
   var tooling = /^\s*<tool_call/.test(text);
@@ -5045,9 +5088,12 @@ async function chatRun(cfg) {
        页面这边一视同仁——先摆一个空气泡，边收边往里填。 */
     var live = chatPush({ role: "assistant", text: "", reasoning: "", live: true }, true);
     var onDelta = function (kind, chunk) {
-      if (kind === "think") live.reasoning += chunk;
-      else live.text += chunk;
-      chatLivePaint(live);
+      if (kind === "think") { live.reasoning += chunk; chatLivePaint(live); }
+      else {
+        if (live.shown == null) live.shown = live.text.length;
+        live.text += chunk;
+        pokeLive(live);
+      }
     };
     var data;
     var body = { model: cfg.model, messages: messages, temperature: 0.3, max_tokens: 1200 };
@@ -5096,12 +5142,22 @@ async function chatRun(cfg) {
     var answer = String(msg.content || "").trim();
     /* 流式已经把正文填进去了；工具调用轮次之后正文可能没流全，用最终值兜底。
        只在真的拿到正文时才覆盖 —— 否则上游「只调工具不回答」时会把已流出的字擦掉。 */
-    live.live = false;
     if (answer) live.text = answer;
     else if (!live.text) live.text = "（大肥鱼没有返回文字）";
     if (!live.reasoning) live.reasoning = String(msg.reasoning_content || "");
+    /* live 先别关：settle 期间 chatLiveHtml 仍按纯文本显示，等 shown 追上全量
+       再切 Markdown。否则最后一大段会在收尾时一次性砸出来。 */
+    var hadText = String(live.text || "").length > 0;
     chatSave();
-    chatRender();
+    if (!hadText) {
+      live.live = false;
+      chatRender();
+      return;
+    }
+    pokeLive(live, function () {
+      live.live = false;
+      chatRender();
+    });
     return;
   }
   throw new Error("工具调用轮次过多，先停在这里");
@@ -5228,6 +5284,16 @@ window.onChatApi = function (id, status, text) {
 };
 
 /* ================= 启动 ================= */
+/* 浅/深两套大肥鱼头像都先解码：主题切换时导航图标不再因为首次绘制而闪一下 */
+(function preloadAgentIcons() {
+  ["agent-light.png", "agent-dark.png"].forEach(function (src) {
+    try {
+      var im = new Image();
+      im.src = src;
+      if (im.decode) im.decode().catch(function () { });
+    } catch (e) { }
+  });
+})();
 applyTheme();
 bootImportedBanks();
 /* 先把落盘的更新状态换算成小红点，再画界面：否则「我的」第一次渲染时

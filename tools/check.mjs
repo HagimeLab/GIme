@@ -1285,6 +1285,16 @@ ok("没有订阅时推增量不报错", (() => {
   try { W.onChatStream("nope", "text", "x"); return true; } catch (e) { return false; }
 })());
 
+/* 上游把正文攒成一大段时，气泡按剩余量分帧摊开；文本本身不丢 */
+const paceMsg = { live: true, text: "abcdef", shown: 2 };
+ok("流式正文按 shown 截断显示", W.liveText(paceMsg) === "ab", W.liveText(paceMsg));
+ok("收尾等摊完再切 Markdown",
+   /pokeLive\(live, function \(\) \{[\s\S]{0,60}live\.live = false;[\s\S]{0,30}chatRender\(\)/.test(html));
+ok("正文增量会触发摊开", /pokeLive\(live\)/.test(html) && /function pokeLive/.test(html));
+ok("导航大肥鱼双图用透明度切换", /\.ask-fish img \{[^}]*opacity: 0/.test(html)
+   && !/\.ask-fish \.ag-l \{ display: none/.test(html));
+ok("大小头像都预解码", /preloadAgentIcons/.test(html) && /agent-dark\.png/.test(html));
+
 /* ---------- 17. 会话（新建 / 历史 / 删除） ---------- */
 section("[17] 大肥鱼会话：新建 / 切换 / 删除");
 /* 上一段把 chatMsgs 清空了，这里先把会话状态摆回干净的一档 */
@@ -1648,6 +1658,9 @@ section("[22] 防封号：Cookie/指纹、会话复用、节流");
 const webSrc = fs.readFileSync(path.join(ROOT, "app/src/main/java/com/fan/shuatiku/DeepSeekWeb.java"), "utf8");
 const bridgeSrc = fs.readFileSync(path.join(ROOT, "app/src/main/java/com/fan/shuatiku/DeepSeekBridge.java"), "utf8");
 const loginSrc = fs.readFileSync(path.join(ROOT, "app/src/main/java/com/fan/shuatiku/DeepSeekLoginActivity.java"), "utf8");
+const cronetSrc = fs.readFileSync(path.join(ROOT, "app/src/main/java/com/fan/shuatiku/CronetNet.java"), "utf8");
+const httpSrc = fs.readFileSync(path.join(ROOT, "app/src/main/java/com/fan/shuatiku/HttpNet.java"), "utf8");
+const gradleSrc = fs.readFileSync(path.join(ROOT, "app/build.gradle.kts"), "utf8");
 
 /* ① 登录必须把 Cookie 与设备指纹一起收下（只带 token 的流量最像脚本） */
 ok("登录页存 Cookie", loginSrc.indexOf("PREF_COOKIE") >= 0 && loginSrc.indexOf("cookieHeader()") >= 0);
@@ -1897,9 +1910,17 @@ ok("桥接层用 cancel 而不是裸 abort", /web\.cancel\(\)/.test(bridgeSrc));
 section("[28] 请求头对齐登录 WebView 的真实请求");
 
 /* 基线来自登录 WebView 自己发出的 GET /api/v0/client/settings（见 docs 抓包记录） */
-ok("登录页与原生请求共用同一份 UA",
-   /setUserAgentString\(DeepSeekWeb\.UA\)/.test(loginSrc)
-   && loginSrc.indexOf("private static final String UA") < 0);
+ok("登录 WebView 用实际引擎版本拼 UA",
+   /setUserAgentString\(loginUa\(this\)\)/.test(loginSrc)
+   && /WebSettings\.getDefaultUserAgent\(ctx\)/.test(loginSrc));
+ok("原生 UA 跟随真机型号/系统",
+   /static void setDevice/.test(webSrc)
+   && /setDevice\(android\.os\.Build\.MODEL, android\.os\.Build\.VERSION\.RELEASE\)/.test(mainSrc)
+   && /setDevice\(android\.os\.Build\.MODEL, android\.os\.Build\.VERSION\.RELEASE\)/.test(loginSrc));
+ok("原生 UA / Client Hints 与 Cronet 版本对齐",
+   /Chrome\/155\.0\.8059\.16/.test(webSrc)
+   && /CH_UA/.test(webSrc)
+   && /v=\\"155\\"/.test(webSrc));
 ok("UA 带真实页面的设备型号段", webSrc.indexOf("Pixel 7") >= 0);
 ok("补了前端版本号",
    /CLIENT_VERSION = "2\.5\.0"/.test(webSrc)
@@ -1924,15 +1945,16 @@ ok("Referer 可按会话路径传入",
    /h\.put\("Referer", referer == null \|\| referer\.isEmpty\(\) \? ORIGIN \+ "\/" : referer\)/.test(webSrc));
 ok("完成请求用会话路径",
    /String sessionUrl = ORIGIN \+ "\/a\/chat\/s\/" \+ sessionId/.test(webSrc)
-   && /open\(CHAT_PATH, "POST", "\*\/\*", sessionUrl\)/.test(webSrc));
+   && /open\(CHAT_PATH, "POST", "\*\/\*", sessionUrl/.test(webSrc));
 ok("首轮挑战用根路径、后续用会话路径",
    /powHeader\(parentMessageId == null \? ORIGIN \+ "\/" : sessionUrl\)/.test(webSrc));
 ok("完成请求 Accept 是 */*",
-   /open\(CHAT_PATH, "POST", "\*\/\*", sessionUrl\)/.test(webSrc));
+   /open\(CHAT_PATH, "POST", "\*\/\*", sessionUrl/.test(webSrc));
 ok("body 字段与真实一致",
    /static JSONObject completionBody\(/.test(webSrc)
    && /body\.put\("model_type", "default"\)/.test(webSrc)
-   && /body\.put\("preempt", false\)/.test(webSrc));
+   && /body\.put\("preempt", false\)/.test(webSrc)
+   && /body\.put\("source", "default"\)/.test(webSrc));
 ok("body 顺序：session 在 prompt 之前",
    webSrc.indexOf('body.put("chat_session_id"') < webSrc.indexOf('body.put("prompt"'));
 /* x-hif 不是伪造：从官方 HIF 接口拉取，按 x-hif-ttl 缓存 */
@@ -1946,8 +1968,8 @@ ok("HIF 请求不带 Cookie / Authorization",
 ok("HIF 响应不污染聊天 Cookie 罐", hifBody.length > 0 && hifBody.indexOf("harvest(") < 0);
 ok("HIF 令牌按 TTL 缓存续期", /hifRefreshAt/.test(webSrc) && /HIF_REFRESH_MARGIN_MS/.test(webSrc));
 ok("完成请求挂上两枚令牌",
-   /c\.setRequestProperty\("x-hif-leim"/.test(webSrc)
-   && /c\.setRequestProperty\("x-hif-dliq"/.test(webSrc));
+   /extra\.put\("x-hif-leim"/.test(webSrc)
+   && /extra\.put\("x-hif-dliq"/.test(webSrc));
 ok("令牌只在完成请求挂，不当成通用头",
    !/h\.put\("x-hif-(leim|dliq)"/.test(webSrc));
 
@@ -1962,6 +1984,21 @@ ok("桥接层预建会话并记入 turns",
    /void newChat\(final String convKey\)/.test(bridgeSrc)
    && /turns\.put\(convKey, new Turn\(sid, null/.test(bridgeSrc));
 ok("预建失败不挡提问", /建会话失败不挡用户/.test(bridgeSrc));
+
+/* ---------- 29b. v1.0.9：Cronet 传输 ---------- */
+section("[29b] v1.0.9：Cronet 浏览器网络栈");
+ok("依赖 cronet-bundled 500.1.0", /org\.chromium\.net:cronet-bundled:500\.1\.0/.test(gradleSrc));
+ok("只带 ARM 两种 ABI", /abiFilters \+= listOf\("arm64-v8a", "armeabi-v7a"\)/.test(gradleSrc));
+ok("Cronet 关闭 QUIC、开启 H2", /enableQuic\(false\)/.test(cronetSrc) && /enableHttp2\(true\)/.test(cronetSrc));
+ok("Cronet 在 MainActivity / 登录页安装",
+   /CronetNet\.install\(this\)/.test(mainSrc) && /CronetNet\.install\(this\)/.test(loginSrc));
+ok("DeepSeekWeb 不再直连 HttpURLConnection",
+   /HttpNet\.open\(/.test(webSrc)
+   && webSrc.indexOf("import java.net.HttpURLConnection") < 0
+   && webSrc.indexOf("openConnection()") < 0);
+ok("传输层可回退（桌面测试）", /urlOpen\(/.test(httpSrc) && /static void install\(Impl/.test(httpSrc));
+ok("Cronet 回调失败不静默截断", /FailureInputStream/.test(cronetSrc) && /onFailed/.test(cronetSrc));
+ok("Cronet 读超时/连接超时会取消", /SocketTimeoutException/.test(cronetSrc) && /request\.cancel\(\)/.test(cronetSrc));
 
 /* ---------- 30. 大肥鱼正文 Markdown（思考链不算） ---------- */
 section("[30] 大肥鱼正文 Markdown");

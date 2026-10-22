@@ -190,13 +190,15 @@ API Key 模式，删本地时也会把网页侧一起删掉。
    `x-client-version`（2.5.0）/ `x-client-bundle-id`（com.deepseek.chat）/
    `x-device-model`（空值）/ `Accept-Language`、Client Hints（`sec-ch-ua-*`）、
    `Sec-Fetch-*`、`Cache-Control: no-cache`、`Pragma: no-cache`。
-   UA 与登录 WebView 共用同一份常量（都带 `; Pixel 7`）——以前原生请求少了这一段，
-   同一账号在登录和问答两条链路上报出两种浏览器。
+   UA 里的设备型号与 Android 版本取自真机（Build.MODEL / VERSION.RELEASE），与登录
+   WebView 的引擎 UA 使用同一台设备信息；Chrome 版本各自对齐自己的引擎——原生是
+   Cronet 155，登录 WebView 是它真实的 Chromium 80。
    语言、时区、Accept-Language 的条目与 q 值都按真实页面实测的形状生成，不写死。
    完成请求的 Origin / Referer（会话路径）/ Accept / body 形状也按实测对齐。
    只带 `Authorization`、不带 Cookie 的请求，正常浏览器**不可能**产生，那是最强的脚本特征。
    **完成请求上的两枚 `x-hif-*` 令牌**也从官方 HIF 接口按 TTL 拉取并缓存，原生就能挂上
-   （见「完成请求基线」）。真正补不了的只剩传输层（TLS / H2）与页面流量画像。
+   （见「完成请求基线」）。传输层已在 v1.0.9 换成 Cronet（见下面的实测），
+   真正补不了的只剩页面资源/埋点流量画像。
 
 ### 真实请求基线（2026-10-21）
 
@@ -246,7 +248,7 @@ HIF 是另一个 host，带过去既不对，也绝不能把它响应的 `Set-Co
 改后真机复测：完成请求 **200（带 HIF 版 4.6s）**，日志 `hif leim=73,dliq=73,attached=true`；
 中途停止 2.5s 内结束且无重试。
 
-已按这个基线改掉的：三枚缺失的客户端头、UA 与登录页统一、Accept-Language 的条目形状、
+已按这个基线改掉的：三枚缺失的客户端头、Accept-Language 的条目形状、
 完成请求的 Origin / Referer / Accept / body 形状，以及两枚 HIF 令牌的原生拉取与缓存。
 仍不一致、且不是补头能解决的：`x-requested-with`、页面流量画像，以及下面实测出来的传输层差异。
 
@@ -260,8 +262,23 @@ HIF 是另一个 host，带过去既不对，也绝不能把它响应的 `Set-Co
 | 原生（OkHttp / Conscrypt） | `9b02ebd3a43b62d825e1ac605b621dc8` | **仅 `http/1.1`** | 扩展里没有 GREASE / SCT / 证书压缩 |
 | WebView（Chromium 80） | `554719594ba90b02ae410c297c6e50ad` | `h2, http/1.1` | 带 GREASE、SCT、证书压缩等扩展 |
 
-JA3 不含 SNI，换主机不影响结论：**原生这条路连 HTTP/2 都不协商**，JA3 也和浏览器不同。
+JA3 不含 SNI，换主机不影响结论：v1.0.8 的原生这条路连 HTTP/2 都不协商，JA3 也和浏览器不同。
 这不是补请求头能修的，只能换传输栈（同源 WebView，或 Cronet 这类 Chromium 网络栈）。
+
+### v1.0.9：Cronet 实测（2026-10-22）
+
+原生 API / HIF 改走 `org.chromium.net:cronet-bundled:500.1.0`（native 155.0.8059.16，
+statically linked，QUIC 关闭、H2 打开）。用 Cronet 请求指纹体检页，真机读数：
+
+| 链路 | JA3 | ALPN | HTTP/2（Akamai） |
+|---|---|---|---|
+| 原生（Cronet 155） | `090e18a94158a024691e72e3b53ae59f` | **h2** | `1:65536;2:0;4:6291456;6:262144\|15663105\|0\|m,a,s,p` |
+| 登录 WebView（Chromium 80） | `554719594ba90b02ae410c297c6e50ad` | h2, http/1.1 | Chrome 80 自己的 |
+
+JA4 为 `t13d1516h2_8daaf6152771_806a8c22fdea`。UA 与 Client Hints 同步改成 Chrome 155；
+登录 WebView 的 UA 改为从 `WebSettings.getDefaultUserAgent()` 读出的引擎真实版本
+（Chrome/80.0.3987.132），不再用 Chrome/120 覆盖。
+两条链路各自自洽；登录 WebView 的引擎版本受设备限制，仍是 80。
 2. **Cookie 罐**：每个响应都吸收 `Set-Cookie`（同名替换、`Max-Age=0` / `Expires=1970` 删除），
    轮换后的 WAF 与会话 Cookie 立刻用于下一次请求并落盘。以前只看响应体、不看响应头，
    一直攥着登录那一刻的 Cookie 用到失效——那是「cookie 时间线和会话时间线对不上」。

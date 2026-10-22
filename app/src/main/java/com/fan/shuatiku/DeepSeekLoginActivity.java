@@ -78,6 +78,8 @@ public class DeepSeekLoginActivity extends Activity {
     @Override
     protected void onCreate(Bundle saved) {
         super.onCreate(saved);
+        CronetNet.install(this);
+        DeepSeekWeb.setDevice(android.os.Build.MODEL, android.os.Build.VERSION.RELEASE);
         setTitle("登录 DeepSeek");
 
         FrameLayout root = new FrameLayout(this);
@@ -88,9 +90,10 @@ public class DeepSeekLoginActivity extends Activity {
         s.setJavaScriptEnabled(true);
         s.setDomStorageEnabled(true);
         s.setDatabaseEnabled(true);
-        /* 普通手机 Chrome 的 UA：WebView 默认 UA 带 "; wv"，不少站点据此拦人机验证。
-           与原生请求共用同一份常量，否则同一账号会在两条链路上报出两种浏览器。 */
-        s.setUserAgentString(DeepSeekWeb.UA);
+        /* 用引擎自己的 Chrome 版本拼 UA：这台机器的 WebView 是 Chromium 80，
+           再报 Chrome/120 就是“UA 和真实 TLS/JS 引擎对不上”。去掉 WebView 的
+           "; wv" 与 Version/4.0 两段，其余保持真实引擎信息。 */
+        s.setUserAgentString(loginUa(this));
         web.setWebViewClient(new WebViewClient() {
             @Override public void onPageFinished(WebView view, String url) {
                 probe();
@@ -148,6 +151,24 @@ public class DeepSeekLoginActivity extends Activity {
 
     private int dp(int v) {
         return Math.round(getResources().getDisplayMetrics().density * v);
+    }
+
+    /** 登录 WebView 的 UA：Chrome 版本取 WebView 引擎自己的，不再冒充新版本。 */
+    private static String loginUa(android.content.Context ctx) {
+        String def = "";
+        try { def = WebSettings.getDefaultUserAgent(ctx); } catch (Exception ignored) { }
+        String ver = "";
+        int i = def.indexOf("Chrome/");
+        if (i >= 0) {
+            int j = i + 7, k = j;
+            while (k < def.length()
+                    && (Character.isDigit(def.charAt(k)) || def.charAt(k) == '.')) k++;
+            ver = def.substring(j, k);
+        }
+        if (ver.isEmpty()) return DeepSeekWeb.UA;
+        String model = android.os.Build.MODEL == null ? "Android" : android.os.Build.MODEL;
+        return "Mozilla/5.0 (Linux; Android " + android.os.Build.VERSION.RELEASE + "; " + model + ") " +
+               "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/" + ver + " Mobile Safari/537.36";
     }
 
     /** 请求头名大小写不固定，按小写查。 */

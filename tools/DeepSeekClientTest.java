@@ -301,8 +301,16 @@ public class DeepSeekClientTest {
         // ── 请求头对齐真实页面（2026-10-21 从登录 WebView 抓包）──
         java.util.Map<String, String> h = new DeepSeekWeb("tok", "a=1", "dev-1")
                 .headers("text/event-stream");
-        eq("UA 与登录 WebView 共用同一份", DeepSeekWeb.UA, h.get("User-Agent"));
+        eq("UA 与 Cronet 版本对齐", DeepSeekWeb.UA, h.get("User-Agent"));
         ok("UA 带设备型号段", DeepSeekWeb.UA.indexOf("; Pixel 7") > 0, DeepSeekWeb.UA);
+        ok("UA 的 Chrome 版本与 Cronet 155 一致",
+           DeepSeekWeb.UA.indexOf("Chrome/155.0.8059.16") > 0, DeepSeekWeb.UA);
+        ok("Client Hints 同版本", h.get("sec-ch-ua").indexOf("v=\"155\"") > 0,
+           h.get("sec-ch-ua"));
+        DeepSeekWeb.setDevice("M600 Pro", "11");
+        ok("原生 UA 跟随真机型号/系统",
+           DeepSeekWeb.UA.indexOf("Android 11; M600 Pro") > 0, DeepSeekWeb.UA);
+        DeepSeekWeb.setDevice("Pixel 7", "13");
         eq("前端版本号", "2.5.0", h.get("x-client-version"));
         eq("前端 bundle id", "com.deepseek.chat", h.get("x-client-bundle-id"));
         eq("设备型号头（真实页面为空值）", "", h.get("x-device-model"));
@@ -329,6 +337,7 @@ public class DeepSeekClientTest {
         eq("model_type 是 default", "default", cb.optString("model_type"));
         eq("首轮 parent 是 null", true, cb.isNull("parent_message_id"));
         eq("带 preempt:false", false, cb.optBoolean("preempt", true));
+        eq("带 source:default", "default", cb.optString("source"));
         eq("session 与 prompt 正确", "sid-1/问题",
            cb.optString("chat_session_id") + "/" + cb.optString("prompt"));
         eq("thinking 透传", true, cb.optBoolean("thinking_enabled"));
