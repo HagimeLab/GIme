@@ -2539,6 +2539,70 @@ ok("那坨标记不再出现在对话里",
    !W.chatMsgs.some((m) => String(m.text).indexOf("tool_call") >= 0),
    JSON.stringify(W.chatMsgs.map((m) => String(m.text).slice(0, 24))));
 
+/* 档 2：摘要版工具历史。工具结果不进历史（太贵），但「上一轮我做过什么」必须进，
+   否则「刚才那几题的解析再写一遍」只能重查一遍。 */
+W.chatMsgs = []; loopReqs = [];
+W.chatPush({ role: "user", text: "列一下判断题" });
+loopReplies = [askTool("list_questions", { bank: "lp", limit: 2 }, 21), finalText("给你两题。")];
+await W.chatRun(W.agentCfg());
+const digBubble = W.chatMsgs[W.chatMsgs.length - 1];
+ok("工具动作挂在了回答气泡上",
+   Array.isArray(digBubble.tools) && digBubble.tools.some((t) => t.indexOf("查了题库「循环测试库」") === 0),
+   JSON.stringify(digBubble.tools));
+ok("摘要里带 id、不带题干全文",
+   digBubble.tools[0].indexOf("lp-0") >= 0 && digBubble.tools[0].indexOf("这一题干特意写得长一点") < 0,
+   digBubble.tools[0]);
+
+W.chatMsgs.push({ role: "user", text: "把刚才那两题的解析写成「好」" });
+loopReqs = [];
+loopReplies = [finalText("写好了。")];
+await W.chatRun(W.agentCfg());
+const histJson = JSON.stringify(loopReqs[0].body.messages);
+ok("追问那一轮：历史里带着上一轮的摘要",
+   histJson.indexOf("这一轮我做过") >= 0 && histJson.indexOf("lp-0") >= 0, histJson.slice(0, 240));
+ok("摘要只进请求，不改气泡正文",
+   digBubble.text === "给你两题。" && digBubble.text.indexOf("这一轮我做过") < 0, digBubble.text);
+
+/* 旧会话（没有 tools 字段）不该凭空多出摘要 */
+W.chatMsgs = [{ role: "user", text: "老问题" }, { role: "assistant", text: "老回答" }];
+loopReqs = []; loopReplies = [finalText("新回答")];
+await W.chatRun(W.agentCfg());
+ok("旧会话照旧：没有摘要也不出错",
+   JSON.stringify(loopReqs[0].body.messages).indexOf("这一轮我做过") < 0 &&
+   W.chatMsgs[W.chatMsgs.length - 1].text === "新回答");
+
+/* 摘要的体积上限与 id 截断 */
+ok("id 超过 10 个写「…等 N 题」",
+   W.digestIds(Array.from({ length: 30 }, (_, i) => "q" + i), 10).slice(-6) === "等 30 题",
+   W.digestIds(Array.from({ length: 30 }, (_, i) => "q" + i), 10));
+const capped = W.capDigest(Array.from({ length: 10 }, () => "字".repeat(200)));
+ok("摘要最多 6 行、400 字封顶",
+   capped.length <= 6 && capped.join("").length <= 400, capped.length + " 行");
+
+/* 导入摘要：待确认 → 已确认/已取消；卡没了的旧行要说得出来 */
+W.onChatFile("摘要.txt", "1. 题干\nA. 甲\nB. 乙\n答案：A");
+W.chatMsgs = []; loopReqs = [];
+W.chatPush({ role: "user", text: "导入这个" });
+loopReplies = [
+  askTool("import_attachment", { bankName: "摘要库",
+    questions: [{ type: "single", stem: "摘要题干甲", options: ["甲", "乙"], answer: ["A"] }] }, 31),
+  finalText("已放进待确认。")
+];
+await W.chatRun(W.agentCfg());
+const impBubble = W.chatMsgs[W.chatMsgs.length - 1];
+ok("导入摘要先写「待确认」",
+   Array.isArray(impBubble.tools) && impBubble.tools[0].indexOf("导入附件：待确认 1 题") === 0,
+   JSON.stringify(impBubble.tools));
+W.chatCancelImport();
+ok("取消后那条摘要改写成「已取消」", impBubble.tools[0].indexOf("已取消") >= 0, impBubble.tools[0]);
+
+W.chatMsgs = [{ role: "assistant", text: "放着", tools: ["导入附件：待确认 2 题"] }];
+loopReqs = []; loopReplies = [finalText("好")];
+await W.chatRun(W.agentCfg());
+ok("卡已经不在了就说清楚，别让模型以为还挂着",
+   JSON.stringify(loopReqs[0].body.messages).indexOf("卡已关闭，没有导入") >= 0,
+   JSON.stringify(loopReqs[0].body.messages).slice(0, 200));
+
 W.BANK.subjects = W.BANK.subjects.filter((s) => s.id !== "lp");
 W.BANK.questions = W.BANK.questions.filter((q) => q.subject !== "lp");
 Object.keys(W.byId).forEach((k) => { if (k.indexOf("lp-") === 0) delete W.byId[k]; });

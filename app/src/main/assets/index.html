@@ -5419,18 +5419,24 @@ function chatConfirmImport() {
   var saved = saveImportBank(p.name, p.usable, p.source);
   if (!saved.ok) {
     chatRender();
+    patchImportDigest("写盘失败", "");
     chatPush({ role: "error", text: "没能保存题库：写文件失败，请检查存储空间后重试" });
     chatRender();
     return;
   }
   chatPush({ role: "note", text: "已导入 " + p.usable.length + " 题，题库「" + saved.subj.name + "」" +
     (p.rep.total !== p.usable.length ? "（附件里认出 " + p.rep.total + " 题，按条件收 " + p.usable.length + " 题）" : "") });
+  patchImportDigest("已确认", "题库「" + saved.subj.name + "」" + p.usable.length + " 题");
   chatFile = null;
   renderChatFile();
   chatRender();
   toast("已导入 " + p.usable.length + " 题");
 }
-function chatCancelImport() { chatPending = null; chatRender(); }
+function chatCancelImport() {
+  chatPending = null;
+  patchImportDigest("已取消", "");
+  chatRender();
+}
 /* 名字超长时卡片上只给「改题库名」：改完卡片会重画成正常的「导入 N 题」。 */
 function chatRenamePending() {
   if (!chatPending) return;
@@ -5504,12 +5510,23 @@ async function chatRun(cfg, attachMeta) {
   /* 历史只带最近 8 条：API Key 模式每轮都要重发，12 条纯属多花钱；
      内置通道复用上游会话时本来也不发历史。 */
   chatMsgs.slice(-8).forEach(function (m) {
-    if (m.role === "user" || m.role === "assistant") messages.push({ role: m.role, content: m.text });
+    if (m.role !== "user" && m.role !== "assistant") return;
+    var dig2 = "";
+    if (m.role === "assistant" && Array.isArray(m.tools) && m.tools.length) {
+      /* 「待确认」要带上卡的现状：卡已经不在了就说清楚，
+         否则模型会把历史里那句当成"卡还挂着"而不再调工具（真机踩过）。 */
+      dig2 = "\n（这一轮我做过：" + m.tools.map(function (t) {
+        return (t.indexOf("导入附件：待确认") === 0 && !chatPending)
+          ? t + "（卡已关闭，没有导入）" : t;
+      }).join("；") + "）";
+    }
+    messages.push({ role: m.role, content: m.text + dig2 });
   });
   var isBuiltin = /^builtin:/.test(String(cfg.url || ""));
   /* 同一个 (工具, 参数) 在一次请求里出现第二次，就是模型在绕圈：
      本地工具不花钱，但轮次是硬预算，第二次不再重复执行、只把话挑明。 */
   var seenCall = {};
+  var dig = [];   /* 这一轮做过的工具动作，收口时挂到回答气泡上 */
   /* 一条流式气泡 + 它的增量回调。收口那一轮也要用，所以抽出来。 */
   function liveBubble() {
     var m = chatPush({ role: "assistant", text: "", reasoning: "", live: true }, true);
@@ -5581,6 +5598,7 @@ async function chatRun(cfg, attachMeta) {
         if (fr === "length") payload += "\n（上游这一轮被长度上限截断，参数可能不完整；需要时重新给一次调用）";
         messages.push({ role: "tool", tool_call_id: call.id, content: payload });
         chatPush({ role: "step", text: toolStepText(fn.name, out, errText) }, true);
+        dig.push(toolDigestLine(fn.name, args, out, errText));
       }
       chatRender();
       continue;
@@ -5595,6 +5613,7 @@ async function chatRun(cfg, attachMeta) {
     if (fr === "length" && answer) {
       chatPush({ role: "step", text: "这一回答太长按上限截断了，说「继续」我接着讲" }, true);
     }
+    if (dig.length) live.tools = capDigest(dig);
     if (!live.reasoning) live.reasoning = String(msg.reasoning_content || "");
     /* live 先别关：settle 期间 chatLiveHtml 仍按纯文本显示，等 shown 追上全量
        再切 Markdown。否则最后一大段会在收尾时一次性砸出来。 */
@@ -5632,6 +5651,7 @@ async function chatRun(cfg, attachMeta) {
     chatRender();
     return;
   }
+  if (dig.length) fin.tools = capDigest(dig);
   if (!fin.reasoning) fin.reasoning = String((m2 && m2.reasoning_content) || "");
   chatSave();
   pokeLive(fin, function () { fin.live = false; chatRender(); });
@@ -5724,6 +5744,60 @@ function toolStepText(name, out, err) {
   if (name === "import_attachment")
     return label + "：认出 " + (out.matched || 0) + " 题，等你在卡片上确认";
   return label;
+}
+/* 摘要版工具历史（档 2）：工具结果本身不进历史（太贵），但「上一轮我做过什么」
+   必须进，否则「刚才那几题的解析再写一遍」这类追问只能重查一遍。
+   只留 id 与计数，不留题干全文：write_* 按 id 写，模型拿到 id 就够用。 */
+var DIGEST_LINE_MAX = 200, DIGEST_TOTAL_MAX = 400;
+function digestIds(list, cap) {
+  var ids = [];
+  for (var i = 0; i < list.length && i < cap; i++) ids.push(String(list[i]));
+  return ids.join(", ") + (list.length > cap ? " …等 " + list.length + " 题" : "");
+}
+function toolDigestLine(name, args, out, errText) {
+  if (errText) return "× " + (TOOL_LABELS[name] || name) + "没成：" + errText.slice(0, 80);
+  if (name === "list_questions") {
+    var qs = (out && out.questions) || [];
+    return "查了题库「" + ((out.bank && out.bank.name) || args.bank || "?") + "」" +
+      (typeof out.offset === "number" ? " offset " + out.offset : "") + "：给回 " + qs.length +
+      " 题（" + digestIds(qs.map(function (q) { return q.id; }), 10) + "）" +
+      (out.truncated ? "，半页" : "");
+  }
+  if (name === "write_explanations" || name === "write_answers") {
+    var items = (args && Array.isArray(args.items)) ? args.items.map(function (it) { return it && it.id; }) : [];
+    return (name === "write_explanations" ? "写回 " : "改了 ") + ((out && out.updated) || 0) +
+      " 条：" + digestIds(items, 10);
+  }
+  if (name === "get_current_question") return "读了当前题目：" + ((out && out.id) || "?");
+  if (name === "import_attachment")
+    return "导入附件：待确认 " + ((out && out.matched) || 0) + " 题";
+  return TOOL_LABELS[name] || name;
+}
+function capDigest(list) {
+  var out = [], total = 0;
+  for (var i = 0; i < list.length && out.length < 6; i++) {
+    var line = String(list[i]).slice(0, DIGEST_LINE_MAX);
+    if (total + line.length > DIGEST_TOTAL_MAX) break;
+    out.push(line);
+    total += line.length;
+  }
+  return out;
+}
+/* 确认卡的结果要回写进历史里那句「待确认」：不然模型下一轮
+   看到它会以为卡还挂着（真机踩过一次）。 */
+function patchImportDigest(state, detail) {
+  for (var i = chatMsgs.length - 1; i >= 0; i--) {
+    var m = chatMsgs[i];
+    if (m.role !== "assistant" || !Array.isArray(m.tools)) continue;
+    for (var k = m.tools.length - 1; k >= 0; k--) {
+      if (m.tools[k].indexOf("导入附件：待确认") === 0) {
+        m.tools[k] = "导入附件 → " + state + (detail ? "：" + detail : "");
+        chatSave();
+        return true;
+      }
+    }
+  }
+  return false;
 }
 function chatTool(name, args) {
   if (name === "get_current_question") {
