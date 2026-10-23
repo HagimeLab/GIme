@@ -2301,6 +2301,33 @@ W.localStorage.setItem("stk.progress.v2", "{}");
 W.restoreProgFromBackup();
 ok("主记录空而备份有货时开机恢复", Object.keys(W.prog).length === 2, Object.keys(W.prog).length);
 
+/* ---------- 29h. 完成率口径：今日待刷与题库卡片 ----------
+   这两处显示的是「已刷 / 总数」，不是答对率；两格必须分开算，别让 `rate` 混进来。 */
+section("[29h] 完成率：今日待刷与题库卡片");
+W.BANK.subjects.push({ id: "tf_done", name: "完成率测试", count: 4, custom: true, file: "x.md" });
+for (let i = 0; i < 4; i++) {
+  const q = { id: "tf_done-" + i, subject: "tf_done", type: "judge", stem: "题干" + i,
+              options: [["A", "对"], ["B", "错"]], answer: ["A"] };
+  W.BANK.questions.push(q); W.byId[q.id] = q;
+}
+W.prog["tf_done-0"] = { n: 1, w: 0, last: 1, b: 0, t: 1 };
+const sd = W.stats("tf_done");
+ok("完成率 = 已刷 / 总数（答对率另算）", sd.done === 25 && sd.rate === 100,
+   JSON.stringify({ done: sd.done, rate: sd.rate }));
+
+W.goTab("home");
+const homeRate = String(W.document.getElementById("tasks").innerHTML);
+ok("今日待刷行写「完成率 25%」，不再出现「正确率」",
+   homeRate.indexOf("完成率 25%") >= 0 && homeRate.indexOf("正确率") < 0, homeRate.slice(0, 240));
+W.goTab("bank");
+const bankRate = String(W.document.getElementById("bankList").innerHTML);
+ok("题库卡片的大百分比用完成率", bankRate.indexOf(">25%</div>") >= 0, bankRate.slice(0, 240));
+
+W.BANK.subjects = W.BANK.subjects.filter((s) => s.id !== "tf_done");
+W.BANK.questions = W.BANK.questions.filter((q) => q.subject !== "tf_done");
+Object.keys(W.byId).forEach((k) => { if (k.indexOf("tf_done-") === 0) delete W.byId[k]; });
+delete W.prog["tf_done-0"];
+
 /* ---------- 结果 ---------- */
 console.log("\n" + "=".repeat(46));
 if (fails.length) {

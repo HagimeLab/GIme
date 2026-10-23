@@ -1157,6 +1157,8 @@ function stats(sid, tf) {
   });
   var wrong = qs.filter(inWrong).length;
   return { total: qs.length, seen: seen, rated: rated, right: right, wrong: wrong, mark: mark, lastT: lastT,
+           /* 完成率 = 已刷 / 总数：题库卡片与今日待刷用的是这一格，别和 rate（答对率）混用 */
+           done: qs.length ? Math.round(seen / qs.length * 100) : 0,
            rate: rated ? Math.round(right / rated * 100) : 0 };
 }
 
@@ -2285,7 +2287,7 @@ function renderTasks(noQ) {
               '<button class="task" onclick="pickMode(&quot;practice&quot;,&quot;' + s.id + '&quot;)">' +
               '<span class="ck"><span class="box' + (left <= 0 ? " ok" : "") + '"></span></span>' +
               '<span class="bd"><b>' + esc(s.name) + "</b><small>" +
-                (left <= 0 ? "已全部刷过" : "剩余 " + left + " 题未刷") + " · 正确率 " + t.rate + "%</small></span>" +
+                (left <= 0 ? "已全部刷过" : "剩余 " + left + " 题未刷") + " · 完成率 " + t.done + "%</small></span>" +
               '<span class="rt">' + left + "<i>题</i></span>" +
             "</button></div>";
   });
@@ -2383,7 +2385,7 @@ function renderBank() {
                '<div style="flex:1;min-width:0"><b class="bk-name" style="font-size:1rem">' + esc(s.name) + "</b>" +
                '<em class="bk-sub" style="font-style:normal;display:block;font-size:.6875rem;color:var(--ink-3)">' +
                t.total + " 题 · 已刷 " + t.seen + " · 错题 " + t.wrong + "</em></div>" +
-               '<div class="bk-pct" style="font-size:1.5rem;font-weight:800">' + t.rate + "%</div></div>" +
+               '<div class="bk-pct" style="font-size:1.5rem;font-weight:800">' + t.done + "%</div></div>" +
              '<div class="bk-acts" style="display:flex;margin-top:16px">' +
                '<button style="flex:1;padding:12px 0;border-radius:16px;background:var(--ink);color:var(--paper);font-size:.8125rem;font-weight:700" ' +
                  'onclick="startSession(&quot;practice&quot;,&quot;' + s.id + '&quot;,&quot;' + bankTf + '&quot;,&quot;bank&quot;)">继续刷</button>' +
