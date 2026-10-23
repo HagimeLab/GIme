@@ -5179,7 +5179,7 @@ function chatRender() {
   var h = "";
   /* 空会话不再往列表里塞提示：中间的 hero 自带虚线提示 */
   chatMsgs.forEach(function (m) {
-    if (m.role === "error" || m.role === "note") {
+    if (m.role === "error" || m.role === "note" || m.role === "step") {
       h += '<div class="chat-note">' + esc(m.text) + "</div>";
       return;
     }
@@ -5507,21 +5507,30 @@ async function chatRun(cfg, attachMeta) {
     if (m.role === "user" || m.role === "assistant") messages.push({ role: m.role, content: m.text });
   });
   var isBuiltin = /^builtin:/.test(String(cfg.url || ""));
+  /* 同一个 (工具, 参数) 在一次请求里出现第二次，就是模型在绕圈：
+     本地工具不花钱，但轮次是硬预算，第二次不再重复执行、只把话挑明。 */
+  var seenCall = {};
+  /* 一条流式气泡 + 它的增量回调。收口那一轮也要用，所以抽出来。 */
+  function liveBubble() {
+    var m = chatPush({ role: "assistant", text: "", reasoning: "", live: true }, true);
+    m.onDelta = function (kind, chunk) {
+      if (kind === "think") { m.reasoning += chunk; chatLivePaint(m); }
+      else {
+        if (m.shown == null) m.shown = m.text.length;
+        m.text += chunk;
+        pokeLive(m);
+      }
+    };
+    return m;
+  }
   for (var round = 0; round < rounds; round++) {
     /* 最后一轮不再给工具定义：逼模型直接作答，省掉那几百 token 的 schema，
        也避免它没完没了地继续调工具。 */
     var lastRound = round === rounds - 1;
     /* 两条接入都走流式：内置通道是原生拆私有方言，API Key 是原生拆标准 SSE，
        页面这边一视同仁——先摆一个空气泡，边收边往里填。 */
-    var live = chatPush({ role: "assistant", text: "", reasoning: "", live: true }, true);
-    var onDelta = function (kind, chunk) {
-      if (kind === "think") { live.reasoning += chunk; chatLivePaint(live); }
-      else {
-        if (live.shown == null) live.shown = live.text.length;
-        live.text += chunk;
-        pokeLive(live);
-      }
-    };
+    var live = liveBubble();
+    var onDelta = live.onDelta;
     var data;
     var body = { model: cfg.model, messages: messages, temperature: 0.3,
                  max_tokens: fileRun ? CHAT_FILE_MAX_TOKENS : 1200 };
@@ -5537,7 +5546,14 @@ async function chatRun(cfg, attachMeta) {
     }
     var msg = data && data.choices && data.choices[0] && data.choices[0].message;
     if (!msg) { chatDrop(live); throw new Error("API 返回里没有 choices[0].message"); }
+    var fr = (data.choices[0] && data.choices[0].finish_reason) || "";
     var calls = msg.tool_calls || [];
+    /* 上游把调用写成了正文（或者只是想照样模仿）：摘出来执行，
+       别把那坨标记甩给用户。摘不动的原样留着。 */
+    if (!calls.length && String(msg.content || "").indexOf(TOOL_BLOCK_OPEN) >= 0) {
+      var sp = splitToolBlocks(msg.content);
+      if (sp.calls.length) { calls = sp.calls; msg.content = sp.text; live.text = sp.text; }
+    }
     if (calls.length) {
       /* 这一轮只是在调工具，不是给用户看的回答：把流式气泡收掉，别留一串工具 JSON。 */
       chatDrop(live);
@@ -5548,21 +5564,23 @@ async function chatRun(cfg, attachMeta) {
         else if (typeof fn.arguments === "string") {
           try { args = JSON.parse(fn.arguments); } catch (e) { args = {}; }
         }
-        var out;
+        var out, errText = "";
         try { out = chatTool(fn.name, args); }
-        catch (e) { out = { error: e && e.message ? e.message : String(e) }; }
+        catch (e) { errText = e && e.message ? e.message : String(e); out = { error: errText }; }
+        var sig = fn.name + JSON.stringify(args);
+        if (!errText && seenCall[sig]) {
+          out.note = "这个调用上一轮已经执行过，结果没变。请基于已有信息作答，或换个条件再查。";
+        } else if (!errText) {
+          seenCall[sig] = 1;
+        }
         /* 工具结果会随后续每次请求重发。先按「少给几道题」缩，实在还超再硬截——
            直接切字符串会把 JSON 切坏，模型拿到半截括号更容易胡编。 */
-        var payload = JSON.stringify(out);
-        if (payload.length > 3000 && out && Array.isArray(out.questions)) {
-          while (out.questions.length > 1 && JSON.stringify(out).length > 3000) out.questions.pop();
-          payload = JSON.stringify(out);
-        }
-        if (payload.length > 3000) payload = payload.slice(0, 3000) + "…(截断)";
+        var payload = shrinkToolResult(out);
+        /* 上游被 max_tokens 掐断时，工具参数可能是半截 JSON（上面已经退化成 {} 并报错）。
+           明说一句，模型才会自己重发，而不是拿着空参数往下编。 */
+        if (fr === "length") payload += "\n（上游这一轮被长度上限截断，参数可能不完整；需要时重新给一次调用）";
         messages.push({ role: "tool", tool_call_id: call.id, content: payload });
-        if (fn.name === "write_explanations" && out && out.updated) {
-          chatPush({ role: "note", text: "已把 " + out.updated + " 条解析写回题库" });
-        }
+        chatPush({ role: "step", text: toolStepText(fn.name, out, errText) }, true);
       }
       chatRender();
       continue;
@@ -5571,7 +5589,12 @@ async function chatRun(cfg, attachMeta) {
     /* 流式已经把正文填进去了；工具调用轮次之后正文可能没流全，用最终值兜底。
        只在真的拿到正文时才覆盖 —— 否则上游「只调工具不回答」时会把已流出的字擦掉。 */
     if (answer) live.text = answer;
-    else if (!live.text) live.text = "（大肥鱼没有返回文字）";
+    else if (!live.text) live.text = fr === "length"
+      ? "（这一轮只写了思考过程，就被长度上限掐断了。再问一次试试。）" : "（大肥鱼没有返回文字）";
+    /* 正文被 max_tokens 截断时，界面看着像「答完了」——不说的话用户以为这就是全文 */
+    if (fr === "length" && answer) {
+      chatPush({ role: "step", text: "这一回答太长按上限截断了，说「继续」我接着讲" }, true);
+    }
     if (!live.reasoning) live.reasoning = String(msg.reasoning_content || "");
     /* live 先别关：settle 期间 chatLiveHtml 仍按纯文本显示，等 shown 追上全量
        再切 Markdown。否则最后一大段会在收尾时一次性砸出来。 */
@@ -5588,7 +5611,30 @@ async function chatRun(cfg, attachMeta) {
     });
     return;
   }
-  throw new Error("工具调用轮次过多，先停在这里");
+  /* 步数用完不再抛错：原来这里 throw，用户只看到一条报错，而这几步已经查到的
+     东西一起丢了。改成不带工具再要一次「用已有信息作答」，并如实标一句停在哪。 */
+  messages.push({ role: "system", content: "工具步骤已用完（" + rounds + " 步）。只用上面已经拿到的信息直接回答用户，" +
+    "还差什么就直说，不要再调用工具。" });
+  chatPush({ role: "step", text: "工具步骤用完 " + rounds + " 步，先按已经拿到的信息作答" }, true);
+  var fin = liveBubble();
+  var d2;
+  try {
+    d2 = await chatRequest(cfg, { model: cfg.model, messages: messages, temperature: 0.3,
+                                  max_tokens: fileRun ? CHAT_FILE_MAX_TOKENS : 1200 }, fin.onDelta);
+  } catch (e) { chatDrop(fin); throw e; }
+  var m2 = d2 && d2.choices && d2.choices[0] && d2.choices[0].message;
+  var a2 = String((m2 && m2.content) || "").trim();
+  if (a2) fin.text = a2;
+  if (!fin.text) {
+    chatDrop(fin);
+    chatPush({ role: "error", text: "工具步骤用完，还是没能凑出答案。把问题缩小一点再问一次。" });
+    chatSave();
+    chatRender();
+    return;
+  }
+  if (!fin.reasoning) fin.reasoning = String((m2 && m2.reasoning_content) || "");
+  chatSave();
+  pokeLive(fin, function () { fin.live = false; chatRender(); });
 }
 var CHAT_ROUNDS = 3;
 function chatSysBase() {
@@ -5600,6 +5646,85 @@ function chatSysBase() {
 function chatCtxMsg(ctx) { return "当前题目上下文（JSON）：" + JSON.stringify(ctx); }
 /* 合起来的一份仍保留：单测和「没人问题时」的旧调用点都用它。 */
 function chatSystem(ctx) { return chatSysBase() + chatCtxMsg(ctx); }
+/* 单条工具结果最多带多少字符：它会随这一轮之后的每次请求重发。 */
+var TOOL_RESULT_MAX = 3000;
+/* 缩工具结果，但缩完必须让模型看得出「这是半页」——
+   静默丢掉题目尾巴，模型就会拿半页数据自信地答完（原来就是这么干的）。 */
+function shrinkToolResult(out) {
+  var payload = JSON.stringify(out);
+  if (payload.length <= TOOL_RESULT_MAX) return payload;
+  if (out && Array.isArray(out.questions) && out.questions.length > 1) {
+    var all = out.questions, keep = all.length;
+    while (keep > 1) {
+      out.questions = all.slice(0, keep - 1);
+      if (JSON.stringify(out).length <= TOOL_RESULT_MAX) { keep--; break; }
+      keep--;
+    }
+    out.questions = all.slice(0, keep);
+    var trunc = { given: keep, total: typeof out.total === "number" ? out.total : all.length };
+    if (typeof out.offset === "number") trunc.next_offset = out.offset + keep;
+    out.truncated = trunc;
+    out.note = "只给回前 " + trunc.given + " 题（共 " + trunc.total + " 题）" +
+      (trunc.next_offset != null ? "，接着要就用 offset=" + trunc.next_offset : "") + "。";
+    return JSON.stringify(out);
+  }
+  var head = payload.slice(0, TOOL_RESULT_MAX - 800);
+  return head + "…(中间省略 " + (payload.length - head.length - 800) +
+         " 字，这一条不完整，需要别的内容请换条件重查)… " + payload.slice(-800);
+}
+/* 上游把工具调用当正文写出来，两种情形都见过：内置通道本来就是文本约定；
+   API Key 通道在「最后一轮没给工具定义」时，模型也会照自己见过的格式写一坨
+   （真机抓到过一次，那坨直接甩给用户看，下划线还被 Markdown 吃掉一半）。
+   所以两条通道统一在这里摘出来执行，摘不动的原样留着当正文。 */
+function splitToolBlocks(text) {
+  var rest = String(text || ""), pos = 0, out = "", calls = [];
+  while (true) {
+    var open = rest.indexOf(TOOL_BLOCK_OPEN, pos);
+    if (open < 0) { out += rest.slice(pos); break; }
+    var close = rest.indexOf(TOOL_BLOCK_CLOSE, open + TOOL_BLOCK_OPEN.length);
+    if (close < 0) { out += rest.slice(pos); break; }
+    out += rest.slice(pos, open);
+    var inner = rest.slice(open + TOOL_BLOCK_OPEN.length, close)
+      .replace(/^\s*```[a-zA-Z]*\s*/, "").replace(/\s*```\s*$/, "").trim();
+    var one = null;
+    try {
+      var obj = JSON.parse(inner), fn = obj.function || obj;
+      var name = fn.name || obj.name || "";
+      var args = fn.arguments != null ? fn.arguments : obj.arguments;
+      if (name) {
+        if (args && typeof args === "object") args = JSON.stringify(args);
+        one = { id: "txt_" + (++toolBlockSeq), type: "function",
+                function: { name: name, arguments: String(args == null ? "{}" : args) } };
+      }
+    } catch (e) { one = null; }
+    if (one) calls.push(one);
+    else out += rest.slice(open, close + TOOL_BLOCK_CLOSE.length);   // 不像调用：原样给用户看
+    pos = close + TOOL_BLOCK_CLOSE.length;
+  }
+  return { text: out.trim(), calls: calls };
+}
+var TOOL_BLOCK_OPEN = "<" + "tool_call" + ">";
+var TOOL_BLOCK_CLOSE = "<" + "/tool_call" + ">";
+var toolBlockSeq = 0;
+var TOOL_LABELS = { get_current_question: "读了当前题目", list_questions: "查了题库",
+  write_explanations: "写回解析", write_answers: "改了答案", import_attachment: "认了附件里的题" };
+/* 给用户看的一行「这一步干了什么」。工具轮次以前是把气泡整个丢掉的，
+   多步查题期间用户只看到转圈，不知道它在做什么、也没法判断它跑偏了。 */
+function toolStepText(name, out, err) {
+  var label = TOOL_LABELS[name] || name;
+  if (err) return "× " + label + "没成：" + err;
+  if (!out) return label;
+  if (name === "list_questions") {
+    var g = out.truncated ? out.truncated.given : (out.questions || []).length;
+    return label + "「" + ((out.bank && out.bank.name) || "?") + "」：给回 " + g + " 题" +
+      (out.truncated ? "（共 " + out.truncated.total + " 题，半页）" : "");
+  }
+  if (name === "write_explanations") return label + " " + (out.updated || 0) + " 条";
+  if (name === "write_answers") return label + " " + (out.updated || 0) + " 题";
+  if (name === "import_attachment")
+    return label + "：认出 " + (out.matched || 0) + " 题，等你在卡片上确认";
+  return label;
+}
 function chatTool(name, args) {
   if (name === "get_current_question") {
     var now = chatQuestionCtx();

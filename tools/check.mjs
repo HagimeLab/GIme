@@ -1290,7 +1290,8 @@ const paceMsg = { live: true, text: "abcdef", shown: 2 };
 ok("流式正文按 shown 截断显示", W.liveText(paceMsg) === "ab", W.liveText(paceMsg));
 ok("收尾等摊完再切 Markdown",
    /pokeLive\(live, function \(\) \{[\s\S]{0,60}live\.live = false;[\s\S]{0,30}chatRender\(\)/.test(html));
-ok("正文增量会触发摊开", /pokeLive\(live\)/.test(html) && /function pokeLive/.test(html));
+ok("正文增量会触发摊开",
+   /function liveBubble\(\) \{[\s\S]{0,400}pokeLive\(m\)/.test(html) && /function pokeLive/.test(html));
 ok("导航大肥鱼双图用透明度切换", /\.ask-fish img \{[^}]*opacity: 0/.test(html)
    && !/\.ask-fish \.ag-l \{ display: none/.test(html));
 ok("大小头像都预解码", /preloadAgentIcons/.test(html) && /agent-dark\.png/.test(html));
@@ -1770,8 +1771,10 @@ const streamSrc = fs.readFileSync(path.join(ROOT, "app/src/main/java/com/fan/shu
 /* 页面侧：不能再有「只有内置通道才建流式气泡」的分支 */
 ok("页面不再按 builtin 决定是否流式", !/var live = cfg\.builtin \?/.test(html),
    "仍有 cfg.builtin 三目");
-ok("两条通道共用同一个流式气泡", /var live = chatPush\(\{ role: "assistant", text: "", reasoning: "", live: true \}/.test(html));
-ok("onDelta 不再判空", /var onDelta = function \(kind, chunk\)/.test(html));
+ok("两条通道共用同一个流式气泡（收口那轮也走它）",
+   /function liveBubble\(\) \{[\s\S]{0,140}role: "assistant", text: "", reasoning: "", live: true/.test(html) &&
+   /var live = liveBubble\(\);/.test(html) && /var fin = liveBubble\(\);/.test(html));
+ok("onDelta 不再判空", /m\.onDelta = function \(kind, chunk\)/.test(html));
 
 /* 原生侧：API Key 走 OpenAiStream，且它解析的是标准 SSE */
 ok("chatApi 调用了 OpenAiStream", /OpenAiStream\.run\(url, key, body/.test(mainSrc));
@@ -1821,8 +1824,13 @@ ok("带附件识别那一轮单独放宽轮次与输出",
    /var rounds = fileRun \? CHAT_FILE_ROUNDS : CHAT_ROUNDS;/.test(html) &&
    /max_tokens: fileRun \? CHAT_FILE_MAX_TOKENS : 1200/.test(html), "带附件那轮没走独立额度");
 ok("最后一轮不再给工具定义", /if \(!lastRound\) \{ body\.tools = CHAT_TOOLS/.test(html));
-ok("工具结果缩到 3000 字", /payload\.length > 3000/.test(html));
-ok("超长先砍题数再切串", /while \(out\.questions\.length > 1 && JSON\.stringify\(out\)\.length > 3000\)/.test(html));
+ok("工具结果有单独的缩口径（不再散在循环里）",
+   /var TOOL_RESULT_MAX = 3000;/.test(html) && /function shrinkToolResult\(out\)/.test(html) &&
+   /var payload = shrinkToolResult\(out\);/.test(html));
+ok("缩完必须让模型看得出是半页（given/total/next_offset + note）",
+   /out\.truncated = trunc;/.test(html) && /next_offset/.test(html) &&
+   /只给回前 /.test(html) && !/out\.questions\.pop\(\)/.test(html),
+   "静默 pop 会让模型拿半页数据自信答完");
 ok("对话取题默认 5 条", /limit: args\.limit \|\| 5/.test(html));
 
 
@@ -2409,6 +2417,132 @@ W.BANK.subjects = W.BANK.subjects.filter((s) => s.id !== "tf_done");
 W.BANK.questions = W.BANK.questions.filter((q) => q.subject !== "tf_done");
 Object.keys(W.byId).forEach((k) => { if (k.indexOf("tf_done-") === 0) delete W.byId[k]; });
 delete W.prog["tf_done-0"];
+
+/* ---------- 29i. 档 1：工具循环的收口、截断、过程可见 ----------
+   这四条都是「模型侧行为」，光看源码形状不算，必须拿桩把整轮喂出来验。 */
+section("[29i] 大肥鱼循环：步数收口 / 截断可发现 / 每步可见 / 长度上限说实话");
+W.BANK.subjects.push({ id: "lp", name: "循环测试库", count: 30, custom: true, file: "x.md" });
+for (let i = 0; i < 30; i++) {
+  const q = { id: "lp-" + i, subject: "lp", type: "single",
+              stem: "这一题干特意写得长一点，好让三十道题的工具结果超过三千字上限：" + "甲".repeat(50) + i,
+              options: [["A", "甲"], ["B", "乙"]], answer: ["A"], explain: "" };
+  W.BANK.questions.push(q); W.byId[q.id] = q;
+}
+W.set.agent = { base: "https://api.example.com/v1", model: "m1", key: "sk-test" };
+const stepTexts = () => W.chatMsgs.filter((m) => m.role === "step").map((m) => m.text);
+const toolPayloadOf = (req) => req.body.messages.filter((m) => m.role === "tool").map((m) => m.content).join("\n");
+let loopReqs = [], loopReplies = [];
+W.Android = {
+  chatApi: (id, url, body) => {
+    loopReqs.push({ body: JSON.parse(body) });
+    const next = loopReplies.shift();
+    W.onChatApi(id, 200, JSON.stringify(next === undefined
+      ? { choices: [{ message: { role: "assistant", content: "（桩没准备这一轮的回复）" } }] } : next));
+  },
+  saveBank: () => true
+};
+const askTool = (name, args, uniq) => ({ choices: [{ finish_reason: "tool_calls", message: {
+  role: "assistant", content: "", tool_calls: [{ id: "c" + uniq, type: "function",
+  function: { name, arguments: JSON.stringify(args) } }] } }] });
+const finalText = (t, fr) => ({ choices: [{ finish_reason: fr || "stop",
+  message: { role: "assistant", content: t } }] });
+
+/* ① 步数用尽：最后一轮没给工具却还在调工具 ⇒ 走「不带工具的收口轮」，不抛错 */
+W.chatMsgs = []; W.chatBusy = false;
+W.chatPush({ role: "user", text: "这库里有多少题？" });
+loopReplies = [
+  askTool("list_questions", { bank: "lp", limit: 30 }, 1),
+  askTool("list_questions", { bank: "lp", limit: 30, offset: 1 }, 2),
+  askTool("list_questions", { bank: "lp", limit: 30, offset: 2 }, 3),
+  finalText("按已经拿到的信息：这个库共 30 题。")
+];
+let loopThrew = null;
+try { await W.chatRun(W.agentCfg()); } catch (e) { loopThrew = e; }
+ok("步数用尽不再抛错（原来 throw 会把已查到的东西一起丢掉）",
+   loopThrew === null, String(loopThrew && loopThrew.message));
+const finReq = loopReqs[loopReqs.length - 1];
+ok("多要了一次「不带工具」的收口请求",
+   loopReqs.length === W.CHAT_ROUNDS + 1 && finReq.body.tools === undefined,
+   JSON.stringify({ n: loopReqs.length, rounds: W.CHAT_ROUNDS,
+     tools: loopReqs.map((r) => !!r.body.tools) }));
+ok("收口那轮把「只用已有信息作答」写进了消息里",
+   JSON.stringify(loopReqs[loopReqs.length - 1].body.messages).indexOf("工具步骤已用完") >= 0);
+ok("收口的回答正常上屏",
+   W.chatMsgs[W.chatMsgs.length - 1].text.indexOf("共 30 题") >= 0,
+   W.chatMsgs[W.chatMsgs.length - 1].text);
+ok("如实标一句停在哪一步", stepTexts().some((t) => t.indexOf("工具步骤用完 " + W.CHAT_ROUNDS + " 步") >= 0),
+   JSON.stringify(stepTexts()));
+
+/* ③ 过程可见：每一步留一行，而不是把工具轮的气泡整个丢掉 */
+ok("每次工具调用都留了一行在做什么",
+   stepTexts().filter((t) => t.indexOf("查了题库") >= 0).length === W.CHAT_ROUNDS,
+   JSON.stringify(stepTexts()));
+ok("那行写的是题数，不是原始 JSON",
+   stepTexts().some((t) => /查了题库「循环测试库」：给回 \d+ 题/.test(t)), JSON.stringify(stepTexts()));
+ok("step 行不进模型历史（只给人看）",
+   !JSON.stringify(loopReqs[loopReqs.length - 1].body.messages).includes("查了题库「循环测试库」：给回"));
+
+/* ② 截断可发现：砍完必须告诉模型「这是半页、接着要请用 offset」 */
+const truncMsg = toolPayloadOf(loopReqs[1]);
+ok("超上限的结果被缩住，且带 given/total/next_offset",
+   truncMsg.length < 4200 && truncMsg.indexOf('"truncated"') >= 0 &&
+   truncMsg.indexOf("next_offset") >= 0, truncMsg.length);
+ok("note 里明说只给回前几题", truncMsg.indexOf("只给回前 ") >= 0 && truncMsg.indexOf("共 30 题") >= 0);
+ok("不再静默 pop：模型不会拿着半页以为是全量",
+   truncMsg.indexOf("…(截断)") < 0, truncMsg.slice(-120));
+const prose = W.shrinkToolResult({ big: "字".repeat(6000) });
+ok("没有 questions 的结果改带头+尾，中间省略多少字写出来",
+   prose.indexOf("中间省略") >= 0 && prose.slice(-2) === '"}' &&
+   prose.length < 3100, prose.length + " / 结尾 " + prose.slice(-8));
+
+/* ⑤ 同一 (工具, 参数) 第二次出现：不再重复执行，只把话挑明 */
+W.chatMsgs = []; loopReqs = [];
+W.chatPush({ role: "user", text: "再说一遍这库多少题" });
+loopReplies = [
+  askTool("list_questions", { bank: "lp", limit: 5 }, 9),
+  askTool("list_questions", { bank: "lp", limit: 5 }, 10),
+  finalText("30 题。")
+];
+await W.chatRun(W.agentCfg());
+ok("重复调用被挡下来（第二次不再执行，只提醒别绕圈）",
+   toolPayloadOf(loopReqs[2]).indexOf("上一轮已经执行过") >= 0, toolPayloadOf(loopReqs[2]).slice(0, 160));
+
+/* ④ finish_reason：页面以前从不读它，截断看起来像「答完了」 */
+W.chatMsgs = []; loopReqs = [];
+W.chatPush({ role: "user", text: "讲讲这库" });
+loopReplies = [finalText("这是一段被上游长度上限掐断在中间的回答", "length")];
+await W.chatRun(W.agentCfg());
+ok("正文被长度上限截断时会说出来",
+   stepTexts().some((t) => t.indexOf("截断") >= 0 && t.indexOf("继续") >= 0), JSON.stringify(stepTexts()));
+W.chatMsgs = []; loopReqs = [];
+W.chatPush({ role: "user", text: "再来一次" });
+loopReplies = [finalText("", "length")];
+await W.chatRun(W.agentCfg());
+ok("只有思考链就被掐断时，不再显示成「没有返回文字」",
+   W.chatMsgs[W.chatMsgs.length - 1].text.indexOf("掐断") >= 0,
+   W.chatMsgs[W.chatMsgs.length - 1].text);
+
+/* ⑤ 上游把调用写成了正文（API Key 通道真机抓到过）：摘出来执行，别把标记甩给用户 */
+W.chatMsgs = []; loopReqs = [];
+W.chatPush({ role: "user", text: "再列一次" });
+loopReplies = [
+  { choices: [{ finish_reason: "stop", message: { role: "assistant", content:
+      "还差几道。<tool_call>{\"name\":\"list_questions\",\"arguments\":{\"bank\":\"lp\",\"limit\":2}}</tool_call>" } }] },
+  finalText("补齐了。")
+];
+await W.chatRun(W.agentCfg());
+ok("写成正文的调用被摘出来执行",
+   loopReqs.length === 2 && JSON.stringify(loopReqs[1].body.messages).indexOf('"role":"tool"') >= 0 &&
+   stepTexts().some((t) => t.indexOf("查了题库") >= 0),
+   JSON.stringify({ n: loopReqs.length, steps: stepTexts() }));
+ok("那坨标记不再出现在对话里",
+   !W.chatMsgs.some((m) => String(m.text).indexOf("tool_call") >= 0),
+   JSON.stringify(W.chatMsgs.map((m) => String(m.text).slice(0, 24))));
+
+W.BANK.subjects = W.BANK.subjects.filter((s) => s.id !== "lp");
+W.BANK.questions = W.BANK.questions.filter((q) => q.subject !== "lp");
+Object.keys(W.byId).forEach((k) => { if (k.indexOf("lp-") === 0) delete W.byId[k]; });
+delete W.Android;
 
 /* ---------- 结果 ---------- */
 console.log("\n" + "=".repeat(46));
