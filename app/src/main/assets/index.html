@@ -476,6 +476,7 @@ button.rec:active { opacity: .62; }
 .chat-att:active { background: var(--raise); }
 /* 待确认的附件导入：和 note 同样占一行，但带两个按钮 */
 .chat-confirm .cf-name { font-weight: 600; color: var(--ink); }
+.chat-confirm .cf-warn { margin-top: 8px; font-size: .75rem; font-weight: 600; color: var(--ink); }
 .chat-confirm .cf-acts { display: flex; gap: 10px; margin-top: 10px; }
 .chat-confirm button { flex: 1; padding: 9px 0; border-radius: 12px; border: none; font-size: .8125rem; }
 .chat-confirm .cf-ok { background: var(--ink); color: var(--paper); }
@@ -3714,9 +3715,21 @@ window.onImportText = function (name, text) {
     var ok = qs.filter(usableQ);
     if (!qs.length) { onImportError("没在文件里认出题目（题号要像 1、2、3 这样连续编号）"); return; }
     importStage("save");
-    setTimeout(function () { finishImport(qs, ok); }, 30);
+    setTimeout(function () { importWithName(qs, ok); }, 30);
   }, 60);
 };
+/* 落盘前先过名字那道闸：超过 30 字就让人改名，改完带着新名字继续导入。
+   文件名（题源）保持原样，只改显示名。 */
+function importWithName(qs, ok) {
+  var want = bankName(importName);
+  if (bankNameTooLong(want)) {
+    askBankNameThen(want, "这份题库的名字有 " + want.length + " 字", function (n) {
+      finishImport(qs, ok, n);
+    });
+    return;
+  }
+  finishImport(qs, ok);
+}
 /* 导入结果的统计口径统一在这里：无答案题必须在「原始解析结果」上数，
    usable 已经把它滤掉了，在 usable 上数永远是 0。主观题另算，不算「无答案」。 */
 function importReport(all, usable) {
@@ -3760,14 +3773,15 @@ function importLine(rep) {
   return esc(s);
 }
 /* 落盘只有这一处实现：导入卡和大肥鱼的附件确认共用，免得两份口径慢慢漂开。 */
-function saveImportBank(name, usable) {
+function saveImportBank(displayName, usable, sourceName) {
+  var src = sourceName == null ? displayName : sourceName;
   var sid = "import_" + Date.now().toString(36);
-  var subj = { id: sid, name: bankName(name), file: name, count: usable.length, custom: true };
+  var subj = { id: sid, name: bankName(displayName), file: src, count: usable.length, custom: true };
   usable.forEach(function (x, i) {
     x.num = i + 1;
     x.id = sid + "-" + i;
     x.subject = sid;
-    x.source = name;
+    x.source = src;
   });
   var payload = { subject: subj, questions: usable };
   var ok = true;
@@ -3780,8 +3794,8 @@ function saveImportBank(name, usable) {
   }
   return { ok: ok, sid: sid, subj: subj };
 }
-function finishImport(all, usable) {
-  var r = saveImportBank(importName, usable);
+function finishImport(all, usable, displayName) {
+  var r = saveImportBank(displayName || importName, usable, importName);
   var saved = r.ok, subj = r.subj;
   importStage("done");
   var rep = importReport(all, usable);
@@ -3800,6 +3814,36 @@ function finishImport(all, usable) {
 }
 function bankName(file) {
   return String(file).replace(/\.(docx|doc|pdf|txt|md)$/i, "").replace(/^[\s\-—_]+|[\s\-—_]+$/g, "") || "导入题库";
+}
+
+/* 题库名上限 30 字。超长不静默截断：先把人拦下来改名，改完再继续原来的动作——
+   悄悄砍掉半截名字，用户下次在列表里认不出这是哪份题。 */
+var BANK_NAME_MAX = 30;
+var bankNameOkFn = null;
+function bankNameTooLong(n) { return String(n == null ? "" : n).length > BANK_NAME_MAX; }
+function askBankNameThen(current, why, onOk) {
+  var full = String(current == null ? "" : current);
+  var sh = document.getElementById("sheet3");
+  sh.innerHTML = '<div class="handle"></div><h2>题库名太长了</h2>' +
+    '<div class="note" style="margin:0 0 14px">' + esc(why) + '，题库名最多 ' + BANK_NAME_MAX +
+      ' 字。改短之后才能继续。</div>' +
+    '<input class="rn-box" id="bnName" maxlength="' + BANK_NAME_MAX + '" placeholder="题库显示名" value="' +
+      esc(full.slice(0, BANK_NAME_MAX)) + '" onkeydown="if(event.key===&quot;Enter&quot;)bankNameOk()">' +
+    '<button class="sheet-act" style="margin-top:18px" onclick="bankNameOk()">用这个名字继续</button>' +
+    '<div class="sl-hint" style="margin:16px 0 0">原名字 ' + full.length + ' 字：' + esc(full) + '</div>';
+  bankNameOkFn = onOk;
+  openLayer(sh);
+  setTimeout(function () { var b = document.getElementById("bnName"); if (b) b.focus(); }, 320);
+}
+function bankNameOk() {
+  var el = document.getElementById("bnName");
+  var v = nz(String(el && el.value || ""));
+  if (!v) { toast("名字别空着"); return; }
+  if (v.length > BANK_NAME_MAX) { toast("题库名最多 " + BANK_NAME_MAX + " 字"); return; }
+  var fn = bankNameOkFn;
+  bankNameOkFn = null;
+  closeTop();
+  if (fn) fn(v);
 }
 window.onImportError = function (msg) {
   var sh = document.getElementById("sheet3");
@@ -3888,7 +3932,7 @@ function renameBank(sid, name) {
   var s = subjectOf(sid);
   if (!s) return;
   var n = nz(String(name || ""));
-  if (n.length > 30) n = n.slice(0, 30);
+  if (n.length > BANK_NAME_MAX) { toast("题库名最多 " + BANK_NAME_MAX + " 字"); return; }
   if (!n) { toast("名字别空着"); return; }
   if (n === s.name) { closeTop(); return; }
   var old = s.name;
@@ -4025,7 +4069,11 @@ function mcpImport(args) {
   if (!usable.length) throw new Error("没有可收录的题目：认出 " + rep.total + " 题，可用 0 题（缺选项/答案）");
   if (!window.Android || !Android.saveBank) throw new Error("当前环境不能保存题库");
   var name = String(args.name == null ? "" : args.name).trim() || "MCP 导入";
-  if (name.length > 30) name = name.slice(0, 30);
+  /* 超长不截断：agent 背后没有人能改名字，让它换一个短名再来，
+     否则写进题库的是半截名字，用户在列表里认不出这是哪份题。 */
+  if (bankNameTooLong(name)) {
+    throw new Error("题库名最多 " + BANK_NAME_MAX + " 字（这个名字 " + name.length + " 字），请换一个更短的显示名再导入");
+  }
   var sid, n = 0;
   do { sid = "import_" + (Date.now() + n).toString(36); n++; } while (subjectOf(sid));
   var subj = { id: sid, name: name, file: "mcp.txt", count: usable.length, custom: true };
@@ -5025,10 +5073,17 @@ function chatRender() {
   /* 待确认的附件导入：不写进 chatMsgs，也不落盘 —— 刷新后菜单消失是正确行为，
      因为附件正文只活在内存里，留着半截状态反而害人。 */
   if (chatPending) {
+    var tooLong = bankNameTooLong(chatPending.name);
     h += '<div class="chat-note chat-confirm"><span class="cf-name">' + esc(chatPending.name) + "</span><br>" +
       esc(chatFileLine(chatPending.rep)) +
-      '<div class="cf-acts"><button class="cf-no" onclick="chatCancelImport()">取消</button>' +
-      '<button class="cf-ok" onclick="chatConfirmImport()">导入 ' + chatPending.usable.length + " 题</button></div></div>";
+      (tooLong
+        ? '<div class="cf-warn">题库名 ' + chatPending.name.length + " 字，超过 " + BANK_NAME_MAX +
+          " 字上限，得先改短。</div>" +
+          '<div class="cf-acts"><button class="cf-no" onclick="chatCancelImport()">取消</button>' +
+          '<button class="cf-ok" onclick="chatRenamePending()">改题库名</button></div>'
+        : '<div class="cf-acts"><button class="cf-no" onclick="chatCancelImport()">取消</button>' +
+          '<button class="cf-ok" onclick="chatConfirmImport()">导入 ' + chatPending.usable.length + " 题</button></div>") +
+      "</div>";
   }
   if (chatBusy && !chatHasLive()) {
     h += '<div class="msg ai">' + agentAvaHtml() + '<div class="bubble typing">大肥鱼正在想…</div></div>';
@@ -5168,6 +5223,7 @@ function chatImportAttachment(args) {
   if (!usable.length) throw new Error("按这个条件没有可收录的题（认出 " + picked.length + " 题，可用 0 题）");
   chatPending = {
     name: String(args.bankName == null ? "" : args.bankName).trim() || chatFile.name.replace(/\.[^.]+$/, ""),
+    source: chatFile.name,
     picked: picked, usable: usable, rep: rep
   };
   chatRender();
@@ -5177,8 +5233,13 @@ function chatImportAttachment(args) {
 function chatConfirmImport() {
   if (!chatPending) return;
   var p = chatPending;
+  if (bankNameTooLong(p.name)) {
+    toast("题库名最多 " + BANK_NAME_MAX + " 字，先改短");
+    chatRenamePending();
+    return;
+  }
   chatPending = null;
-  var saved = saveImportBank(p.name, p.usable);
+  var saved = saveImportBank(p.name, p.usable, p.source);
   if (!saved.ok) {
     chatRender();
     chatPush({ role: "error", text: "没能保存题库：写文件失败，请检查存储空间后重试" });
@@ -5193,6 +5254,16 @@ function chatConfirmImport() {
   toast("已导入 " + p.usable.length + " 题");
 }
 function chatCancelImport() { chatPending = null; chatRender(); }
+/* 名字超长时卡片上只给「改题库名」：改完卡片会重画成正常的「导入 N 题」。 */
+function chatRenamePending() {
+  if (!chatPending) return;
+  var cur = chatPending.name;
+  askBankNameThen(cur, "这个题库名有 " + String(cur).length + " 字", function (n) {
+    if (!chatPending) return;
+    chatPending.name = n;
+    chatRender();
+  });
+}
 
 async function chatSend() {
   if (chatBusy) return;

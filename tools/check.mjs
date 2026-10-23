@@ -2166,6 +2166,50 @@ try { W.chatImportAttachment({}); } catch (e) { attErr = String((e && e.message)
 ok("没有附件时工具报错，而不是空写", attErr.indexOf("没有附件") >= 0, attErr);
 delete W.Android;
 
+/* ---------- 29e. v1.1.1：题库名 30 字上限 ----------
+   超长不静默截断：导入与附件都先拦下来改名；MCP 侧 agent 没有人能改名，直接报错。 */
+section("[29e] 题库名上限：超长先改名，不静默截断");
+W.Android = { saveBank: (id, json) => { attSaved.push([id, JSON.parse(json)]); return true; } };
+attSaved.length = 0;
+
+const LONG_NAME = "一".repeat(31);
+const longQs = W.parseBankText(sampleSrc), longOk = longQs.filter(W.usableQ);
+W.importName = LONG_NAME + ".md";
+W.importWithName(longQs, longOk);
+ok("导入：超长名字不写盘", attSaved.length === 0, attSaved.length);
+ok("导入：弹出改名卡",
+   String(W.document.getElementById("sheet3").innerHTML).indexOf("题库名太长了") >= 0);
+W.document.getElementById("bnName").value = "改短后的库名";
+W.bankNameOk();
+ok("导入：改名后写盘一次", attSaved.length === 1, attSaved.length);
+ok("导入：显示名用新名字、题源仍是原文件名",
+   attSaved[0][1].subject.name === "改短后的库名" && attSaved[0][1].questions[0].source === W.importName,
+   attSaved[0][1].subject.name + " / " + attSaved[0][1].questions[0].source);
+
+W.onChatFile("附件.md", sampleSrc);
+W.chatImportAttachment({ bankName: "库".repeat(31) });
+const longCard = String(W.document.getElementById("chatList").innerHTML);
+ok("附件：超长名字的卡片不给直接导入，只给改名",
+   longCard.indexOf("改题库名") >= 0 && longCard.indexOf("导入 " + longOk.length + " 题") < 0);
+W.chatConfirmImport();
+ok("附件：没改名就点导入也不写盘", attSaved.length === 1, attSaved.length);
+W.chatRenamePending();
+W.document.getElementById("bnName").value = "附件短名";
+W.bankNameOk();
+ok("附件：改名后卡片回到可导入", !!(W.chatPending && W.chatPending.name === "附件短名"),
+   W.chatPending && W.chatPending.name);
+W.chatConfirmImport();
+ok("附件：确认后写盘，题源是附件文件名",
+   attSaved.length === 2 && attSaved[1][1].subject.name === "附件短名" &&
+   attSaved[1][1].questions[0].source === "附件.md", attSaved.length);
+
+const mcpLong = W.mcpDispatch({ jsonrpc: "2.0", id: 90, method: "tools/call",
+  params: { name: "import_bank", arguments: { name: "甲".repeat(31), text: sampleSrc } } });
+ok("MCP：超长名字直接拒绝且不写盘",
+   !!(mcpLong.result && mcpLong.result.isError === true) && attSaved.length === 2,
+   JSON.stringify(mcpLong).slice(0, 160));
+delete W.Android;
+
 /* ---------- 结果 ---------- */
 console.log("\n" + "=".repeat(46));
 if (fails.length) {
