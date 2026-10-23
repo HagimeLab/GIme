@@ -481,6 +481,7 @@ button.rec:active { opacity: .62; }
 /* 待确认的附件导入：和 note 同样占一行，但带两个按钮 */
 .chat-confirm .cf-name { font-weight: 600; color: var(--ink); }
 .chat-confirm .cf-warn { margin-top: 8px; font-size: .75rem; font-weight: 600; color: var(--ink); }
+.chat-confirm .cf-wait { margin-top: 8px; font-size: .75rem; color: var(--ink-3); }
 .chat-confirm .cf-acts { display: flex; gap: 10px; margin-top: 10px; }
 .chat-confirm button { flex: 1; padding: 9px 0; border-radius: 12px; border: none; font-size: .8125rem; }
 .chat-confirm .cf-ok { background: var(--ink); color: var(--paper); }
@@ -5214,7 +5215,9 @@ function chatRender() {
     var tooLong = bankNameTooLong(chatPending.name);
     h += '<div class="chat-note chat-confirm"><span class="cf-name">' + esc(chatPending.name) + "</span><br>" +
       esc(chatFileLine(chatPending.rep)) +
-      (tooLong
+      (chatPending.parsing
+        ? '<div class="cf-wait">还在识别，等正文里的题全部交完再让你确认；要提前结束就点输入框右边的「停止」。</div>'
+        : tooLong
         ? '<div class="cf-warn">题库名 ' + chatPending.name.length + " 字，超过 " + BANK_NAME_MAX +
           " 字上限，得先改短。</div>" +
           '<div class="cf-acts"><button class="cf-no" onclick="chatCancelImport()">取消</button>' +
@@ -5413,7 +5416,8 @@ function chatImportAttachment(args) {
                 : String(args.bankName == null ? "" : args.bankName).trim() ||
                   chatFile.name.replace(/\.[^.]+$/, ""),
     source: chatFile.name,
-    picked: all, usable: usable, rep: rep
+    picked: all, usable: usable, rep: rep,
+    parsing: true
   };
   chatRender();
   return { needConfirm: true, added: added, invalid: bad, duplicated: dup,
@@ -5424,6 +5428,7 @@ function chatImportAttachment(args) {
 }
 function chatConfirmImport() {
   if (!chatPending) return;
+  if (chatPending.parsing) return;   /* 还在识别：按钮本来就没画，兜底也不许落库 */
   var p = chatPending;
   if (bankNameTooLong(p.name)) {
     toast("题库名最多 " + BANK_NAME_MAX + " 字，先改短");
@@ -5504,6 +5509,7 @@ async function chatSendText(text) {
     /* 重试提示是临时灰字，报错时留着只会让对话更乱；一并清掉。 */
     chatMsgs = chatMsgs.filter(function (m) { return m.role !== "note"; });
     chatPush({ role: "error", text: em === "已停止" ? "已停止这次回答。" : "大肥鱼没答上来：" + em });
+    if (chatPending) chatPending.parsing = false;   /* 停了也别把已收到的困在卡里 */
   }
   chatBusy = false;
   chatRender();
@@ -5517,6 +5523,12 @@ async function chatSendText(text) {
     await chatSendText("继续：把正文里还没交回的题接着交回来，一次尽量多交（最多 " +
                        IMPORT_BATCH + " 题）；全部交完就直接说交完了。");
     return;
+  }
+  /* 识别全部跑完（或被打断）才把「取消 / 导入 N 题」放出来：
+     中途点导入等于只导了半份，用户会以为这就是全部。 */
+  if (chatPending && chatPending.parsing) {
+    chatPending.parsing = false;
+    chatRender();
   }
   if (openLayers.indexOf(document.getElementById("chat")) < 0) {
     chatUnread = true;

@@ -2200,6 +2200,8 @@ const again = W.chatImportAttachment({ questions: agentBatch(0, half) });
 ok("同一批重发按同一道题计，不重复收录",
    again.added === 0 && again.duplicated === half && W.chatPending.picked.length === ssAll.length,
    JSON.stringify(again));
+if (W.chatPending) W.chatPending.parsing = false;   /* 读卡前假装这一轮已经跑完 */
+W.chatRender();
 const cardHtml = String(W.document.getElementById("chatList").innerHTML);
 ok("确认卡渲染出题库名与可导入题数",
    cardHtml.indexOf("附件识别库") >= 0 && cardHtml.indexOf("导入 " + ssOk + " 题") >= 0,
@@ -2239,6 +2241,7 @@ const willSave = W.chatPending.usable.length;
 ok("卡片上的可收录数 = 举例那 8 题里可用的 + 这批补上的三题",
    willSave === ssOk + 3, willSave + " vs " + ssOk);
 ok("确认前始终一次都没写盘", attSaved.length === 0, attSaved.length);
+if (W.chatPending) W.chatPending.parsing = false;   /* 直接调工具绕过了发送管线：手动表示「跑完了」 */
 W.chatConfirmImport();
 ok("点确认后写盘一次，题数与卡片一致",
    attSaved.length === 1 && attSaved[0][1].questions.length === willSave,
@@ -2277,9 +2280,12 @@ ok("导入：显示名用新名字、题源仍是原文件名",
 
 W.onChatFile("附件.md", sampleSrc);
 W.chatImportAttachment({ bankName: "库".repeat(31), questions: agentBatch(0, longOk.length) });
+if (W.chatPending) W.chatPending.parsing = false;   /* 读卡前假装这一轮已经跑完 */
+W.chatRender();
 const longCard = String(W.document.getElementById("chatList").innerHTML);
 ok("附件：超长名字的卡片不给直接导入，只给改名",
    longCard.indexOf("改题库名") >= 0 && longCard.indexOf("导入 " + longOk.length + " 题") < 0);
+if (W.chatPending) W.chatPending.parsing = false;   /* 直接调工具绕过了发送管线：手动表示「跑完了」 */
 W.chatConfirmImport();
 ok("附件：没改名就点导入也不写盘", attSaved.length === 1, attSaved.length);
 W.chatRenamePending();
@@ -2287,6 +2293,7 @@ W.document.getElementById("bnName").value = "附件短名";
 W.bankNameOk();
 ok("附件：改名后卡片回到可导入", !!(W.chatPending && W.chatPending.name === "附件短名"),
    W.chatPending && W.chatPending.name);
+if (W.chatPending) W.chatPending.parsing = false;   /* 直接调工具绕过了发送管线：手动表示「跑完了」 */
 W.chatConfirmImport();
 ok("附件：确认后写盘，题源是附件文件名",
    attSaved.length === 2 && attSaved[1][1].subject.name === "附件短名" &&
@@ -2635,6 +2642,27 @@ ok("自动续轮不会超过上限",
    /chatAutoRounds < CHAT_AUTO_ROUNDS/.test(html) && /var CHAT_AUTO_ROUNDS = 6;/.test(html));
 ok("用户自己发消息会把链条清零",
    /chatAutoRounds = 0;/.test(html), "手动发送没重置");
+/* 识别过程中不给按钮：中途点「导入」等于只导了半份 */
+W.chatMsgs = [];
+W.chatPending = { name: "半份卡", source: "x.txt", picked: [], usable: [{}, {}],
+                  rep: { total: 2, usable: 2, by: { single: 2 } }, parsing: true };
+W.chatRender();
+const midCard = String(W.document.getElementById("chatList").innerHTML);
+ok("识别中：卡上不给「导入」按钮",
+   midCard.indexOf("还在识别") >= 0 && midCard.indexOf("导入 2 题") < 0, midCard.slice(-260));
+let midSave = 0;
+W.Android = { saveBank: () => { midSave++; return true; } };
+W.chatConfirmImport();
+ok("识别中点导入也不落库", midSave === 0 && !!W.chatPending, midSave);
+W.chatPending.parsing = false;
+W.chatRender();
+const doneCard = String(W.document.getElementById("chatList").innerHTML);
+ok("跑完才放出「取消 / 导入 N 题」",
+   doneCard.indexOf("导入 2 题") >= 0 && doneCard.indexOf("取消") >= 0, doneCard.slice(-260));
+delete W.Android;
+W.chatPending = null;
+W.chatRender();
+
 W.chatFile = null;
 
 W.BANK.subjects = W.BANK.subjects.filter((s) => s.id !== "lp");
