@@ -1599,7 +1599,7 @@ function render() {
       h += '<div class="selfcheck"><button onclick="selfCheck(' + (S.self[cur.id] === 1 ? 0 : 1) + ')">' +
              (S.self[cur.id] === 1 ? "改判为待复习" : "改判为已掌握") + "</button></div>";
     }
-    h += '<div class="subj-tip">填空题和解答题由你自己核对，不计入正确率，也不进模拟考试。</div>';
+    h += '<div class="subj-tip">填空题和解答题由你自己核对，不进模拟考试。</div>';
   } else {
     h += '<div class="opts">';
     cur.options.forEach(function (o) {
@@ -2316,7 +2316,7 @@ function renderTasks(noQ) {
     if (t.r && validResume(t.r)) sub += " · 上次到第 " + (t.r.idx + 1) + " 题";
     return '<button class="rec" onclick="resumeRecent(&quot;' + t.id + '&quot;)">' +
              '<span class="n">' + esc(t.name) + "<i>" + sub + "</i></span>" +
-             '<span class="p"><b>' + t.rate + "%</b><small>正确率</small></span></button>";
+             '<span class="p"><b>' + t.done + "%</b><small>完成率</small></span></button>";
   }).join("") : '<div class="cap" style="margin:0">还没有练习记录</div>';
 }
 
@@ -2521,7 +2521,7 @@ function renderMe() {
   document.getElementById("meStat").innerHTML =
     '<div class="metrics">' +
       '<div class="metric"><b>' + a.seen + "</b><i>已刷题数</i></div>" +
-      '<div class="metric"><b>' + a.rate + "%</b><i>正确率</i></div>" +
+      '<div class="metric"><b>' + a.done + "%</b><i>完成率</i></div>" +
       '<div class="metric"><b>' + a.wrong + "</b><i>待消灭错题</i></div>" +
     "</div>" +
     '<div style="height:1px;background:var(--line);margin:18px 0"></div>' +
@@ -3313,11 +3313,11 @@ function openFS(which) {
   var fs = document.getElementById("fs"), body = "";
   if (which === "stat") {
     var a = stats("all");
-    body = '<div class="bignum">' + a.rate + '%</div><div class="cap">总体正确率 · 已答 ' + a.seen + " / " + a.total + "</div>";
+    body = '<div class="bignum">' + a.done + '%</div><div class="cap">完成度 · 已刷 ' + a.seen + " / " + a.total + "</div>";
     BANK.subjects.forEach(function (s) {
       var t = stats(s.id);
       body += '<button class="res" onclick="goTab(&quot;bank&quot;)"><b>' + esc(s.name) + "</b>" +
-              "<small>" + t.total + " 题 · 已答 " + t.seen + " · 正确率 " + t.rate + "% · 错题 " + t.wrong + "</small></button>";
+              "<small>" + t.total + " 题 · 已答 " + t.seen + " · 完成率 " + t.done + "% · 错题 " + t.wrong + "</small></button>";
     });
   } else if (which === "sample") {
     body = sampleBody();

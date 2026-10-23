@@ -2323,6 +2323,11 @@ W.goTab("bank");
 const bankRate = String(W.document.getElementById("bankList").innerHTML);
 ok("题库卡片的大百分比用完成率", bankRate.indexOf(">25%</div>") >= 0, bankRate.slice(0, 240));
 
+W.goTab("me");
+const meRate = String(W.document.getElementById("meStat").innerHTML);
+ok("「我的」那颗也换成完成率，全站不再出现「正确率」",
+   meRate.indexOf("完成率") >= 0 && meRate.indexOf("正确率") < 0, meRate.slice(0, 240));
+
 W.BANK.subjects = W.BANK.subjects.filter((s) => s.id !== "tf_done");
 W.BANK.questions = W.BANK.questions.filter((q) => q.subject !== "tf_done");
 Object.keys(W.byId).forEach((k) => { if (k.indexOf("tf_done-") === 0) delete W.byId[k]; });
