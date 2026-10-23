@@ -1290,6 +1290,16 @@ const paceMsg = { live: true, text: "abcdef", shown: 2 };
 ok("流式正文按 shown 截断显示", W.liveText(paceMsg) === "ab", W.liveText(paceMsg));
 ok("收尾等摊完再切 Markdown",
    /pokeLive\(live, function \(\) \{[\s\S]{0,60}live\.live = false;[\s\S]{0,30}chatRender\(\)/.test(html));
+ok("思维链增量走帧节流，不再每个 chunk 重排一次",
+   /if \(kind === "think"\) \{ m\.reasoning \+= chunk; chatLivePaintSoon\(m\); \}/.test(html) &&
+   /function chatLivePaintSoon\(m\)/.test(html));
+ok("流式期间思考链只画尾部（整段每帧重排是卡顿主因）",
+   /var THINK_LIVE_MAX = 900;/.test(html) && /if \(m\.live && think\.length > THINK_LIVE_MAX\)/.test(html) &&
+   /esc\(thinkView\)/.test(html));
+ok("同样的内容不重复写 DOM，滚动也节流",
+   /if \(m\._html === html\) return;/.test(html) && /now - _liveScrollAt > 120/.test(html));
+ok("被丢掉的气泡不再触发重画",
+   /m\._dead = true;/.test(html) && /if \(!m \|\| !m\.id \|\| m\._dead\) return;/.test(html));
 ok("正文增量会触发摊开",
    /function liveBubble\(\) \{[\s\S]{0,400}pokeLive\(m\)/.test(html) && /function pokeLive/.test(html));
 ok("导航大肥鱼双图用透明度切换", /\.ask-fish img \{[^}]*opacity: 0/.test(html)

@@ -4902,6 +4902,7 @@ function chatPush(m, quiet) {
 /* 丢掉一条还没落盘的气泡（工具调用轮次里临时建的流式消息）。 */
 function chatDrop(m) {
   if (!m) return;
+  m._dead = true;
   m._pump = false;
   m.live = false;
   var i = chatMsgs.indexOf(m);
@@ -5088,8 +5089,15 @@ function pokeLive(m, done) {
   }
   setTimeout(step, 0);
 }
+/* 流式期间只画思考链最后这一截：整段（几千字）每帧重新转义 + 重排，
+   手机上就是持续掉帧；答完再一次性渲染全文（默认收起，不占屏）。 */
+var THINK_LIVE_MAX = 900;
 function chatLiveHtml(m) {
   var think = String((m && m.reasoning) || "");
+  var thinkView = think;
+  if (m.live && think.length > THINK_LIVE_MAX) {
+    thinkView = "…（前 " + (think.length - THINK_LIVE_MAX) + " 字略）\n" + think.slice(-THINK_LIVE_MAX);
+  }
   var text = liveText(m);
   /* 工具轮次里上游吐的是 <tool_call>{...}，那是给解析器看的，别亮给用户。
      这一轮的气泡最后会被丢掉，但流式期间不能闪一串 JSON。 */
@@ -5108,7 +5116,7 @@ function chatLiveHtml(m) {
     out += '<details class="think"' + (open ? " open" : "") + ">" +
            '<summary onclick="chatThinkToggle(\'' + m.id + '\', !this.parentNode.open)">' +
            label + "</summary>" +
-           '<div class="think-body">' + esc(think).replace(/\n/g, "<br>") + "</div></details>";
+           '<div class="think-body">' + esc(thinkView).replace(/\n/g, "<br>") + "</div></details>";
   }
   if (text) {
     /* 流式期间保持纯文本（每 40ms 重排一次 Markdown 又慢又闪）；
@@ -5123,15 +5131,41 @@ function chatLiveHtml(m) {
   return out;
 }
 /* 只重画这一条流式气泡：整列表重画会丢滚动位置，也太费。 */
+var _liveScrollAt = 0;
 function chatLivePaint(m) {
-  if (!m || !m.id) return;
+  if (!m || !m.id || m._dead) return;
   var list = document.getElementById("chatList");
   if (!list || !list.querySelector) { chatRender(); return; }
   var box = list.querySelector('.msg[data-mid="' + m.id + '"]');
   var live = box && box.querySelector ? box.querySelector(".live") : null;
   if (!live) { chatRender(); return; }
-  live.innerHTML = chatLiveHtml(m);
-  list.scrollTop = list.scrollHeight;
+  var html = chatLiveHtml(m);
+  if (m._html === html) return;      /* 内容没变就别重排 */
+  m._html = html;
+  /* 先读后写：读一次布局决定要不要跟到底，免得 innerHTML 之后又强制重排 */
+  var near = list.scrollHeight - list.scrollTop - list.clientHeight < 160;
+  live.innerHTML = html;
+  var now = Date.now();
+  if (near && now - _liveScrollAt > 120) {
+    _liveScrollAt = now;
+    list.scrollTop = list.scrollHeight;
+  }
+}
+/* 思维链是一帧一截来的：每帧最多画一次，别每个 chunk 都重排。 */
+var _liveRaf = null, _liveQueue = [];
+function chatLivePaintSoon(m) {
+  if (!m || m._dead) return;
+  if (_liveQueue.indexOf(m) < 0) _liveQueue.push(m);
+  if (_liveRaf) return;
+  var raf = (typeof requestAnimationFrame === "function")
+    ? requestAnimationFrame
+    : function (f) { return setTimeout(f, 16); };
+  _liveRaf = raf(function () {
+    _liveRaf = null;
+    var q = _liveQueue;
+    _liveQueue = [];
+    for (var i = 0; i < q.length; i++) chatLivePaint(q[i]);
+  });
 }
 function agentAvaHtml() {
   return '<span class="ava"><img class="ag-l" src="agent-light.png" alt=""><img class="ag-d" src="agent-dark.png" alt=""></span>';
@@ -5571,7 +5605,7 @@ async function chatRun(cfg, attachMeta) {
   function liveBubble() {
     var m = chatPush({ role: "assistant", text: "", reasoning: "", live: true }, true);
     m.onDelta = function (kind, chunk) {
-      if (kind === "think") { m.reasoning += chunk; chatLivePaint(m); }
+      if (kind === "think") { m.reasoning += chunk; chatLivePaintSoon(m); }
       else {
         if (m.shown == null) m.shown = m.text.length;
         m.text += chunk;
