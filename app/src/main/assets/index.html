@@ -3800,9 +3800,15 @@ function importWithName(qs, ok) {
    一次上行多少字正文、一批多少题、识别给几轮、每轮多少输出额度。
    SEND_MAX 按「一份百题题库的正文」定，超过就在附件条和提示里明说只发了前截。 */
 var CHAT_FILE_SEND_MAX = 40000;
-var IMPORT_BATCH = 12;
-var CHAT_FILE_ROUNDS = 6;
-var CHAT_FILE_MAX_TOKENS = 3000;
+/* 一批交回多少题：24 题 ≈ 3–4k token，单轮不会把 JSON 写断；
+   再大就开始出现半截 JSON，宁可多走一步。 */
+var IMPORT_BATCH = 24;
+/* 一次请求最多走几步：8 × 24 ≈ 190 题，一份大题库一轮就能跑完。 */
+var CHAT_FILE_ROUNDS = 8;
+var CHAT_FILE_MAX_TOKENS = 6000;
+/* 一轮还交不完时，页面自己接着要，不用用户再喊「继续」。 */
+var CHAT_AUTO_ROUNDS = 6;
+var chatAutoRounds = 0, chatLastImported = 0;
 var extFile = null;
 var EXT_AGENT_PROMPT = "上一条系统消息里就是这份附件的正文。按导入格式逐题识别它，用 import_attachment 把题交回来：" +
   "一次最多 " + IMPORT_BATCH + " 题，没写完继续调用，直到正文里的题全部处理完；" +
@@ -5458,6 +5464,7 @@ function chatRenamePending() {
 }
 
 async function chatSend() {
+  chatAutoRounds = 0;   /* 用户自己开口 = 重新开一条导入链 */
   if (chatBusy) return;
   var el = document.getElementById("chatText");
   var text = String(el && el.value || "").trim();
@@ -5488,8 +5495,10 @@ async function chatSendText(text) {
   chatPush({ role: "user", text: text, ctx: chatQuestionCtx() });
   chatBusy = true;
   chatRender();
+  var ranOk = false;
   try {
     await chatRun(cfg, attachMeta);
+    ranOk = true;
   } catch (e) {
     var em = e && e.message ? e.message : String(e);
     /* 重试提示是临时灰字，报错时留着只会让对话更乱；一并清掉。 */
@@ -5498,6 +5507,17 @@ async function chatSendText(text) {
   }
   chatBusy = false;
   chatRender();
+  /* 附件这条路要「一次点完就全导进去」：这一轮真的又收进题了就自动再要一轮，
+     直到某一轮一题都没新增（交完了 / 全是重复），或者触到自动轮次上限。
+     用户自己发消息会把轮次清零（chatSend），所以闲聊不会被接上去。 */
+  if (ranOk && chatFile && chatLastImported > 0 && chatAutoRounds < CHAT_AUTO_ROUNDS) {
+    chatAutoRounds++;
+    chatPush({ role: "step", text: "还有没交完的题，自动继续（第 " + chatAutoRounds + " 轮）" }, true);
+    chatRender();
+    await chatSendText("继续：把正文里还没交回的题接着交回来，一次尽量多交（最多 " +
+                       IMPORT_BATCH + " 题）；全部交完就直接说交完了。");
+    return;
+  }
   if (openLayers.indexOf(document.getElementById("chat")) < 0) {
     chatUnread = true;
     syncAskDot();
@@ -5535,6 +5555,7 @@ async function chatRun(cfg, attachMeta) {
   /* 同一个 (工具, 参数) 在一次请求里出现第二次，就是模型在绕圈：
      本地工具不花钱，但轮次是硬预算，第二次不再重复执行、只把话挑明。 */
   var seenCall = {};
+  chatLastImported = 0;   /* 本轮真的新增了多少题：自动续轮靠它判断 */
   var dig = [];   /* 这一轮做过的工具动作，收口时挂到回答气泡上 */
   /* 一条流式气泡 + 它的增量回调。收口那一轮也要用，所以抽出来。 */
   function liveBubble() {
@@ -5604,6 +5625,7 @@ async function chatRun(cfg, attachMeta) {
         var payload = shrinkToolResult(out);
         /* 上游被 max_tokens 掐断时，工具参数可能是半截 JSON（上面已经退化成 {} 并报错）。
            明说一句，模型才会自己重发，而不是拿着空参数往下编。 */
+        if (fn.name === "import_attachment" && out && out.added) chatLastImported += out.added;
         if (fr === "length") payload += "\n（上游这一轮被长度上限截断，参数可能不完整；需要时重新给一次调用）";
         messages.push({ role: "tool", tool_call_id: call.id, content: payload });
         chatPush({ role: "step", text: toolStepText(fn.name, out, errText) }, true);

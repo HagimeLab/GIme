@@ -2609,6 +2609,34 @@ ok("卡已经不在了就说清楚，别让模型以为还挂着",
    JSON.stringify(loopReqs[0].body.messages).indexOf("卡已关闭，没有导入") >= 0,
    JSON.stringify(loopReqs[0].body.messages).slice(0, 200));
 
+/* 一次点完就全导进去：一轮还在收题，页面自己接着要，不用用户再喊「继续」 */
+ok("单批额度抬到 24 题、单轮 8 步、输出 6000",
+   W.IMPORT_BATCH === 24 && W.CHAT_FILE_ROUNDS === 8 && W.CHAT_FILE_MAX_TOKENS === 6000,
+   [W.IMPORT_BATCH, W.CHAT_FILE_ROUNDS, W.CHAT_FILE_MAX_TOKENS].join("/"));
+
+W.onChatFile("自动续轮.txt", "1. 题干\nA. 甲\nB. 乙\n答案：A");
+W.chatMsgs = []; loopReqs = []; W.chatBusy = false; W.chatAutoRounds = 0;
+const impCall = (stem, uniq) => askTool("import_attachment", { bankName: "自动续轮库",
+  questions: [{ type: "single", stem: stem, options: ["甲", "乙"], answer: ["A"] }] }, uniq);
+loopReplies = [
+  impCall("自动续轮题干甲", 41), finalText("先交回 1 题。"),
+  impCall("自动续轮题干甲", 42), finalText("已经全部交完了。")
+];
+await W.chatSendText("导入这个附件");
+ok("一轮没交完会自动再要一轮", loopReqs.length === 4, "请求数 " + loopReqs.length);
+ok("自动续轮在界面上有一行说明",
+   W.chatMsgs.some((m) => m.role === "step" && m.text.indexOf("自动继续（第 1 轮）") >= 0),
+   JSON.stringify(W.chatMsgs.filter((m) => m.role === "step").map((m) => m.text)));
+ok("第二轮没有新增就停住（不会无限续）",
+   W.chatMsgs.filter((m) => m.role === "user").length === 2 &&
+   W.chatMsgs[W.chatMsgs.length - 1].text.indexOf("全部交完") >= 0,
+   W.chatMsgs.filter((m) => m.role === "user").length + " 条用户消息");
+ok("自动续轮不会超过上限",
+   /chatAutoRounds < CHAT_AUTO_ROUNDS/.test(html) && /var CHAT_AUTO_ROUNDS = 6;/.test(html));
+ok("用户自己发消息会把链条清零",
+   /chatAutoRounds = 0;/.test(html), "手动发送没重置");
+W.chatFile = null;
+
 W.BANK.subjects = W.BANK.subjects.filter((s) => s.id !== "lp");
 W.BANK.questions = W.BANK.questions.filter((q) => q.subject !== "lp");
 Object.keys(W.byId).forEach((k) => { if (k.indexOf("lp-") === 0) delete W.byId[k]; });
