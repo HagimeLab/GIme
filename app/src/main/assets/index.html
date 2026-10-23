@@ -751,6 +751,10 @@ html.swap, html.swap * { transition: none !important; }
               background: var(--surface); color: var(--ink); box-shadow: var(--sink);
               font-family: inherit; font-size: .875rem; font-weight: 600; }
 .sheet-act2:first-child { margin-left: 0; }
+/* 二选一并排：两个入口左右各一半。竖排时主按钮整行、次按钮被压成一小截，
+   看上去像两个不同量级的东西，其实这是同一层的两条路。 */
+.sheet-pair { display: flex; gap: 10px; margin-top: 6px; }
+.sheet-pair > .sheet-act, .sheet-pair > .sheet-act2 { flex: 1 1 0; width: auto; margin: 0; }
 /* 接入方式切换：一个按钮同时说清「现在用的是什么」和「点下去会换成什么」，
    两行字而不是两套配置并排，免得用户以为要同时填登录和 Key */
 .ag-switch { display: block; width: 100%; margin: 0 0 16px; padding: 13px 16px; border: 0;
@@ -3812,12 +3816,14 @@ function showExternalChoice() {
   var sh = document.getElementById("sheet3");
   sh.innerHTML = '<div class="handle"></div><h2>怎么导入这份题库？</h2>' +
     '<div class="note" style="margin:0 0 16px;word-break:break-all">' + esc(extFile.name) + "</div>" +
-    '<button class="sheet-act" onclick="externalImportDirect()">直接导入</button>' +
-    '<button class="sheet-act2" style="margin-top:12px" onclick="externalImportByAgent()">交给大肥鱼解析' +
-    (needLogin ? "（需先登录 DeepSeek）" : "") + "</button>" +
+    '<div class="sheet-pair">' +
+      '<button class="sheet-act" onclick="externalImportDirect()">直接导入</button>' +
+      '<button class="sheet-act2" onclick="externalImportByAgent()">交给大肥鱼解析</button>' +
+    "</div>" +
     '<div class="sl-hint" style="margin:14px 0 0">直接导入只在这台手机上解析，文件不出本机。</div>' +
     '<div class="sl-hint" style="margin:8px 0 0">交给大肥鱼会把正文（最多 ' + CHAT_FILE_SEND_MAX +
-    " 字）发给 DeepSeek 逐题识别，格式不一样的文档认得更全；写进题库前还会弹卡片让你确认。</div>";
+    " 字）发给 DeepSeek 逐题识别，格式不一样的文档认得更全；写进题库前还会弹卡片让你确认。" +
+    (needLogin ? "还没登录 DeepSeek，点它会先带你去登录。" : "") + "</div>";
   openLayer(sh);
 }
 function externalImportDirect() {

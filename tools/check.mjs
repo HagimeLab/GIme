@@ -2303,6 +2303,9 @@ delete W.Android;
 section("[29f] 外部打开：直接导入 / 交给大肥鱼");
 W.onExternalFile("题库文件.md", sampleSrc);
 let extHtml = String(W.document.getElementById("sheet3").innerHTML);
+ok("两个入口并排在同一行（主次不再一大一小）",
+   /<div class="sheet-pair">[\s\S]{0,220}externalImportDirect\(\)[\s\S]{0,220}externalImportByAgent\(\)/.test(html) &&
+   /\.sheet-pair \{ display: flex;/.test(html));
 ok("外部打开先问走哪条，两个入口都在",
    extHtml.indexOf("直接导入") >= 0 && extHtml.indexOf("交给大肥鱼") >= 0, extHtml.slice(0, 160));
 
