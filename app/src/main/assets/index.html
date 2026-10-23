@@ -3747,24 +3747,16 @@ window.onExternalFile = function (name, text) {
   extFile = { name: String(name || "文件"), text: String(text || "") };
   showExternalChoice();
 };
-function extAgentOk() {
-  var ext = String((extFile && extFile.name) || "").split(".").pop().toLowerCase();
-  return ext === "pdf" || ext === "docx" || ext === "md";
-}
 function showExternalChoice() {
   if (!extFile) return;
-  var canAgent = extAgentOk();
   var st = dsStatus();
   var needLogin = !st || !st.loggedIn;
   var sh = document.getElementById("sheet3");
   sh.innerHTML = '<div class="handle"></div><h2>怎么导入这份题库？</h2>' +
     '<div class="note" style="margin:0 0 16px;word-break:break-all">' + esc(extFile.name) + "</div>" +
     '<button class="sheet-act" onclick="externalImportDirect()">直接导入</button>' +
-    (canAgent
-      ? '<button class="sheet-act2" style="margin-top:12px" onclick="externalImportByAgent()">交给大肥鱼解析' +
-        (needLogin ? "（需先登录 DeepSeek）" : "") + "</button>"
-      : '<div class="sl-hint" style="margin:12px 0 0">这份不是 PDF / Word / Markdown，大肥鱼不收；' +
-        "可以先「直接导入」，或另存成 .md 再交给它。</div>") +
+    '<button class="sheet-act2" style="margin-top:12px" onclick="externalImportByAgent()">交给大肥鱼解析' +
+    (needLogin ? "（需先登录 DeepSeek）" : "") + "</button>" +
     '<div class="sl-hint" style="margin:14px 0 0">交给大肥鱼会用当前会话把文件按导入格式解析；' +
     "写进题库前还会弹卡片让你确认。</div>" +
     '<div class="sl-hint" style="margin:8px 0 0">两种都只在本机处理，文件不会整段发给模型。</div>';
@@ -4366,7 +4358,7 @@ var CHAT_TOOLS = [
       }, required: ["id", "answer"], additionalProperties: false } }
     }, required: ["items"], additionalProperties: false } } },
   { type: "function", function: { name: "import_attachment",
-    description: "把用户刚上传的附件（PDF / Word / Markdown）里的题目加入题库，新建一个题库。" +
+    description: "把用户刚上传的附件（PDF / Word / Markdown / txt）里的题目加入题库，新建一个题库。" +
       "只在用户明确要求把附件加进题库时调用；filter 用来表达用户的要求（只要某题型、只要题干含某关键词）。" +
       "落库前会自动弹一张卡片让用户确认，你不需要再问一遍；用户没要求时不要调用。",
     parameters: { type: "object", properties: {
@@ -5201,13 +5193,13 @@ function openChatTab() {
    全塞进去既贵又会被长文件顶出上下文。模型看到的是元信息加前 200 字预览，
    要落库时按用户的话给筛选条件，由本地执行；写盘前一定过用户那张确认卡。 */
 var chatFile = null, chatPending = null;
-var CHAT_FILE_EXT = { pdf: 1, docx: 1, md: 1 };
+var CHAT_FILE_EXT = { pdf: 1, docx: 1, md: 1, txt: 1 };
 var CHAT_FILE_PREVIEW = 200;
 
 window.onChatFile = function (name, text) {
   var nm = String(name || "附件");
   var ext = String(nm.split(".").pop() || "").toLowerCase();
-  if (!CHAT_FILE_EXT[ext]) { toast("只支持 PDF、Word（.docx）和 Markdown（.md）"); return; }
+  if (!CHAT_FILE_EXT[ext]) { toast("只支持 PDF、Word（.docx）、Markdown（.md）和 txt"); return; }
   var body = String(text || "");
   chatFile = { name: nm, text: body, chars: body.length, parsed: null, report: null };
   try {

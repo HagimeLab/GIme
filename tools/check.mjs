@@ -2133,8 +2133,12 @@ ok("filter.type 只放行五种题型",
    attachTool && JSON.stringify(attachTool.function.parameters.properties.filter.properties.type.enum)
      === JSON.stringify(["single", "multi", "judge", "fill", "short"]));
 
-W.onChatFile("某题库.txt", "1. 题干\nA. 甲\nB. 乙\n答案：A");
-ok(".txt 不收（只收 pdf / docx / md）", W.chatFile === null, JSON.stringify(W.chatFile));
+W.onChatFile("某题库.doc", "1. 题干\nA. 甲\nB. 乙\n答案：A");
+ok(".doc 不收（旧格式读不了）", W.chatFile === null, JSON.stringify(W.chatFile));
+W.onChatFile("某题库.txt", sampleSrc);
+ok(".txt 收下并认出题",
+   !!W.chatFile && !!W.chatFile.report && W.chatFile.report.total > 0,
+   W.chatFile && W.chatFile.report && W.chatFile.report.total);
 W.onChatFile("某题库.md", sampleSrc);
 ok(".md 收下并认出题",
    !!W.chatFile && !!W.chatFile.report && W.chatFile.report.total > 0,
@@ -2219,8 +2223,8 @@ ok("外部打开先问走哪条，两个入口都在",
 
 W.onExternalFile("题库.txt", sampleSrc);
 extHtml = String(W.document.getElementById("sheet3").innerHTML);
-ok(".txt 外部文件只给直接导入并说明原因",
-   extHtml.indexOf("externalImportByAgent") < 0 && extHtml.indexOf("不是 PDF") >= 0, extHtml.slice(0, 200));
+ok(".txt 外部文件同样给两个入口",
+   extHtml.indexOf("externalImportByAgent") >= 0 && extHtml.indexOf("直接导入") >= 0, extHtml.slice(0, 200));
 
 /* 直接导入：必须落回同一条导入管线（不另开一套） */
 let extRoute = null;
