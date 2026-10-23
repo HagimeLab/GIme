@@ -3709,7 +3709,8 @@ function usableQ(x) {
   return x.answer.length > 0 && x.options.length >= 2;
 }
 
-window.onImportText = function (name, text) {
+window.onImportText = function (name, text) { runImport(name, text); };
+function runImport(name, text) {
   importName = name || "未命名题库";
   importStage("parse");
   setTimeout(function () {
@@ -3733,6 +3734,63 @@ function importWithName(qs, ok) {
     return;
   }
   finishImport(qs, ok);
+}
+
+/* ================= 外部打开（微信「用其他应用打开」） =================
+   文件已经在原生层抽成正文，这里只问用户走哪条：系统导入，还是让大肥鱼按导入格式解析。
+   两条路复用同一份正文，不重复读文件；大肥鱼那条只把文件挂成附件并用当前会话发一句提示词。 */
+var extFile = null;
+var EXT_AGENT_PROMPT = "把这个附件按导入格式解析成题库并导入。题号连续的按题拆；带选项和答案的照收，" +
+  "缺答案或选项的跳过，并在回复里说明跳过了哪些。";
+
+window.onExternalFile = function (name, text) {
+  extFile = { name: String(name || "文件"), text: String(text || "") };
+  showExternalChoice();
+};
+function extAgentOk() {
+  var ext = String((extFile && extFile.name) || "").split(".").pop().toLowerCase();
+  return ext === "pdf" || ext === "docx" || ext === "md";
+}
+function showExternalChoice() {
+  if (!extFile) return;
+  var canAgent = extAgentOk();
+  var st = dsStatus();
+  var needLogin = !st || !st.loggedIn;
+  var sh = document.getElementById("sheet3");
+  sh.innerHTML = '<div class="handle"></div><h2>怎么导入这份题库？</h2>' +
+    '<div class="note" style="margin:0 0 16px;word-break:break-all">' + esc(extFile.name) + "</div>" +
+    '<button class="sheet-act" onclick="externalImportDirect()">直接导入</button>' +
+    (canAgent
+      ? '<button class="sheet-act2" style="margin-top:12px" onclick="externalImportByAgent()">交给大肥鱼解析' +
+        (needLogin ? "（需先登录 DeepSeek）" : "") + "</button>"
+      : '<div class="sl-hint" style="margin:12px 0 0">这份不是 PDF / Word / Markdown，大肥鱼不收；' +
+        "可以先「直接导入」，或另存成 .md 再交给它。</div>") +
+    '<div class="sl-hint" style="margin:14px 0 0">交给大肥鱼会用当前会话把文件按导入格式解析；' +
+    "写进题库前还会弹卡片让你确认。</div>" +
+    '<div class="sl-hint" style="margin:8px 0 0">两种都只在本机处理，文件不会整段发给模型。</div>';
+  openLayer(sh);
+}
+function externalImportDirect() {
+  var f = extFile;
+  extFile = null;
+  closeTop();
+  if (f) runImport(f.name, f.text);
+}
+function externalImportByAgent() {
+  var f = extFile;
+  if (!f) return;
+  var cfg = agentCfg();
+  if (!cfg) { closeTop(); toast("先登录 DeepSeek 或填 API Key"); openAgentCfg(); return; }
+  if (cfg.builtin) {
+    var st = dsStatus();
+    if (!st || !st.loggedIn) { closeTop(); toast("先登录 DeepSeek"); dsLoginNow(); return; }
+  }
+  closeTop();
+  window.onChatFile(f.name, f.text);
+  if (!chatFile) return;      /* 扩展名或解析被 onChatFile 拒了，它自己会 toast */
+  extFile = null;
+  openChatTab();
+  chatAsk(EXT_AGENT_PROMPT);
 }
 /* 导入结果的统计口径统一在这里：无答案题必须在「原始解析结果」上数，
    usable 已经把它滤掉了，在 usable 上数永远是 0。主观题另算，不算「无答案」。 */
@@ -5274,6 +5332,15 @@ async function chatSend() {
   var el = document.getElementById("chatText");
   var text = String(el && el.value || "").trim();
   if (!text) return;
+  el.value = "";
+  await chatSendText(text);
+}
+/* 程序化发一句（外部文件交给大肥鱼时用）：不经过输入框，其余与手动发送同一条路。 */
+function chatAsk(text) {
+  if (chatBusy) return;
+  return chatSendText(String(text == null ? "" : text).trim());
+}
+async function chatSendText(text) {
   var cfg = agentCfg();
   if (!cfg) { toast(agentMode() === "login" ? "先登录 DeepSeek" : "先填 API Key"); openAgentCfg(); return; }
   /* 内置通道但没登录：直接把人送到登录页，别让他先发一条再吃报错。 */
@@ -5286,7 +5353,6 @@ async function chatSend() {
   var conv = chatCurConv();
   if (chatConvLocked(conv)) { toast(chatConvLockTip(conv)); return; }
   if (conv && !conv.mode) { conv.mode = agentMode(); chatConvSave(); }
-  el.value = "";
   /* 附件元信息只在本次请求里带，不写进 chatMsgs：正文与统计都不该占历史的位置。 */
   var attachMeta = chatFileMeta();
   chatPush({ role: "user", text: text, ctx: chatQuestionCtx() });

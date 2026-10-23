@@ -2210,6 +2210,52 @@ ok("MCP：超长名字直接拒绝且不写盘",
    JSON.stringify(mcpLong).slice(0, 160));
 delete W.Android;
 
+/* ---------- 29f. v1.1.1：外部打开（微信「用其他应用打开」）先二选一 ---------- */
+section("[29f] 外部打开：直接导入 / 交给大肥鱼");
+W.onExternalFile("题库文件.md", sampleSrc);
+let extHtml = String(W.document.getElementById("sheet3").innerHTML);
+ok("外部打开先问走哪条，两个入口都在",
+   extHtml.indexOf("直接导入") >= 0 && extHtml.indexOf("交给大肥鱼") >= 0, extHtml.slice(0, 160));
+
+W.onExternalFile("题库.txt", sampleSrc);
+extHtml = String(W.document.getElementById("sheet3").innerHTML);
+ok(".txt 外部文件只给直接导入并说明原因",
+   extHtml.indexOf("externalImportByAgent") < 0 && extHtml.indexOf("不是 PDF") >= 0, extHtml.slice(0, 200));
+
+/* 直接导入：必须落回同一条导入管线（不另开一套） */
+let extRoute = null;
+const realRunImport = W.runImport;
+W.runImport = (name, text) => { extRoute = [name, String(text).length]; };
+W.onExternalFile("外部导入.md", sampleSrc);
+W.externalImportDirect();
+ok("选直接导入走同一条导入管线",
+   !!extRoute && extRoute[0] === "外部导入.md" && extRoute[1] === sampleSrc.length,
+   JSON.stringify(extRoute));
+W.runImport = realRunImport;
+
+/* 交给大肥鱼：挂附件、开面板、用当前会话发提示词 */
+const realAgent = W.set.agent;
+W.set.agent = { mode: "login" };
+W.Android = { dsStatus: () => JSON.stringify({ loggedIn: true }) };
+W.chatMsgs = [];
+W.chatBusy = false;
+W.chatCurId = "";          /* 不绑当前会话：老会话可能属于另一种接入方式，会被锁 */
+W.onExternalFile("外部题库.md", sampleSrc);
+W.externalImportByAgent();
+ok("交给大肥鱼：文件挂成附件、面板打开、提示词已发出",
+   !!W.chatFile && W.chatFile.name === "外部题库.md" &&
+   W.openLayers.some((l) => l.id === "chat") &&
+   !!W.chatMsgs[0] && W.chatMsgs[0].role === "user" &&
+   W.chatMsgs[0].text.indexOf("按导入格式") >= 0,
+   JSON.stringify({ file: W.chatFile && W.chatFile.name, layers: W.openLayers.map((l) => l.id),
+     n: W.chatMsgs.length, msgs: W.chatMsgs.slice(-1).map((m) => [m.role, String(m.text).slice(0, 20)]),
+     mode: W.agentMode(), conv: W.chatCurConv() && W.chatCurConv().mode, busy: W.chatBusy }));
+ok("交给大肥鱼时没走系统导入", extRoute !== null);
+W.set.agent = realAgent;
+delete W.Android;
+W.chatBusy = false;
+W.chatWait = {};
+
 /* ---------- 结果 ---------- */
 console.log("\n" + "=".repeat(46));
 if (fails.length) {

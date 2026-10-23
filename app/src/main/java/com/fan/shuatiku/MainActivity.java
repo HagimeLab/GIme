@@ -53,11 +53,12 @@ public class MainActivity extends Activity {
     private File bankDir;
     private Updater updater;
 
-    /** 一条待处理文件：交给谁——true = 大肥鱼的附件，false = 直接导入题库。 */
+    /** 一条待处理文件：直接导入 / 交给大肥鱼当附件 / 外部打开（由页面先问用户走哪条）。 */
     private static final class PendingFile {
+        static final int KIND_IMPORT = 0, KIND_CHAT = 1, KIND_ASK = 2;
         final Uri uri;
-        final boolean toChat;
-        PendingFile(Uri uri, boolean toChat) { this.uri = uri; this.toChat = toChat; }
+        final int kind;
+        PendingFile(Uri uri, int kind) { this.uri = uri; this.kind = kind; }
     }
 
     /** 页面报告 ready 之前收到的文件请求排队等它，ready 后按序消费，每条只消费一次。 */
@@ -256,15 +257,16 @@ public class MainActivity extends Activity {
         return uri;
     }
 
-    private void enqueueImport(final Uri uri) { enqueueFile(uri, false); }
+    /* 微信/文件管理器「用其他应用打开」递进来的文件：先让页面问一句怎么导。 */
+    private void enqueueImport(final Uri uri) { enqueueFile(uri, PendingFile.KIND_ASK); }
 
-    private void enqueueFile(final Uri uri, final boolean toChat) {
+    private void enqueueFile(final Uri uri, final int kind) {
         /* 从桌面图标启动时没有文件，intentOf 会返回 null；ArrayDeque 拒绝 null，
            直接 add 会在 onCreate 里把 App 炸掉。 */
         if (uri == null) return;
         runOnUiThread(new Runnable() {
             @Override public void run() {
-                pendingImports.add(new PendingFile(uri, toChat));
+                pendingImports.add(new PendingFile(uri, kind));
                 pumpImports();
             }
         });
@@ -293,21 +295,26 @@ public class MainActivity extends Activity {
                 // 有些提供器不给持久授权，本次读取仍然可用
             }
         }
-        enqueueFile(uri, req == PICK_CHAT);
+        enqueueFile(uri, req == PICK_CHAT ? PendingFile.KIND_CHAT : PendingFile.KIND_IMPORT);
     }
 
     private void startImport(final PendingFile file) {
         final Uri uri = file.uri;
-        final boolean toChat = file.toChat;
+        final int kind = file.kind;
         new Thread(new Runnable() {
             @Override
             public void run() {
                 String name = displayName(uri);
                 try {
-                    /* 导入有整套进度卡（读文件/抽文字/存盘）；附件只提示一下，
-                       因为对话页里没有那张卡，硬调 importStage 会去改不存在的元素。 */
-                    if (toChat) js("window.toast&&window.toast(\"正在读取附件…\")");
-                    else js("window.importStage&&window.importStage(\"read\")");
+                    /* 只有库内导入有进度卡（读文件/抽文字/存盘）。附件与外部打开都只提示一下，
+                       因为这时面板还没打开，硬调 importStage 会去改看不见的元素。 */
+                    if (kind == PendingFile.KIND_IMPORT) {
+                        js("window.importStage&&window.importStage(\"read\")");
+                    } else if (kind == PendingFile.KIND_CHAT) {
+                        js("window.toast&&window.toast(\"正在读取附件…\")");
+                    } else {
+                        js("window.toast&&window.toast(\"正在读取文件…\")");
+                    }
                     InputStream in;
                     try {
                         in = getContentResolver().openInputStream(uri);
@@ -320,19 +327,21 @@ public class MainActivity extends Activity {
                     if (in == null) throw new Exception("打不开这个文件");
                     String text;
                     try {
-                        if (!toChat) js("window.importStage&&window.importStage(\"extract\")");
+                        if (kind == PendingFile.KIND_IMPORT) js("window.importStage&&window.importStage(\"extract\")");
                         text = TextExtract.extract(MainActivity.this, in, name);
                     } finally {
                         in.close();
                     }
                     if (text.trim().isEmpty()) throw new Exception("没读到文字内容");
-                    if (toChat) {
+                    if (kind == PendingFile.KIND_CHAT) {
                         js("window.onChatFile&&window.onChatFile(" + quote(name) + "," + quote(text) + ")");
+                    } else if (kind == PendingFile.KIND_ASK) {
+                        js("window.onExternalFile&&window.onExternalFile(" + quote(name) + "," + quote(text) + ")");
                     } else {
                         js("window.onImportText&&window.onImportText(" + quote(name) + "," + quote(text) + ")");
                     }
                 } catch (final Exception e) {
-                    if (toChat) js("window.onChatFileError&&window.onChatFileError(" + quote(readable(e)) + ")");
+                    if (kind == PendingFile.KIND_CHAT) js("window.onChatFileError&&window.onChatFileError(" + quote(readable(e)) + ")");
                     else js("window.onImportError&&window.onImportError(" + quote(readable(e)) + ")");
                 } finally {
                     runOnUiThread(new Runnable() {
