@@ -755,6 +755,9 @@ html.swap, html.swap * { transition: none !important; }
    看上去像两个不同量级的东西，其实这是同一层的两条路。 */
 .sheet-pair { display: flex; gap: 10px; margin-top: 6px; }
 .sheet-pair > .sheet-act, .sheet-pair > .sheet-act2 { flex: 1 1 0; width: auto; margin: 0; }
+/* 这两个是同一层的两条路，不分主次：底色统一用「反色」——
+   浅色主题下是深底浅字，深色主题下自动翻成浅底深字（--ink / --paper 随主题互换）。 */
+.sheet-pair > .sheet-act2 { background: var(--ink); color: var(--paper); box-shadow: none; }
 /* 接入方式切换：一个按钮同时说清「现在用的是什么」和「点下去会换成什么」，
    两行字而不是两套配置并排，免得用户以为要同时填登录和 Key */
 .ag-switch { display: block; width: 100%; margin: 0 0 16px; padding: 13px 16px; border: 0;

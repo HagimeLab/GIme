@@ -2303,6 +2303,9 @@ delete W.Android;
 section("[29f] 外部打开：直接导入 / 交给大肥鱼");
 W.onExternalFile("题库文件.md", sampleSrc);
 let extHtml = String(W.document.getElementById("sheet3").innerHTML);
+ok("并排的两个按钮同色：底色跟主题反着来（浅主题深底、深主题浅底）",
+   /\.sheet-pair > \.sheet-act2 \{ background: var\(--ink\); color: var\(--paper\)/.test(html) &&
+   /\[data-theme="dark"\][\s\S]{0,400}--ink: #F2F3F5/.test(html), "次按钮没跟主按钮同色");
 ok("两个入口并排在同一行（主次不再一大一小）",
    /<div class="sheet-pair">[\s\S]{0,220}externalImportDirect\(\)[\s\S]{0,220}externalImportByAgent\(\)/.test(html) &&
    /\.sheet-pair \{ display: flex;/.test(html));
