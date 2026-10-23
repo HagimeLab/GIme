@@ -31,11 +31,17 @@ final class OpenAiStream {
     private static final int CONNECT_TIMEOUT = 20000;
     private static final int READ_TIMEOUT = 180000;
 
-    /** 回调：正文增量、思维链增量、结束原因。 */
+    /** 回调：正文增量、思维链增量、结束原因，以及工具调用增量。 */
     interface Listener {
         void onContent(String delta);
         void onReasoning(String delta);
         void onFinish(String reason);
+
+        /**
+         * 工具调用增量。上游按 index 分片推（arguments 是一截一截来的），
+         * 所以这里只交分片，由调用方按 index 合并。
+         */
+        default void onToolCall(int index, String id, String name, String argsChunk) { }
     }
 
     private OpenAiStream() {}
@@ -102,6 +108,7 @@ final class OpenAiStream {
                     if (!reasoning.isEmpty()) listener.onReasoning(reasoning);
                     String content = text(m, "content");
                     if (!content.isEmpty()) listener.onContent(content);
+                    emitToolCalls(m.optJSONArray("tool_calls"), listener);
                 }
                 String fr = text(msg, "finish_reason");
                 if (fr.isEmpty()) fr = "stop";
@@ -142,6 +149,7 @@ final class OpenAiStream {
                     if (!reasoning.isEmpty()) listener.onReasoning(reasoning);
                     String content = text(d, "content");
                     if (!content.isEmpty()) listener.onContent(content);
+                    emitToolCalls(d.optJSONArray("tool_calls"), listener);
                 }
                 String fr = ch.optString("finish_reason", "");
                 if (!fr.isEmpty() && !"null".equals(fr)) finish = fr;
@@ -151,6 +159,56 @@ final class OpenAiStream {
         }
         listener.onFinish(finish);
         return finish;
+    }
+
+    /**
+     * 把一帧里的 tool_calls 逐条推给回调。流式帧里 arguments 是一截一截来的，
+     * 所以这里不合并，只按上游给的 index 交出去。
+     */
+    private static void emitToolCalls(JSONArray arr, Listener listener) {
+        if (arr == null) return;
+        for (int i = 0; i < arr.length(); i++) {
+            JSONObject t = arr.optJSONObject(i);
+            if (t == null) continue;
+            JSONObject fn = t.optJSONObject("function");
+            listener.onToolCall(t.has("index") ? t.optInt("index", i) : i,
+                    text(t, "id"), fn == null ? "" : text(fn, "name"),
+                    fn == null ? "" : text(fn, "arguments"));
+        }
+    }
+
+    /**
+     * 按 index 合并 {@code tool_calls} 分片，收口成 OpenAI 非流式的形状。
+     *
+     * <p>为什么要有这个类：上游把一次调用拆成「首帧给 id 和函数名、后面每帧只补一截
+     * arguments」，不拼回去页面就只会看到「模型没回答」——真机报过一次，且只在
+     * API Key 这条路上（内置通道是文本约定，本来就整段给）。
+     */
+    static final class ToolCalls {
+        private final java.util.Map<Integer, JSONObject> by = new java.util.TreeMap<>();
+
+        void add(int index, String id, String name, String argsChunk) {
+            try {
+                JSONObject call = by.get(index);
+                if (call == null) call = new JSONObject().put("type", "function");
+                if (id != null && !id.isEmpty() && call.optString("id").isEmpty()) call.put("id", id);
+                JSONObject fn = call.optJSONObject("function");
+                if (fn == null) fn = new JSONObject();
+                fn.put("name", fn.optString("name") + (name == null ? "" : name));
+                fn.put("arguments", fn.optString("arguments") + (argsChunk == null ? "" : argsChunk));
+                by.put(index, call.put("function", fn));
+            } catch (Exception ignored) {
+                // 拼不动就少一条调用，不能让整条回复丢掉
+            }
+        }
+
+        boolean isEmpty() { return by.isEmpty(); }
+
+        JSONArray toArray() {
+            JSONArray arr = new JSONArray();
+            for (JSONObject c : by.values()) arr.put(c);
+            return arr;
+        }
     }
 
     /**

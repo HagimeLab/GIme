@@ -45,6 +45,27 @@ public class OpenAiStreamTest {
         eq("reasoning null 当空串", "",
                 OpenAiStream.text(new org.json.JSONObject("{\"reasoning_content\":null}"), "reasoning_content"));
 
+        /* ①′ tool_calls 的分片合并：上游按 index 一截一截发 arguments，
+           不收口页面就只看到「模型没回答」（API Key 那条路上真机报过）。 */
+        OpenAiStream.ToolCalls tc = new OpenAiStream.ToolCalls();
+        ok("没有调用时是空的", tc.isEmpty(), "不该提前有货");
+        tc.add(0, "call_1", "import_attachment", "");
+        tc.add(0, "", "", "{\"bankName\":\"");
+        tc.add(0, "", "", "附件\",\"questions\":[{\"type\":\"judge\"}]}");
+        tc.add(1, "call_2", "list_questions", "{\"limit\":3}");
+        ok("收口后不再为空", !tc.isEmpty(), null);
+        org.json.JSONArray tcs = tc.toArray();
+        eq("两条调用按 index 排", 2, tcs.length());
+        eq("首帧的 id 留住了", "call_1", tcs.getJSONObject(0).optString("id"));
+        eq("函数名只出现一次", "import_attachment",
+                tcs.getJSONObject(0).getJSONObject("function").optString("name"));
+        String merged = tcs.getJSONObject(0).getJSONObject("function").optString("arguments");
+        ok("分片的 arguments 拼回一条合法 JSON",
+                new org.json.JSONObject(merged).getJSONArray("questions").length() == 1
+                        && "附件".equals(new org.json.JSONObject(merged).optString("bankName")), merged);
+        eq("第二条不受第一条影响", "{\"limit\":3}",
+                tcs.getJSONObject(1).getJSONObject("function").optString("arguments"));
+
         // 先探活；mock 没起就跳过（回归环境不保证有它）
         try {
             java.net.HttpURLConnection probe =

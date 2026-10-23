@@ -577,6 +577,9 @@ public class MainActivity extends Activity {
                         final String[] finish = {"stop"};
                         final StringBuilder content = new StringBuilder();
                         final StringBuilder reasoning = new StringBuilder();
+                        /* 工具调用按 index 合并：上游把 arguments 拆成一截一截发，
+                           不收口的话页面拿不到完整参数，只能看到「模型没回答」。 */
+                        final OpenAiStream.ToolCalls calls = new OpenAiStream.ToolCalls();
                         try {
                             finish[0] = OpenAiStream.run(url, key, body, new OpenAiStream.Listener() {
                                 @Override public void onContent(String d) {
@@ -586,6 +589,9 @@ public class MainActivity extends Activity {
                                 @Override public void onReasoning(String d) {
                                     reasoning.append(d);
                                     js("window.onChatStream(" + quote(id) + ",\"think\"," + quote(d) + ")");
+                                }
+                                @Override public void onToolCall(int index, String cid, String name, String argsChunk) {
+                                    calls.add(index, cid, name, argsChunk);
                                 }
                                 @Override public void onFinish(String reason) { finish[0] = reason; }
                             });
@@ -603,6 +609,7 @@ public class MainActivity extends Activity {
                         msg.put("role", "assistant");
                         msg.put("content", content.toString());
                         if (reasoning.length() > 0) msg.put("reasoning_content", reasoning.toString());
+                        if (!calls.isEmpty()) msg.put("tool_calls", calls.toArray());
                         JSONObject choice = new JSONObject();
                         choice.put("index", 0);
                         choice.put("message", msg);
