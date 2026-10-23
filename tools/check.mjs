@@ -2147,9 +2147,13 @@ ok("import_attachment 改成收 questions，旧的 filter / dryRun 已撤",
 ok("questions 的题型只放行五种",
    JSON.stringify(attachTool.function.parameters.properties.questions.items.properties.type.enum)
      === JSON.stringify(["single", "multi", "judge", "fill", "short"]));
-ok("题数一批的上限与提示词里那个数是同一个",
-   attachTool.function.description.indexOf(String(W.IMPORT_BATCH)) >= 0 &&
-   W.EXT_AGENT_PROMPT.indexOf(String(W.IMPORT_BATCH)) >= 0);
+ok("提示词里不再写死一次交几题（让模型一次全交，交不完自己接着交）",
+   !/最多\s*\d+\s*题/.test(attachTool.function.description) &&
+   !/最多\s*\d+\s*题/.test(W.EXT_AGENT_PROMPT) &&
+   W.EXT_AGENT_PROMPT.indexOf("全部识别") >= 0, W.EXT_AGENT_PROMPT.slice(0, 60));
+ok("交完要问用户：认出多少、可收录多少、是否导入",
+   attachTool.function.description.indexOf("要不要导入") >= 0 &&
+   W.EXT_AGENT_PROMPT.indexOf("问他是否导入") >= 0);
 
 /* 把随包举例交回成「模型认出来的」那种形状：选项只给正文，答案给字母数组 */
 const ssAll = W.parseBankText(sampleSrc);
@@ -2617,9 +2621,10 @@ ok("卡已经不在了就说清楚，别让模型以为还挂着",
    JSON.stringify(loopReqs[0].body.messages).slice(0, 200));
 
 /* 一次点完就全导进去：一轮还在收题，页面自己接着要，不用用户再喊「继续」 */
-ok("单批额度抬到 24 题、单轮 8 步、输出 6000",
-   W.IMPORT_BATCH === 24 && W.CHAT_FILE_ROUNDS === 8 && W.CHAT_FILE_MAX_TOKENS === 6000,
-   [W.IMPORT_BATCH, W.CHAT_FILE_ROUNDS, W.CHAT_FILE_MAX_TOKENS].join("/"));
+ok("不再有单批题数常量；单轮 8 步、输出 6000 仍在兜底",
+   typeof W.IMPORT_BATCH === "undefined" && W.CHAT_FILE_ROUNDS === 8 &&
+   W.CHAT_FILE_MAX_TOKENS === 6000,
+   [typeof W.IMPORT_BATCH, W.CHAT_FILE_ROUNDS, W.CHAT_FILE_MAX_TOKENS].join("/"));
 
 W.onChatFile("自动续轮.txt", "1. 题干\nA. 甲\nB. 乙\n答案：A");
 W.chatMsgs = []; loopReqs = []; W.chatBusy = false; W.chatAutoRounds = 0;
