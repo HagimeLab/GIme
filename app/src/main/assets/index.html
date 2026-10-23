@@ -227,6 +227,10 @@ button.rec:active { opacity: .62; }
 #stage { position: fixed; top: 0; left: 0; right: 0; bottom: 0; z-index: 1450; overflow: hidden;
          pointer-events: none; clip-path: circle(0px at 50% 50%); }
 
+/* 题库名最长 30 字：卡片里必须自己收窄，否则会顶到右边的百分比上 */
+.bk-name { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.bk-pct { flex: 0 0 auto; }
+
 /* ---------------- 答题页 ---------------- */
 /* 答题页外壳改成 flex 列：只有 .q-body 滚，头部/进度条/操作条各占固定一格。
    上一版把 .q-foot 做成 sticky 贴底，结果条子会把滚过来的选项从字中间切一半；
@@ -2334,7 +2338,7 @@ function renderBank() {
            "</div>" +
            '<div class="card pad">' +
              '<div style="display:flex;align-items:center">' +
-               '<div style="flex:1"><b class="bk-name" style="font-size:1rem">' + esc(s.name) + "</b>" +
+               '<div style="flex:1;min-width:0"><b class="bk-name" style="font-size:1rem">' + esc(s.name) + "</b>" +
                '<em class="bk-sub" style="font-style:normal;display:block;font-size:.6875rem;color:var(--ink-3)">' +
                t.total + " 题 · 已刷 " + t.seen + " · 错题 " + t.wrong + "</em></div>" +
                '<div class="bk-pct" style="font-size:1.5rem;font-weight:800">' + t.rate + "%</div></div>" +
