@@ -964,6 +964,15 @@ var store = {
   write: function (k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) {} }
 };
 var prog = store.read(LS.p, {});
+/* 主记录空、备份有货：说明上一次写盘把记录写没了，用备份救回来。
+   合法的清空（清空做题记录 / 删掉最后一个题库）会连备份一起删，所以不会复活。 */
+var LS_PROG_BAK = "stk.progress.bak";
+function restoreProgFromBackup() {
+  if (Object.keys(prog).length) return;
+  var b = store.read(LS_PROG_BAK, null);
+  if (b && Object.keys(b).length) prog = b;
+}
+restoreProgFromBackup();
 var set = store.read(LS.s, { theme: "light", fscale: 100 });
 /* 老版本可能把开关存成字符串 / 0 / 1（手改存档、早期迁移残留都出现过）。
    统一归一成布尔：只有明确关掉的值才算关，其余按默认开。
@@ -1016,7 +1025,40 @@ function shuffle(a) {
   for (var i = a.length - 1; i > 0; i--) { var j = Math.floor(Math.random() * (i + 1)), t = a[i]; a[i] = a[j]; a[j] = t; }
   return a;
 }
-function save() { store.write(LS.j, S); store.write(LS.p, prog); store.write(LS.s, set); saveResume(); }
+function save() { store.write(LS.j, S); saveProg(); store.write(LS.s, set); saveResume(); }
+/* 做题记录「凭空消失」只有一个可见形态：一次空的 prog 覆盖了磁盘上有记录的 prog。
+   合法的空只有两种——用户点「清空做题记录」，或删掉最后一个有记录的题库（走 progMayEmpty）。
+   其余情况宁可这次不写，也不能把记录抹掉：先把现场记进 stk.diag，再给用户一句提示。 */
+var progMayEmpty = false;
+function progCount(o) { try { return Object.keys(o || {}).length; } catch (e) { return -1; } }
+function diag(kind, n) {
+  try {
+    var d = store.read("stk.diag", []);
+    d.push({ k: kind, n: n, at: Date.now() });
+    store.write("stk.diag", d.slice(-10));
+  } catch (e) { /* 诊断自己不能成为新的故障源 */ }
+}
+function saveProg() {
+  var next = progCount(prog), prev = 0, old = null;
+  try {
+    var raw = localStorage.getItem(LS.p);
+    if (raw) { old = JSON.parse(raw); prev = progCount(old); }
+  } catch (e) {
+    /* 旧值本身坏了：不能把"读不出来"当成"原来是空的"，这时照常写新的 */
+    prev = -1;
+  }
+  if (!next && prev > 0 && !progMayEmpty) {
+    diag("prog-empty-blocked", prev);
+    toast("做题记录这次没有写入：新进度为空，已保留原有 " + prev + " 条记录");
+    return;
+  }
+  /* 写之前把上一份「有记录」的版本留成备份；真要清空时反而要把备份删掉，
+     否则下次开机会被 restoreProgFromBackup 复活成"删不掉"的记录 */
+  if (!next) { try { localStorage.removeItem(LS_PROG_BAK); } catch (e) {} }
+  else if (prev > 0) store.write(LS_PROG_BAK, old);
+  progMayEmpty = false;
+  store.write(LS.p, prog);
+}
 window.saveProgress = save;
 
 /* ================= 中途退出续刷 =================
@@ -2681,7 +2723,7 @@ function jiggleSiblings(k) {
 }
 function askClear() {
   glass({ title: "清空全部进度？", desc: "做题记录、错题本、收藏都会被删除，无法恢复",
-          ok: ["确认清空", function () { prog = {}; localStorage.removeItem(LS.p); renderAll(); toast("已清空"); }] });
+          ok: ["确认清空", function () { progMayEmpty = true; prog = {}; localStorage.removeItem(LS.p); renderAll(); toast("已清空"); }] });
 }
 
 /* ================= 检查更新 ================= */
@@ -3953,6 +3995,7 @@ function removeBank(sid) {
   if (set.hidden) delete set.hidden[sid];
   /* 组卷选择里也要摘掉：否则卷名和「全选」标签会继续把已删题库算进去 */
   if (set.paper && set.paper.subs) delete set.paper.subs[sid];
+  progMayEmpty = true;   /* 删库会让 prog 合法地变少甚至变空 */
   save();
   renderAll();
   return true;

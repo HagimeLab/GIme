@@ -2260,6 +2260,47 @@ delete W.Android;
 W.chatBusy = false;
 W.chatWait = {};
 
+/* ---------- 29g. 做题记录：空进度不许覆盖有记录的 ----------
+   「已刷记录凭空消失」的可见形态就是一次空 prog 覆盖了磁盘上的记录；
+   只有「清空做题记录」和「删掉题库」两条合法路径能写空。 */
+section("[29g] 做题记录：空进度不覆盖旧记录");
+W.localStorage.setItem("stk.progress.v2", JSON.stringify({
+  q1: { n: 3, w: 1, last: 1, b: 0, t: 1 }, q2: { n: 1, w: 0, last: 1, b: 0, t: 2 },
+}));
+W.prog = {};
+W.save();
+ok("空进度被拦下，磁盘上的旧记录还在",
+   Object.keys(JSON.parse(W.localStorage.getItem("stk.progress.v2")) || {}).length === 2);
+ok("拦下时留了现场", String(W.localStorage.getItem("stk.diag") || "").indexOf("prog-empty-blocked") >= 0);
+
+W.prog = { q3: { n: 1, w: 0, last: 1, b: 0, t: 3 } };
+W.save();
+ok("有记录时照常写入",
+   Object.keys(JSON.parse(W.localStorage.getItem("stk.progress.v2"))).length === 1);
+
+W.progMayEmpty = true;
+W.prog = {};
+W.save();
+ok("清空记录这条合法路径允许写空",
+   Object.keys(JSON.parse(W.localStorage.getItem("stk.progress.v2"))).length === 0);
+ok("清空后备份也删掉，不会复活",
+   W.localStorage.getItem("stk.progress.bak") === null);
+W.progMayEmpty = false;
+
+/* 备份与开机恢复：备份留的是「上一份有记录的版本」，主记录被写空时用它救回来 */
+W.localStorage.setItem("stk.progress.v2", JSON.stringify({
+  a: { n: 1, w: 0, last: 1, b: 0, t: 1 }, b: { n: 2, w: 1, last: 0, b: 0, t: 2 },
+}));
+W.prog = { c: { n: 1, w: 0, last: 1, b: 0, t: 3 } };
+W.save();
+ok("写之前把上一份有记录的存成备份",
+   Object.keys(JSON.parse(W.localStorage.getItem("stk.progress.bak")) || {}).length === 2,
+   W.localStorage.getItem("stk.progress.bak"));
+W.prog = {};
+W.localStorage.setItem("stk.progress.v2", "{}");
+W.restoreProgFromBackup();
+ok("主记录空而备份有货时开机恢复", Object.keys(W.prog).length === 2, Object.keys(W.prog).length);
+
 /* ---------- 结果 ---------- */
 console.log("\n" + "=".repeat(46));
 if (fails.length) {
