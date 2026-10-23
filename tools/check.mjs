@@ -2123,6 +2123,49 @@ ok("新建后进入空会话界面",
    W.chatMsgs.length === 0 && W.document.getElementById("chatHero").hidden === false);
 while (W.openLayers.length) W.closeTop();
 
+/* ---------- 29d. v1.1.1：大肥鱼的附件导入 ----------
+   档 2 的契约：只收 pdf/docx/md；正文不进 prompt；先给筛选条件，再由确认卡落盘。 */
+section("[29d] 大肥鱼附件：只收三类、确认前不落盘");
+const attachTool = (W.CHAT_TOOLS || []).filter((t) => t.function && t.function.name === "import_attachment")[0];
+ok("CHAT_TOOLS 声明 import_attachment，且带 filter 参数",
+   !!attachTool && !!attachTool.function.parameters.properties.filter);
+ok("filter.type 只放行五种题型",
+   attachTool && JSON.stringify(attachTool.function.parameters.properties.filter.properties.type.enum)
+     === JSON.stringify(["single", "multi", "judge", "fill", "short"]));
+
+W.onChatFile("某题库.txt", "1. 题干\nA. 甲\nB. 乙\n答案：A");
+ok(".txt 不收（只收 pdf / docx / md）", W.chatFile === null, JSON.stringify(W.chatFile));
+W.onChatFile("某题库.md", sampleSrc);
+ok(".md 收下并认出题",
+   !!W.chatFile && !!W.chatFile.report && W.chatFile.report.total > 0,
+   W.chatFile && W.chatFile.report && W.chatFile.report.total);
+
+let attSaved = [];
+W.Android = { saveBank: (id, json) => { attSaved.push([id, JSON.parse(json)]); return true; } };
+const attDry = W.chatImportAttachment({ dryRun: true });
+ok("dryRun 只回统计：不生成确认单、不写盘",
+   attDry.dryRun === true && W.chatPending === null && attSaved.length === 0);
+const wantJudge = W.chatFile.parsed.filter((q) => q.type === "judge" && W.usableQ(q)).length;
+const attPend = W.chatImportAttachment({ bankName: "附件判断库", filter: { type: "judge" } });
+ok("filter.type 生效：只取判断题",
+   attPend.needConfirm === true && attPend.report.usable === wantJudge && wantJudge > 0,
+   attPend.report.usable + " vs " + wantJudge);
+const cardHtml = String(W.document.getElementById("chatList").innerHTML);
+ok("确认卡渲染出题库名与可导入题数",
+   cardHtml.indexOf("附件判断库") >= 0 && cardHtml.indexOf("导入 " + wantJudge + " 题") >= 0,
+   cardHtml.slice(-300));
+ok("确认前一次都没写盘", attSaved.length === 0);
+W.chatConfirmImport();
+ok("确认后写盘一次、题数与条件一致",
+   attSaved.length === 1 && attSaved[0][1].questions.length === wantJudge, attSaved.length);
+ok("导入后题库出现在 BANK，名字来自参数",
+   !!W.subjectOf(attSaved[0][0]) && W.subjectOf(attSaved[0][0]).name === "附件判断库");
+ok("导入成功后附件被清空", W.chatFile === null);
+let attErr = "";
+try { W.chatImportAttachment({}); } catch (e) { attErr = String((e && e.message) || e); }
+ok("没有附件时工具报错，而不是空写", attErr.indexOf("没有附件") >= 0, attErr);
+delete W.Android;
+
 /* ---------- 结果 ---------- */
 console.log("\n" + "=".repeat(46));
 if (fails.length) {

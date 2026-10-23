@@ -44,6 +44,8 @@ import android.webkit.WebViewClient;
 public class MainActivity extends Activity {
 
     private static final int PICK = 4711;
+    /** 大肥鱼的附件：同一个选择器、同一条抽取路径，只是结果交给对话而不是直接入库。 */
+    private static final int PICK_CHAT = 4712;
     /** 导入格式举例：assets 里那一份是唯一来源，页面看的和下载的都是它。 */
     private static final String SAMPLE_ASSET = "import-sample.md";
     private static final String SAMPLE_NAME = "GIme导入格式举例.md";
@@ -51,8 +53,15 @@ public class MainActivity extends Activity {
     private File bankDir;
     private Updater updater;
 
-    /** 页面报告 ready 之前收到的导入请求排队等它，ready 后按序消费，每条只消费一次。 */
-    private final ArrayDeque<Uri> pendingImports = new ArrayDeque<Uri>();
+    /** 一条待处理文件：交给谁——true = 大肥鱼的附件，false = 直接导入题库。 */
+    private static final class PendingFile {
+        final Uri uri;
+        final boolean toChat;
+        PendingFile(Uri uri, boolean toChat) { this.uri = uri; this.toChat = toChat; }
+    }
+
+    /** 页面报告 ready 之前收到的文件请求排队等它，ready 后按序消费，每条只消费一次。 */
+    private final ArrayDeque<PendingFile> pendingImports = new ArrayDeque<PendingFile>();
     private volatile boolean pageReady;
     private boolean importing;
 
@@ -247,48 +256,58 @@ public class MainActivity extends Activity {
         return uri;
     }
 
-    private void enqueueImport(final Uri uri) {
+    private void enqueueImport(final Uri uri) { enqueueFile(uri, false); }
+
+    private void enqueueFile(final Uri uri, final boolean toChat) {
         /* 从桌面图标启动时没有文件，intentOf 会返回 null；ArrayDeque 拒绝 null，
            直接 add 会在 onCreate 里把 App 炸掉。 */
         if (uri == null) return;
         runOnUiThread(new Runnable() {
             @Override public void run() {
-                pendingImports.add(uri);
+                pendingImports.add(new PendingFile(uri, toChat));
                 pumpImports();
             }
         });
     }
 
-    /** 页面 ready 且没有正在跑的导入时才取下一条。 */
+    /** 页面 ready 且没有正在跑的文件读取时才取下一条。 */
     private void pumpImports() {
         if (!pageReady || importing || pendingImports.isEmpty()) return;
-        final Uri uri = pendingImports.poll();
-        if (uri == null) return;
+        final PendingFile next = pendingImports.poll();
+        if (next == null) return;
         importing = true;
-        startImport(uri);
+        startImport(next);
     }
 
     @Override
     protected void onActivityResult(int req, int res, Intent data) {
         super.onActivityResult(req, res, data);
-        if (req != PICK || res != RESULT_OK || data == null) return;
+        if ((req != PICK && req != PICK_CHAT) || res != RESULT_OK || data == null) return;
         Uri uri = data.getData();
         if (uri == null) return;
-        try {
-            getContentResolver().takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION);
-        } catch (Exception ignored) {
-            // 有些提供器不给持久授权，本次读取仍然可用
+        /* 附件是读一次就交给对话的临时文件，不申请持久授权，免得把授权列表越堆越长。 */
+        if (req == PICK) {
+            try {
+                getContentResolver().takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION);
+            } catch (Exception ignored) {
+                // 有些提供器不给持久授权，本次读取仍然可用
+            }
         }
-        enqueueImport(uri);
+        enqueueFile(uri, req == PICK_CHAT);
     }
 
-    private void startImport(final Uri uri) {
+    private void startImport(final PendingFile file) {
+        final Uri uri = file.uri;
+        final boolean toChat = file.toChat;
         new Thread(new Runnable() {
             @Override
             public void run() {
                 String name = displayName(uri);
                 try {
-                    js("window.importStage&&window.importStage(\"read\")");
+                    /* 导入有整套进度卡（读文件/抽文字/存盘）；附件只提示一下，
+                       因为对话页里没有那张卡，硬调 importStage 会去改不存在的元素。 */
+                    if (toChat) js("window.toast&&window.toast(\"正在读取附件…\")");
+                    else js("window.importStage&&window.importStage(\"read\")");
                     InputStream in;
                     try {
                         in = getContentResolver().openInputStream(uri);
@@ -301,15 +320,20 @@ public class MainActivity extends Activity {
                     if (in == null) throw new Exception("打不开这个文件");
                     String text;
                     try {
-                        js("window.importStage&&window.importStage(\"extract\")");
+                        if (!toChat) js("window.importStage&&window.importStage(\"extract\")");
                         text = TextExtract.extract(MainActivity.this, in, name);
                     } finally {
                         in.close();
                     }
                     if (text.trim().isEmpty()) throw new Exception("没读到文字内容");
-                    js("window.onImportText&&window.onImportText(" + quote(name) + "," + quote(text) + ")");
+                    if (toChat) {
+                        js("window.onChatFile&&window.onChatFile(" + quote(name) + "," + quote(text) + ")");
+                    } else {
+                        js("window.onImportText&&window.onImportText(" + quote(name) + "," + quote(text) + ")");
+                    }
                 } catch (final Exception e) {
-                    js("window.onImportError&&window.onImportError(" + quote(readable(e)) + ")");
+                    if (toChat) js("window.onChatFileError&&window.onChatFileError(" + quote(readable(e)) + ")");
+                    else js("window.onImportError&&window.onImportError(" + quote(readable(e)) + ")");
                 } finally {
                     runOnUiThread(new Runnable() {
                         @Override public void run() {
@@ -725,6 +749,30 @@ public class MainActivity extends Activity {
                         startActivityForResult(i, PICK);
                     } catch (Exception e) {
                         js("window.onImportError&&window.onImportError(\"这台机器上没有可用的文件选择器\")");
+                    }
+                }
+            });
+        }
+
+        /** 大肥鱼的附件：同一个选择器，读出来先交给对话，由用户决定要不要入库。 */
+        @JavascriptInterface
+        public void pickChatFile() {
+            runOnUiThread(new Runnable() {
+                @Override
+                public void run() {
+                    Intent i = new Intent(Intent.ACTION_OPEN_DOCUMENT);
+                    i.addCategory(Intent.CATEGORY_OPENABLE);
+                    i.setType("*/*");
+                    /* text/plain 也放进来：.md 在很多文件管理器里报的就是它。
+                       收不收由页面按扩展名判，这里只负责让文件在选择器里可见。 */
+                    i.putExtra(Intent.EXTRA_MIME_TYPES, new String[]{
+                            "application/pdf",
+                            "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                            "text/markdown", "text/plain"});
+                    try {
+                        startActivityForResult(i, PICK_CHAT);
+                    } catch (Exception e) {
+                        js("window.onChatFileError&&window.onChatFileError(\"这台机器上没有可用的文件选择器\")");
                     }
                 }
             });
