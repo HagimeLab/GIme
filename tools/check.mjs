@@ -2221,37 +2221,11 @@ ok("第二批累计到同一张卡（不覆盖第一批）",
    second.added === ssAll.length - half && second.report.total === ssAll.length &&
    second.matched === ssOk && W.chatPending.usable.length === ssOk, JSON.stringify(second));
 const again = W.chatImportAttachment({ questions: agentBatch(0, half) });
-/* v1.1.2 A：三层去重（题号 → 逐字 → 相似度兜底） */
-const simA = "以下关于华为RAID2.0+技术中数据迁移粒度的说法，正确的是";
-const simB = "以下关于华为RAID2.0+技术中数据迁移粒度与存储层划分的说法，正确的是";
-const simC = "以下关于华为RAID2.0+技术中数据迁移粒度的说法，正确的是？";
-ok("相似度 0.889 的两道**不同**题，按规则应保留",
-   Math.abs(W.stemDice(simA, simB) - 0.889) < 0.02 && W.stemDice(simA, simB) < W.STEM_SIM_MERGE,
-   W.stemDice(simA, simB).toFixed(3));
-ok("只差一个标点的同一道题，相似度落在合并档",
-   W.stemDice(simA, simC) >= W.STEM_SIM_MERGE, W.stemDice(simA, simC).toFixed(3));
-
-W.chatPending = null;
-W.onChatFile("去重.txt", "1. 题干\nA. 甲\nB. 乙\n答案：A");
-const simD = "完全不同的另一道题：openEuler 的内核热升级怎么做";
-const dupRun = W.chatImportAttachment({ bankName: "去重库", questions: [
-  { num: 1, type: "single", stem: simA, options: ["甲", "乙"], answer: ["A"] },
-  { num: 1, type: "single", stem: simA, options: ["甲", "乙"], answer: ["A"] },
-  { num: 1, type: "single", stem: simD, options: ["甲", "乙"], answer: ["A"] },
-  { type: "single", stem: simA, options: ["甲", "乙"], answer: ["A"] },
-  { type: "single", stem: simA + "的", options: ["甲", "乙"], answer: ["A"] },
-  { type: "single", stem: simB, options: ["甲", "乙"], answer: ["A"] },
-  { type: "single", stem: simD, options: ["甲", "乙"], answer: ["A"] }
-] });
-ok("题号去重、章节重编号留题、逐字与相似度兜底四件事同时成立",
-   dupRun.added === 3 && dupRun.duplicated === 4,
-   JSON.stringify({ added: dupRun.added, dup: dupRun.duplicated }));
-ok("重复计数如实报在卡片上", W.chatPending.rep.dup === 4, W.chatPending.rep.dup);
-W.chatPending = null;
-
 ok("同一批重发按同一道题计，不重复收录",
    again.added === 0 && again.duplicated === half && W.chatPending.picked.length === ssAll.length,
    JSON.stringify(again));
+
+
 if (W.chatPending) W.chatPending.parsing = false;   /* 读卡前假装这一轮已经跑完 */
 W.chatRender();
 const cardHtml = String(W.document.getElementById("chatList").innerHTML);
@@ -2312,6 +2286,36 @@ W.chatFile = null; W.chatPending = null;
 try { W.chatImportAttachment({ questions: agentBatch(0, 1) }); } catch (e) { attErr = String((e && e.message) || e); }
 ok("没有附件时工具报错，而不是空写", attErr.indexOf("没有附件") >= 0, attErr);
 delete W.Android;
+
+/* v1.1.2 A：三层去重（题号 → 逐字 → 相似度兜底） */
+const simA = "以下关于华为RAID2.0+技术中数据迁移粒度的说法，正确的是";
+const simB = "以下关于华为RAID2.0+技术中数据迁移粒度与存储层划分的说法，正确的是";
+const simC = "以下关于华为RAID2.0+技术中数据迁移粒度的说法，正确的是？";
+ok("相似度 0.889 的两道**不同**题，按规则应保留",
+   Math.abs(W.stemDice(simA, simB) - 0.889) < 0.02 && W.stemDice(simA, simB) < W.STEM_SIM_MERGE,
+   W.stemDice(simA, simB).toFixed(3));
+ok("只差一个标点的同一道题，相似度落在合并档",
+   W.stemDice(simA, simC) >= W.STEM_SIM_MERGE, W.stemDice(simA, simC).toFixed(3));
+
+W.chatPending = null;
+W.onChatFile("去重.txt", "1. 题干\nA. 甲\nB. 乙\n答案：A");
+const simD = "完全不同的另一道题：openEuler 的内核热升级怎么做";
+const dupRun = W.chatImportAttachment({ bankName: "去重库", questions: [
+  { num: 1, type: "single", stem: simA, options: ["甲", "乙"], answer: ["A"] },
+  { num: 1, type: "single", stem: simA, options: ["甲", "乙"], answer: ["A"] },
+  { num: 1, type: "single", stem: simD, options: ["甲", "乙"], answer: ["A"] },
+  { type: "single", stem: simA, options: ["甲", "乙"], answer: ["A"] },
+  { type: "single", stem: simA + "的", options: ["甲", "乙"], answer: ["A"] },
+  { type: "single", stem: simB, options: ["甲", "乙"], answer: ["A"] },
+  { type: "single", stem: simD, options: ["甲", "乙"], answer: ["A"] }
+] });
+ok("题号去重、章节重编号留题、逐字与相似度兜底四件事同时成立",
+   dupRun.added === 3 && dupRun.duplicated === 4,
+   JSON.stringify({ added: dupRun.added, dup: dupRun.duplicated }));
+ok("重复计数如实报在卡片上", W.chatPending.rep.dup === 4, W.chatPending.rep.dup);
+W.chatPending = null;
+W.chatFile = null;
+W.chatPending = null;
 
 /* ---------- 29e. v1.1.1：题库名 30 字上限 ----------
    超长不静默截断：导入与附件都先拦下来改名；MCP 侧 agent 没有人能改名，直接报错。 */

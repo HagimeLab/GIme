@@ -25,6 +25,16 @@ function Ok([string]$name) {
     Write-Host "  [PASS] $name"
 }
 
+function Compare-Ver([string]$a, [string]$b) {
+    $pa = $a.TrimStart("v").Split("."); $pb = $b.TrimStart("v").Split(".")
+    $n = [Math]::Max($pa.Count, $pb.Count)
+    for ($i = 0; $i -lt $n; $i++) {
+        $x = if ($i -lt $pa.Count) { [int]$pa[$i] } else { 0 }
+        $y = if ($i -lt $pb.Count) { [int]$pb[$i] } else { 0 }
+        if ($x -ne $y) { return ($x - $y) }
+    }
+    return 0
+}
 function Bad([string]$name, [string]$why) {
     $script:fail++
     Write-Host "  [FAIL] $name  ($why)"
@@ -117,6 +127,10 @@ else {
         if ($txt -match 'versionName\s*=\s*"([^"]+)"') {
             $buildVer = $Matches[1]
             if ($buildVer -eq $ver) { Ok "清单版本号与 build.gradle.kts 一致（$ver）" }
+            elseif ((Compare-Ver $buildVer $ver) -gt 0) {
+                # 开发中：已经 bump 到下一版、但 release/ 里还是上一版发布件
+                Write-Host ("    note: 清单仍是 $ver，构建已到 $buildVer（未发布，发布时 publish.ps1 会重写）") -ForegroundColor Yellow
+            }
             else { Bad "清单版本号与 build.gradle.kts 一致" "清单 $ver，构建 $buildVer" }
         }
         else {
