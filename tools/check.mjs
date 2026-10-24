@@ -2958,8 +2958,9 @@ ok("点组头只展开这一组，另一组仍收起",
    openDom.indexOf("清空测试库第1题") >= 0 && openDom.indexOf("另一个库第1题") < 0);
 W.enterBatch();
 const batchDom = String(W.document.getElementById("wrongList").innerHTML);
-ok("批量管理时两组都强制展开（否则没法勾选）",
-   batchDom.indexOf("清空测试库第1题") >= 0 && batchDom.indexOf("另一个库第1题") >= 0);
+ok("进「管理」不强行展开：展开状态仍由用户决定",
+   batchDom.indexOf("清空测试库第1题") >= 0 && batchDom.indexOf("另一个库第1题") < 0 &&
+   batchDom.indexOf("batchGo") >= 0, "管理把组强行展开了");
 W.exitBatch();
 
 W.BANK.subjects = W.BANK.subjects.filter((x) => x.id !== "cb1" && x.id !== "cb2");

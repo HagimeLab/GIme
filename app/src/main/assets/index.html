@@ -2465,7 +2465,8 @@ function renderWrong() {
     h += '<div class="bbar">' +
            '<button onclick="selectAllWrong()">全选</button>' +
            '<button class="solid" id="batchGo" onclick="batchRemove()">移出 ' + n + "</button>" +
-           '<button onclick="exitBatch()">取消</button></div>';
+           '<button onclick="exitBatch()">取消</button></div>' +
+           '<div class="sl-hint" style="margin:-4px 0 10px">点题库名可以展开，再勾选要移出的题</div>';
   } else {
     h += '<div class="bbar">' +
            '<button class="solid" style="flex:2" onclick="startSession(&quot;wrong&quot;,&quot;all&quot;, &quot;&quot;)">开始重刷全部 ' +
@@ -2492,8 +2493,9 @@ function renderWrong() {
   var orphan = w.filter(function (x) { return !subjectOf(x.subject); });
   if (orphan.length) groups.push({ id: "", name: "已删除的题库", list: orphan });
   h += groups.map(function (g) {
-    /* 默认收起：错题一多，全展开会把页面拖得很长；批量管理时强制展开 */
-    var open = batchOn || !!wrongOpen[g.id];
+    /* 默认收起：错题一多，全展开会把页面拖得很长。
+       批量管理也不强行展开——展开哪一组由用户自己点。 */
+    var open = !!wrongOpen[g.id];
     return '<div class="wgroup"><button class="wg-head" onclick="toggleWrongGroup(&quot;' + g.id + '&quot;)">' +
              '<span class="wg-t">' + esc(g.name) + "</span>" +
              '<span class="wg-n">' + g.list.length + " 题</span>" +
