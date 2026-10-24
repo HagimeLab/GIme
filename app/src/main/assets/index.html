@@ -1640,8 +1640,10 @@ function render() {
       h += '<div class="selfcheck"><button class="pri" onclick="submitSub()">提交，对照答案</button></div>';
     }
     h += '<div class="subj-tip">' +
-      (isExam() ? "考试中不显示参考答案，交卷后不再计分。"
-                : "提交后对照参考答案；主观题不计对错，也不进错题本。") + "</div>";
+      (isExam() ? "考试中不显示参考答案，交卷后不计分。"
+                : cur.type === "fill"
+                  ? "提交后自动对照参考答案；填错会进错题本（不计入正确率）。"
+                  : "提交后对照参考答案；解答题没有唯一答案，答错可点「标记错题」。") + "</div>";
   } else {
     h += '<div class="opts">';
     cur.options.forEach(function (o) {

@@ -698,6 +698,8 @@ W.S.text[fillId] = "完全不对的答案";
 const wrongBefore = W.stats(TB).wrong;
 const rateB4 = W.stats(TB).rate;
 W.submitSub();
+ok("页面提示跟着判法走：填空说会进错题本，解答说手动标",
+   qb().indexOf("填错会进错题本") >= 0, qb().slice(-200));
 ok("填空答错自动进错题本",
    W.inWrong(W.byId[fillId]) && W.prog[fillId].w === 1 && W.prog[fillId].last === 0,
    JSON.stringify(W.prog[fillId]));
