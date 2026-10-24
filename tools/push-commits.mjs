@@ -50,17 +50,34 @@ const HEADERS = {
   "Content-Type": "application/json",
   "X-GitHub-Api-Version": "2022-11-28",
 };
+/* 这台机器到 api.github.com 时通时断（偶发 10s 连接超时）。一笔提交要打十来个
+   请求，不重试基本跑不完——连接层失败和 5xx/429 都按退避重试，4xx 直接报错。 */
 async function api(method, url, body) {
-  const res = await fetch(API + url, {
-    method, headers: HEADERS, body: body ? JSON.stringify(body) : undefined,
-  });
-  const text = await res.text();
-  let json = null;
-  try { json = JSON.parse(text); } catch { /* 非 JSON 响应 */ }
-  if (!res.ok) {
-    throw new Error(`${method} ${url} -> ${res.status} ${json ? JSON.stringify(json).slice(0, 300) : text.slice(0, 200)}`);
+  const payload = body ? JSON.stringify(body) : undefined;
+  let lastErr = null;
+  for (let attempt = 1; attempt <= 6; attempt++) {
+    let res = null, text = "";
+    try {
+      res = await fetch(API + url, { method, headers: HEADERS, body: payload });
+      text = await res.text();
+    } catch (e) {
+      lastErr = e;                       /* 连接层失败：重试 */
+    }
+    if (res) {
+      let json = null;
+      try { json = JSON.parse(text); } catch { /* 非 JSON 响应 */ }
+      if (res.ok) return json;
+      const msg = `${method} ${url} -> ${res.status} ` +
+        (json ? JSON.stringify(json).slice(0, 300) : text.slice(0, 200));
+      if (res.status < 500 && res.status !== 429) throw new Error(msg);
+      lastErr = new Error(msg);
+    }
+    const wait = Math.min(15000, 800 * Math.pow(2, attempt));
+    console.log(`  网络抖动，${(wait / 1000).toFixed(1)}s 后重试（${attempt}/6）：` +
+      String(lastErr && lastErr.message).slice(0, 90));
+    await new Promise((r) => setTimeout(r, wait));
   }
-  return json;
+  throw lastErr;
 }
 
 /* ---- 远端必须先停在 base 上 ---- */
