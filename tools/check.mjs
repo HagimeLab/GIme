@@ -2939,18 +2939,28 @@ ok("续刷快照一起清掉", !W.resume["cb1"], JSON.stringify(W.resume["cb1"])
 ok("当前这一组回到第 1 题",
    W.S.idx === 0 && Object.keys(W.S.picks).length === 0, JSON.stringify(W.S.picks));
 
-/* 错题本分组 */
+/* 错题本分组：默认收起、点组头展开、组头直接刷 */
 W.prog["cb2-1"] = { n: 1, w: 1, last: 0, b: 0, t: 4, in: 1 };
+W.wrongOpen = {};
 W.renderWrong();
 const wrongDom = String(W.document.getElementById("wrongList").innerHTML);
-ok("错题本按题库分组：两个库各一小块",
+ok("错题本按题库分组，两个库各一块",
    wrongDom.indexOf("wgroup") >= 0 && wrongDom.indexOf("清空测试库") >= 0 &&
    wrongDom.indexOf("另一个库") >= 0, wrongDom.slice(0, 160));
-ok("每组带题数与「重刷这组」", (wrongDom.match(/重刷这组/g) || []).length === 2);
-ok("一个库的题只出现在自己那块里（顺序：库A标题 → 库A题 → 库B标题）",
-   wrongDom.indexOf("清空测试库") < wrongDom.indexOf("清空测试库第1题") &&
-   wrongDom.indexOf("清空测试库第1题") < wrongDom.indexOf("另一个库") &&
-   wrongDom.indexOf("另一个库") < wrongDom.indexOf("另一个库第1题"), "顺序不对");
+ok("默认收起：题不占地儿",
+   wrongDom.indexOf("清空测试库第1题") < 0 && wrongDom.indexOf("另一个库第1题") < 0);
+ok("组头带题数与「刷 N 题」",
+   (wrongDom.match(/刷 \d+ 题/g) || []).length === 2 &&
+   wrongDom.indexOf('class="wg-chev"') >= 0, "缺刷题入口");
+W.toggleWrongGroup("cb1");
+const openDom = String(W.document.getElementById("wrongList").innerHTML);
+ok("点组头只展开这一组，另一组仍收起",
+   openDom.indexOf("清空测试库第1题") >= 0 && openDom.indexOf("另一个库第1题") < 0);
+W.enterBatch();
+const batchDom = String(W.document.getElementById("wrongList").innerHTML);
+ok("批量管理时两组都强制展开（否则没法勾选）",
+   batchDom.indexOf("清空测试库第1题") >= 0 && batchDom.indexOf("另一个库第1题") >= 0);
+W.exitBatch();
 
 W.BANK.subjects = W.BANK.subjects.filter((x) => x.id !== "cb1" && x.id !== "cb2");
 W.BANK.questions = W.BANK.questions.filter((q) => q.subject !== "cb1" && q.subject !== "cb2");

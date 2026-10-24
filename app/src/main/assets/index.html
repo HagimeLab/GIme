@@ -805,13 +805,18 @@ html.swap, html.swap * { transition: none !important; }
                background: var(--raise); box-shadow: var(--sh-sm); font-size: .8125rem; font-weight: 700; }
 .bbar button.solid { background: var(--ink); color: var(--paper); }
 .bbar button:active { box-shadow: var(--sink); }
-/* 错题本按题库分组的小标题 */
-.wgroup { display: flex; align-items: baseline; gap: 8px; margin: 18px 2px 6px; }
+/* 错题本的题库分组：组头是一张能收起/展开的卡片，右边直接「刷 N 题」 */
+.wgroup { display: flex; align-items: stretch; gap: 8px; margin: 14px 0 4px; }
+.wgroup .wg-head { flex: 1; min-width: 0; display: flex; align-items: baseline; gap: 8px;
+                   padding: 13px 15px; border: 0; border-radius: var(--r-in); text-align: left;
+                   background: var(--surface); box-shadow: var(--sink); font-family: inherit; }
 .wgroup .wg-t { flex: 1; min-width: 0; font-size: .9375rem; font-weight: 700; color: var(--ink);
                 overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .wgroup .wg-n { font-size: .75rem; color: var(--ink-3); }
-.wgroup .wg-go { border: 0; background: transparent; padding: 0 2px; color: var(--ink-2);
-                 font-family: inherit; font-size: .75rem; font-weight: 600; }
+.wgroup .wg-chev { font-size: .75rem; color: var(--ink-3); }
+.wgroup .wg-go { flex: 0 0 auto; padding: 0 15px; border: 0; border-radius: var(--r-in);
+                 background: var(--ink); color: var(--paper); font-family: inherit;
+                 font-size: .8125rem; font-weight: 600; }
 .res { position: relative; padding-left: 40px; }
 .res .cbx { position: absolute; left: 0; top: 18px; width: 24px; height: 24px; border-radius: 9px;
             border: 1.7px solid var(--ink-3); }
@@ -2487,10 +2492,17 @@ function renderWrong() {
   var orphan = w.filter(function (x) { return !subjectOf(x.subject); });
   if (orphan.length) groups.push({ id: "", name: "已删除的题库", list: orphan });
   h += groups.map(function (g) {
-    return '<div class="wgroup"><span class="wg-t">' + esc(g.name) + "</span>" +
-           '<span class="wg-n">' + g.list.length + " 题</span>" +
-           (g.id ? '<button class="wg-go" onclick="startWrongBank(&quot;' + g.id + '&quot;)">重刷这组</button>' : "") +
-           "</div>" + g.list.slice(0, 60).map(wrongRow).join("");
+    /* 默认收起：错题一多，全展开会把页面拖得很长；批量管理时强制展开 */
+    var open = batchOn || !!wrongOpen[g.id];
+    return '<div class="wgroup"><button class="wg-head" onclick="toggleWrongGroup(&quot;' + g.id + '&quot;)">' +
+             '<span class="wg-t">' + esc(g.name) + "</span>" +
+             '<span class="wg-n">' + g.list.length + " 题</span>" +
+             '<span class="wg-chev">' + (open ? "▴" : "▾") + "</span>" +
+           "</button>" +
+           (g.id ? '<button class="wg-go" onclick="startWrongBank(&quot;' + g.id + '&quot;)">刷 ' +
+                   g.list.length + " 题</button>" : "") +
+           "</div>" +
+           (open ? g.list.slice(0, 60).map(wrongRow).join("") : "");
   }).join("");
   if (batchOn) {
     h += '<div class="trash" id="trash"><svg class="ico" viewBox="0 0 24 24" style="width:20px;height:20px">' +
@@ -2498,6 +2510,8 @@ function renderWrong() {
   }
   document.getElementById("wrongList").innerHTML = h;
 }
+var wrongOpen = {};   /* 每个库的错题块是否展开；默认收起 */
+function toggleWrongGroup(sid) { wrongOpen[sid] = !wrongOpen[sid]; renderWrong(); }
 function startWrongBank(sid) { startSession("wrong", sid, ""); }
 function enterBatch() { batchOn = true; batchSel = {}; renderWrong(); }
 function exitBatch() { batchOn = false; batchSel = {}; renderWrong(); }
