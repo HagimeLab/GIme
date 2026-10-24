@@ -3206,7 +3206,7 @@ function paperInit() {
     /* 题库可能一个都没有（全是用户导入的，随时可能被删干净），
        这里不能直接取 subjects[0].id，否则空题库时组卷一点就抛异常 */
     if (first) subs[first.id] = 1;
-    set.paper = { subs: subs, mode: "total", total: 30, single: 10, multi: 10, judge: 10, min: 20 };
+    set.paper = { subs: subs, mode: "total", total: 30, single: 10, multi: 10, judge: 10, fill: 0, short: 0, min: 20 };
   }
   paperPrune();
 }
@@ -3226,9 +3226,9 @@ function paperOrder() {
     return shuffle(pool.map(function (q) { return q.id; })).slice(0, Math.min(p.total, pool.length));
   }
   var out = [];
-  ["single", "multi", "judge"].forEach(function (t) {
+  ["single", "multi", "judge", "fill", "short"].forEach(function (t) {
     var ids = shuffle(pool.filter(function (q) { return q.type === t; }).map(function (q) { return q.id; }));
-    out = out.concat(ids.slice(0, p[t]));
+    out = out.concat(ids.slice(0, p[t] || 0));
   });
   return shuffle(out);
 }
@@ -3264,7 +3264,9 @@ function openPaper(sid) {
   if (sid && sid !== "all") { set.paper.subs = {}; set.paper.subs[sid] = 1; }
   var p = set.paper;
   p.total = Math.min(p.total, paperAvail());
-  ["single", "multi", "judge"].forEach(function (t) { p[t] = Math.min(p[t], paperAvail(t)); });
+  ["single", "multi", "judge", "fill", "short"].forEach(function (t) {
+    p[t] = Math.min(+p[t] || 0, paperAvail(t));
+  });
   var picked = Object.keys(p.subs).length;
   var h = '<div class="handle"></div><h2>组卷设置</h2>' +
     '<div class="sec-title" style="margin:8px 0 12px"><b>选择题库</b>' +
@@ -3281,16 +3283,15 @@ function openPaper(sid) {
 
   var avail = paperAvail();
   if (!avail) {
-    /* 勾选的题库里只有主观题时，卷子是 0 题，滑杆也没有意义 */
-    h += '<div class="note" style="margin:6px 0 18px">所选题库里没有可用于模拟考试的客观题。' +
-         "填空题和解答题不参与限时卷（它们没有自动判分规则），请在首页按题型练习。</div>";
+    h += '<div class="note" style="margin:6px 0 18px">所选题库里还没有题目，先导入题库再来组卷。</div>';
   } else if (p.mode !== "types") {
     h += sliderHtml("pTotal", "总题数", 0, avail, p.total, " 题");
   } else {
-    ["single", "multi", "judge"].forEach(function (t) {
+    ["single", "multi", "judge", "fill", "short"].forEach(function (t) {
       h += sliderHtml("p_" + t, typeName(t), 0, paperAvail(t), p[t], " 题");
     });
-    h += '<div class="sl-hint">三类分别定题数，0 表示不要这类；上限随所选题库变化</div>';
+    h += '<div class="sl-hint">五类分别定题数，0 表示不要这类；填空题/解答题不判分，' +
+         "只计入卷面完成度。</div>";
   }
   h += sliderHtml("pMin", "时长（分钟）", 5, 45, p.min, " 分钟") +
      '<button class="sheet-act"' + (avail ? "" : " disabled") +

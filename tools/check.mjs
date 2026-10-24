@@ -313,6 +313,26 @@ testQs.forEach((q) => { BANK.questions.push(q); sandbox.byId[q.id] = q; });
 sandbox.set.paper.subs = {}; sandbox.set.paper.subs[TB] = 1;
 ok("测试题库已装入 6 题", BANK.questions.length === 6, "实际 " + BANK.questions.length);
 ok("组卷池包含主观题（用户要求）", sandbox.paperPool().length === 6, "实际 " + sandbox.paperPool().length);
+/* 按题型分配：五类都能配，主观题也进卷 */
+sandbox.set.paper = { subs: {}, mode: "types", total: 30, single: 1, multi: 1, judge: 1,
+                      fill: 1, short: 1, min: 20 };
+sandbox.set.paper.subs[TB] = 1;
+const typeOrder = sandbox.paperOrder();
+const typeSet = typeOrder.map((id) => sandbox.byId[id].type);
+ok("按题型分配能配到填空和解答",
+   typeSet.indexOf("fill") >= 0 && typeSet.indexOf("short") >= 0, typeSet.join(","));
+ok("每类各取 1 题：卷面 5 题", typeOrder.length === 5, typeOrder.length);
+/* 沙箱里没有真实滑块节点，openPaper 在最后接线时会抛；innerHTML 已经生成好了 */
+try { sandbox.openPaper(); } catch (e) { /* 只看生成的 HTML */ }
+const paperSheet = String(sandbox.document.getElementById("sheet2").innerHTML);
+ok("组卷设置里五类都有滑杆",
+   ["p_single", "p_multi", "p_judge", "p_fill", "p_short"].every((k) => paperSheet.indexOf('id="' + k + '"') >= 0),
+   paperSheet.slice(0, 200));
+while (sandbox.openLayers.length) sandbox.closeTop();
+sandbox.set.paper = { subs: {}, mode: "total", total: 30, single: 10, multi: 10, judge: 10,
+                      fill: 0, short: 0, min: 20 };
+sandbox.set.paper.subs[TB] = 1;
+
 ok("组卷池里既有客观题也有主观题",
    sandbox.paperPool().some((q) => sandbox.isObjective(q.type)) &&
    sandbox.paperPool().some((q) => !sandbox.isObjective(q.type)));
