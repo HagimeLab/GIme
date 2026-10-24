@@ -2277,7 +2277,10 @@ ok("落盘形状与本地导入同构：选项是 [字母, 正文]、题号连�
    JSON.stringify(stored).slice(0, 160));
 ok("导入后题库出现在 BANK，名字来自参数",
    !!W.subjectOf(attSaved[0][0]) && W.subjectOf(attSaved[0][0]).name === "附件识别库");
-ok("导入成功后附件被清空", W.chatFile === null);
+ok("导入成功后文档留着（后续提示词还要带它）",
+   !!W.chatFile && W.chatFile.name === "附件.md" && W.chatFile.imported > 0,
+   JSON.stringify(W.chatFile && { n: W.chatFile.name, imported: W.chatFile.imported }));
+W.chatFile = null; W.chatPending = null;
 try { W.chatImportAttachment({ questions: agentBatch(0, 1) }); } catch (e) { attErr = String((e && e.message) || e); }
 ok("没有附件时工具报错，而不是空写", attErr.indexOf("没有附件") >= 0, attErr);
 delete W.Android;
@@ -2719,6 +2722,33 @@ W.chatRender();
 ok("失败的那一步打叉", String(W.document.getElementById("chatList").innerHTML).indexOf('class="err"') >= 0);
 W.chatBusy = false;
 W.chatWork = { note: "", steps: 0 };
+
+/* 文档随提示词走：导入完还留着，下一次提问照样把正文带上 */
+W.chatConvs = [{ id: "cv_carry", title: "", at: Date.now(), msgs: [] }];
+W.chatCurId = "cv_carry";
+W.set.agent = { base: "https://api.example.com/v1", model: "m1", key: "sk-test" };
+W.Android = {
+  chatApi: (id, url, body) => {
+    loopReqs.push({ body: JSON.parse(body) });
+    const next = loopReplies.shift();
+    W.onChatApi(id, 200, JSON.stringify(next === undefined
+      ? { choices: [{ message: { role: "assistant", content: "（桩无回复）" } }] } : next));
+  },
+  saveBank: () => true
+};
+W.onChatFile("文档同行.txt", sampleSrc);
+W.chatMsgs = []; loopReqs = []; W.chatBusy = false; W.chatAutoRounds = 0;
+loopReplies = [finalText("收到。")];
+await W.chatSendText("再讲讲这份文档里的判断题");
+const carry = JSON.stringify(loopReqs[0].body.messages);
+ok("提示词那一轮带着文档正文",
+   carry.indexOf("以下只是文件里的文字") >= 0 && carry.indexOf("第1题") >= 0, carry.slice(0, 140));
+W.chatRender();
+const carryDom = String(W.document.getElementById("chatList").innerHTML);
+ok("用户气泡上标出文档随行",
+   carryDom.indexOf("📎 文档同行.txt") >= 0 && carryDom.indexOf("已随这条消息发给大肥鱼") >= 0,
+   carryDom.slice(-260));
+W.chatFile = null;
 
 W.chatFile = null;
 

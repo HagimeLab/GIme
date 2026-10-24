@@ -426,6 +426,7 @@ button.rec:active { opacity: .62; }
 .msg.me .bubble { background: var(--ink); color: var(--paper); border-top-right-radius: 6px; }
 .msg .ava { width: 28px; height: 28px; flex-basis: 28px; margin-top: 2px; }
 .msg .bubble.typing { color: var(--ink-3); }
+.msg .bubble .ub-file { display: block; margin-top: 6px; font-size: .6875rem; opacity: .72; }
 .msg .bubble.typing .wlist { display: block; margin-top: 7px; font-size: .8125rem; line-height: 1.7; }
 .msg .bubble.typing .wlist i { font-style: normal; margin-right: 7px; }
 .msg .bubble.typing .wlist i.ok { color: var(--ink-2); }
@@ -5275,6 +5276,11 @@ function chatRender() {
       return;
     }
     var me = m.role === "user";
+    if (me && m.file) {
+      h += '<div class="msg me"><div class="bubble">' + esc(m.text) +
+           '<span class="ub-file">📎 ' + esc(m.file) + " 已随这条消息发给大肥鱼</span></div></div>";
+      return;
+    }
     /* 有思考链就渲染成可折叠块：流式期间默认展开（跟着字一起长），
        回答结束后默认收起（想看再点开，不占地方）。用户手动点过就按用户的选择。 */
     var inner = (m.live || m.reasoning)
@@ -5385,7 +5391,8 @@ function renderChatFile() {
   if (!box) return;
   if (!chatFile) { box.hidden = true; box.innerHTML = ""; return; }
   var sub = chatFile.chars + " 字" +
-    (chatFile.sent < chatFile.chars ? " · 只发前 " + chatFile.sent + " 字" : "");
+    (chatFile.sent < chatFile.chars ? " · 只发前 " + chatFile.sent + " 字" : "") +
+    (chatFile.imported ? " · 已导入 " + chatFile.imported + " 题" : "");
   box.hidden = false;
   box.innerHTML = '<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M8.5 12.6l6-6a3 3 0 0 1 4.3 4.3l-7.6 7.6a5 5 0 0 1-7.1-7.1l7.2-7.2"/></svg>' +
     '<span class="fname">' + esc(chatFile.name) + '<span class="fsub">' + esc(sub) + "</span></span>" +
@@ -5524,7 +5531,9 @@ function chatConfirmImport() {
   chatPush({ role: "note", text: "已导入 " + p.usable.length + " 题，题库「" + saved.subj.name + "」" +
     (p.rep.total !== p.usable.length ? "（附件里认出 " + p.rep.total + " 题，按条件收 " + p.usable.length + " 题）" : "") });
   patchImportDigest("已确认", "题库「" + saved.subj.name + "」" + p.usable.length + " 题");
-  chatFile = null;
+  /* 文档留着：用户接着问「再识别一下第 3 章」「把这批的解析补全」时，正文还得跟着走。
+     要它不再上行就点附件条上的「✕」。 */
+  chatFile.imported = (chatFile.imported || 0) + p.usable.length;
   renderChatFile();
   chatRender();
   toast("已导入 " + p.usable.length + " 题");
@@ -5574,7 +5583,8 @@ async function chatSendText(text, silent) {
   if (conv && !conv.mode) { conv.mode = agentMode(); chatConvSave(); }
   /* 附件元信息只在本次请求里带，不写进 chatMsgs：正文与统计都不该占历史的位置。 */
   var attachMeta = chatFileMeta();
-  chatPush({ role: "user", text: text, ctx: chatQuestionCtx(), hidden: !!silent });
+  chatPush({ role: "user", text: text, ctx: chatQuestionCtx(), hidden: !!silent,
+             file: (!silent && chatFile) ? chatFile.name : "" });
   chatBusy = true;
   if (!silent) chatWork = { title: "", steps: [], count: 0 };
   chatRender();
