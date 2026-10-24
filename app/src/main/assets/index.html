@@ -1112,7 +1112,7 @@ function practiceLeft(s) {
   s.order.forEach(function (id) {
     var x = byId[id];
     if (!x) return;
-    if (isSubjective(x.type)) { if (!s.self || s.self[id] === undefined) left++; }
+    if (isSubjective(x.type)) { if (!s.sub || !s.sub[id]) left++; }
     else if (!s.graded || s.graded[id] === undefined) left++;
   });
   return left;
@@ -1127,7 +1127,7 @@ function saveResume() {
   var key = resumeKey(S.subject, S.tf);
   if (!practiceLeft(S)) { dropResume(key); return; }
   resume[key] = { sid: S.subject, tf: S.tf || "", order: S.order.slice(), idx: S.idx,
-                  picks: S.picks || {}, graded: S.graded || {}, text: S.text || {}, self: S.self || {},
+                  picks: S.picks || {}, graded: S.graded || {}, text: S.text || {},
                   sub: S.sub || {}, refShut: S.refShut || {},
                   at: Date.now() };
   store.write(LS.r, resume);
@@ -1163,7 +1163,7 @@ function restorePractice(r, from) {
   }
   S = { subject: r.sid, mode: "practice", tf: r.tf || "", order: r.order.slice(), idx: r.idx,
         title: "", state: "",
-        picks: r.picks || {}, graded: r.graded || {}, text: r.text || {}, self: r.self || {},
+        picks: r.picks || {}, graded: r.graded || {}, text: r.text || {},
         sub: r.sub || {}, refShut: r.refShut || {},
         started: Date.now(), dur: 0 };
   save();
@@ -1600,15 +1600,16 @@ function render() {
   var picks = S.picks[cur.id] || [];
   /* 主观题没有「判分」，只有「已核对 / 未核对」；作答内容单独存在 S.text 里 */
   var text = (S.text && S.text[cur.id]) || "";
-  var checked = subj && S.self && S.self[cur.id] !== undefined;
-  var done = subj ? checked : ((isExam() || noAns(cur)) ? false : S.graded[cur.id] !== undefined);
-  var reveal = subj ? true : (done || (isRecite() && !noAns(cur)));
+  /* 主观题只分「作答过 / 没作答」：自评那套已撤掉，不判对错 */
+  var submitted = subj && (isRecite() || !!(S.sub && S.sub[cur.id]));
+  var done = subj ? submitted : ((isExam() || noAns(cur)) ? false : S.graded[cur.id] !== undefined);
+  var reveal = subj ? (submitted && !isExam()) : (done || (isRecite() && !noAns(cur)));
 
   var tagText = subj
-    ? (checked ? (S.self[cur.id] === 1 ? "自评掌握" : "待复习") : typeName(cur.type))
+    ? (submitted && !isRecite() ? "已作答" : typeName(cur.type))
     : (reveal ? (S.graded[cur.id] === 1 ? "回答正确" : S.graded[cur.id] === 0 ? "回答错误" : typeName(cur.type)) : typeName(cur.type));
   var h = '<div class="stem-card"><div class="tagrow">' +
-            '<span class="tag' + ((!subj && reveal && S.graded[cur.id] === 1) || (subj && checked && S.self[cur.id] === 1) ? " solid" : "") + '">' +
+            '<span class="tag' + ((!subj && reveal && S.graded[cur.id] === 1) ? " solid" : "") + '">' +
               tagText + "</span>" +
             '<span class="tag">' + esc(subjName(cur.subject)) + "</span>" +
           '</div><div class="stem">' + esc(cur.stem) + "</div>" +
@@ -1624,12 +1625,8 @@ function render() {
              (cur.type === "fill" ? "在这里填写答案" : "先自己写下要点，再展开参考答案对照") + '"' +
              (isRecite() ? " readonly" : "") + ">" + esc(text) + "</textarea>" +
          "</div>";
-    if (checked && S.self[cur.id] === 0) {
-      h += '<div class="note">已标记为待复习，下次还会出现在练习里。</div>';
-    }
-    /* 和选择题一样：没作答之前不亮参考答案，点「提交，对照答案」才展开 */
-    var submitted = isRecite() || checked || !!(S.sub && S.sub[cur.id]);
-    if (submitted) {
+    /* 和选择题一样：没作答之前不亮参考答案；考试里交卷前也不亮 */
+    if (reveal) {
       var ref = String(cur.ref || "").trim();
       var refShut = !!(S.refShut && S.refShut[cur.id]);
       h += '<button class="fold-head ref-head' + (refShut ? "" : " open") + '"' +
@@ -1639,15 +1636,12 @@ function render() {
            '<div class="fold" id="refFold"><div class="explain">' +
              (ref ? esc(ref) : "（题库未提供参考答案，可对照解析自己判断）") + "</div></div>";
     }
-    if (!isRecite() && !checked) {
-      h += submitted
-        ? '<div class="selfcheck">' +
-            '<button onclick="selfCheck(0)">还要再看</button>' +
-            '<button class="pri" onclick="selfCheck(1)">已经掌握</button>' +
-          "</div>"
-        : '<div class="selfcheck"><button class="pri" onclick="submitSub()">提交，对照答案</button></div>';
+    if (!isRecite() && !submitted) {
+      h += '<div class="selfcheck"><button class="pri" onclick="submitSub()">提交，对照答案</button></div>';
     }
-    h += '<div class="subj-tip">填空题和解答题由你自己核对，不进模拟考试。</div>';
+    h += '<div class="subj-tip">' +
+      (isExam() ? "考试中不显示参考答案，交卷后不再计分。"
+                : "提交后对照参考答案；主观题不计对错，也不进错题本。") + "</div>";
   } else {
     h += '<div class="opts">';
     cur.options.forEach(function (o) {
@@ -1712,7 +1706,7 @@ function render() {
     : subj ? "下一题"
     : (isRecite() || noAns(cur) || done) ? "下一题" : "确认";
   var pill = document.getElementById("qPill");
-  var pct = Math.round(Object.keys(S.graded).length / S.order.length * 100);
+  var pct = Math.round(doneCount() / S.order.length * 100);
   if (isExam()) { tick(); }
   else { pill.textContent = "本组完成度 " + pct + "%"; }
   syncFold();
@@ -1817,7 +1811,7 @@ function same(a, b) {
 
 function grade(picks) {
   var cur = q();
-  if (isSubjQ(cur)) return;        /* 主观题走 selfCheck，永远不进自动判分 */
+  if (isSubjQ(cur)) return;        /* 主观题走 submitSub，永远不进自动判分 */
   if (!picks.length && cur.type === "multi") { toast("请先选择选项"); return; }
   var ok = same(picks, cur.answer) ? 1 : 0;
   S.graded[cur.id] = ok;
@@ -1840,27 +1834,14 @@ function submitSub() {
   var cur = q();
   if (!cur) return;
   if (!S.sub) S.sub = {};
+  if (!S.sub[cur.id]) {
+    var p = P(cur.id);
+    p.n++;                 /* 只记「作答过」，不写 last：主观题没有对错 */
+    p.t = Date.now();
+  }
   S.sub[cur.id] = 1;
   render();
   save();
-}
-/* 主观题的自我核对：只记录「掌握 / 待复习」，不进正确率、不进错题本。
-   没有可靠判分规则，就不能让它冒充自动对错——那是把人教错的捷径。 */
-function selfCheck(ok) {
-  if (!S) return;
-  var cur = q();
-  if (!isSubjQ(cur)) return;
-  if (!S.self) S.self = {};
-  S.self[cur.id] = ok ? 1 : 0;
-  var p = P(cur.id);
-  p.n++;
-  p.last = ok ? 1 : -1;
-  p.t = Date.now();
-  if (!ok) { p.w++; p.in = 1; }
-  vibrate(ok ? [25, 30, 25] : [70, 60, 70, 60, 160]);
-  render();
-  save();
-  toast(ok ? "已记为掌握" : "已记为待复习");
 }
 
 function go(d) {
@@ -1905,6 +1886,18 @@ function toggleWrong() {
   render(); save();
 }
 
+/* 已作答计数：客观题按判分、主观题按「提交过」 */
+function doneCount() {
+  var n = 0;
+  if (!S || !S.order) return 0;
+  S.order.forEach(function (id) {
+    var c = byId[id];
+    if (!c) return;
+    if (isSubjective(c.type)) { if (S.sub && S.sub[id]) n++; }
+    else if (S.graded[id] !== undefined) n++;
+  });
+  return n;
+}
 function submitExam() {
   if (!S || !isExam()) return;
   if (S.state !== "running") return;      /* 倒计时、交卷按钮、最后一题滑动共用这一道闸 */
@@ -1919,6 +1912,10 @@ function submitExam() {
     var p = P(id); p.n++; p.last = ok; p.t = Date.now();
     if (ok) right++; else { p.w++; p.in = 1; }
   });
+  var subjN = S.order.filter(function (id) {
+    var c = byId[id];
+    return c && isSubjective(c.type);
+  }).length;
   var score = scored ? Math.round(right / scored * 100) : 0;
   var sid = S.subject;
   S.state = "submitted";
@@ -1931,7 +1928,8 @@ function submitExam() {
     icon: score >= 60 ? "✓" : "✕",
     big: score,
     title: score >= 60 ? "通过" : "未通过",
-    desc: "答对 " + right + " / " + scored + " 题，错题已进错题本",
+    desc: "答对 " + right + " / " + scored + " 题" +
+           (subjN ? "；另有 " + subjN + " 道主观题不计分" : "") + "，错题已进错题本",
     ok: ["回首页", function () { goTab("home"); }],
     no: ["看错题", function () { startSession("wrong", sid, ""); }]
   });
@@ -1951,7 +1949,7 @@ function tick() {
   var txt = (m < 10 ? "0" : "") + m + ":" + (s < 10 ? "0" : "") + s;
   pill.setAttribute("data-t", txt);
   pill.textContent = "剩余 " + txt + " · 完成度 " +
-    Math.round(Object.keys(S.graded).length / S.order.length * 100) + "%";
+    Math.round(doneCount() / S.order.length * 100) + "%";
 }
 setInterval(tick, 1000);
 
@@ -3214,9 +3212,9 @@ function paperInit() {
 }
 function paperPool() {
   paperInit();
-  /* 模拟考试只抽客观题：主观题没有可靠判分规则，塞进限时卷里交卷会算错分 */
+  /* 主观题也进卷（用户要求）；它们不判分，交卷只统计客观题的得分 */
   return BANK.questions.filter(function (q) {
-    return set.paper.subs[q.subject] && isObjective(q.type);
+    return set.paper.subs[q.subject];
   });
 }
 function paperAvail(tf) {

@@ -312,8 +312,10 @@ const testQs = [
 testQs.forEach((q) => { BANK.questions.push(q); sandbox.byId[q.id] = q; });
 sandbox.set.paper.subs = {}; sandbox.set.paper.subs[TB] = 1;
 ok("测试题库已装入 6 题", BANK.questions.length === 6, "实际 " + BANK.questions.length);
-ok("模拟考试只抽客观题", sandbox.paperPool().length === 4, "实际 " + sandbox.paperPool().length);
-ok("主观题不进组卷池", sandbox.paperPool().every((q) => sandbox.isObjective(q.type)));
+ok("组卷池包含主观题（用户要求）", sandbox.paperPool().length === 6, "实际 " + sandbox.paperPool().length);
+ok("组卷池里既有客观题也有主观题",
+   sandbox.paperPool().some((q) => sandbox.isObjective(q.type)) &&
+   sandbox.paperPool().some((q) => !sandbox.isObjective(q.type)));
 ok("统计口径：总题数含主观题", sandbox.stats(TB).total === 6, "实际 " + sandbox.stats(TB).total);
 
 /* ---------- 5. 模拟考试状态机 ---------- */
@@ -637,10 +639,17 @@ ok("填空题能开练习", W.S !== null && W.S.order.length === 1, W.S && W.S.o
 const qb = () => String(W.document.getElementById("qbody").innerHTML);
 ok("主观题渲染成文本框", qb().indexOf('class="q-input"') >= 0);
 ok("提交前不亮参考答案（和选择题同序）",
-   qb().indexOf("参考答案") < 0 && qb().indexOf("提交，对照答案") >= 0, qb().slice(0, 200));
+   qb().indexOf('id="refFold"') < 0 && qb().indexOf("提交，对照答案") >= 0,
+   JSON.stringify({ ref: qb().indexOf('id="refFold"'), btn: qb().indexOf("提交，对照答案") }));
+const nBefore = (W.prog[TB + "-4"] && W.prog[TB + "-4"].n) || 0;
+const rateBefore = W.stats(TB).rate;
 W.submitSub();
-ok("提交后才展开参考答案，并给出两个自评按钮",
-   qb().indexOf("参考答案") >= 0 && qb().indexOf("还要再看") >= 0 && qb().indexOf("已经掌握") >= 0);
+ok("提交后展开参考答案，没有自评按钮（和选择题一致）",
+   qb().indexOf('id="refFold"') >= 0 && qb().indexOf("还要再看") < 0 &&
+   qb().indexOf("已经掌握") < 0, qb().slice(-300));
+ok("提交记一次作答，但不判对错（rate 不变）",
+   (W.prog[TB + "-4"].n || 0) === nBefore + 1 && W.stats(TB).rate === rateBefore &&
+   W.prog[TB + "-4"].last === -1, JSON.stringify(W.prog[TB + "-4"]));
 ok("参考答案是能收起的折叠块（默认展开）",
    qb().indexOf('class="fold-head ref-head open"') >= 0 && qb().indexOf('id="refFold"') >= 0);
 W.toggleRef();
@@ -655,15 +664,13 @@ ok("不再有「改判为…」那颗按钮", qb().indexOf("改判为") < 0, qb(
 ok("主观题没有可点的选项", qb().indexOf('onclick="pick') < 0);
 ok("主观题没有「确认」按钮", W.document.getElementById("btnAct").textContent === "下一题",
    W.document.getElementById("btnAct").textContent);
-const rateBefore = W.stats(TB).rate;
-const nBefore = (W.prog[TB + "-4"] && W.prog[TB + "-4"].n) || 0;
-W.selfCheck(1);
-ok("自评写入 S.self", W.S.self[TB + "-4"] === 1, String(W.S.self[TB + "-4"]));
-ok("自评计入练习次数", (W.prog[TB + "-4"].n || 0) === nBefore + 1);
-ok("自评不影响正确率", W.stats(TB).rate === rateBefore, W.stats(TB).rate + " vs " + rateBefore);
-W.selfCheck(0);
-ok("改判为待复习后进错题本", W.prog[TB + "-4"].in === 1 && W.prog[TB + "-4"].w > 0);
-ok("主观题自评不产生 graded（不进判分口径）", W.S.graded[TB + "-4"] === undefined);
+ok("主观题不产生 graded（不进判分口径）", W.S.graded[TB + "-4"] === undefined);
+ok("自评那套函数已经删掉", typeof W.selfCheck === "undefined");
+const dupBefore = W.prog[TB + "-4"].n;
+W.submitSub();
+ok("重复点提交不重复计次", W.prog[TB + "-4"].n === dupBefore, W.prog[TB + "-4"].n);
+const pctTxt = W.document.getElementById("qPill").textContent;
+ok("练习完成度把主观题的「已提交」算进去", /完成度 100%/.test(pctTxt), pctTxt);
 
 /* 9.2 主观题不能被当成客观题判分 */
 W.startSession("practice", TB, "fill");
