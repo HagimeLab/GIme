@@ -5123,7 +5123,9 @@ function chatLiveHtml(m) {
   if (think) {
     /* 默认展开（「把思考链显示出来」），用户点一下就收起，收起后记住不再自动弹开。
        .think-body 有 190px 上限 + 内部滚动，长思维链不会把回答挤到屏幕外。 */
-    var open = m.thinkOpen !== false;
+    /* 识别/回答过程中默认收起：工作时的界面只留一个加载提示，不让一屏思考链抢视线；
+       用户自己点开过（thinkOpen=true）就跟着他。答完仍按原来的口径默认展开。 */
+    var open = m.live ? (m.thinkOpen === true) : (m.thinkOpen !== false);
     var label = m.live ? (text ? "思考过程" : "正在思考…")
                        : "思考过程 · " + think.length + " 字";
     /* 用 click 而不是 ontoggle：details 插入时若带 open，浏览器也会派发 toggle，

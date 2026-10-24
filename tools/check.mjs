@@ -1202,8 +1202,8 @@ const thinkHtml = W.chatLiveHtml({ id: "m1", text: "答案选 A。", reasoning: 
 ok("思考链渲染成可折叠块", thinkHtml.indexOf('<details class="think"') >= 0
    && thinkHtml.indexOf("先看题干") >= 0);
 ok("答完后思考链默认展开", thinkHtml.indexOf(" open") >= 0);
-ok("流式中思考链默认展开",
-   W.chatLiveHtml({ id: "m1", text: "x", reasoning: "y", live: true }).indexOf(" open") >= 0);
+ok("流式中思考链默认收起（10-24 改口径：识别期间只留加载提示）",
+   W.chatLiveHtml({ id: "m1", text: "x", reasoning: "y", live: true }).indexOf(" open") < 0);
 ok("用户展开后保持展开",
    W.chatLiveHtml({ id: "m1", text: "x", reasoning: "y", thinkOpen: true }).indexOf(" open") >= 0);
 ok("用户收起后保持收起",
@@ -1290,6 +1290,16 @@ const paceMsg = { live: true, text: "abcdef", shown: 2 };
 ok("流式正文按 shown 截断显示", W.liveText(paceMsg) === "ab", W.liveText(paceMsg));
 ok("收尾等摊完再切 Markdown",
    /pokeLive\(live, function \(\) \{[\s\S]{0,60}live\.live = false;[\s\S]{0,30}chatRender\(\)/.test(html));
+ok("识别/回答过程中思考链默认收起",
+   W.chatLiveHtml({ id: "t1", live: true, reasoning: "想一想", text: "" })
+     .indexOf('<details class="think" open>') < 0);
+ok("用户自己点开过就跟着他展开",
+   W.chatLiveHtml({ id: "t1", live: true, reasoning: "想一想", text: "", thinkOpen: true })
+     .indexOf('<details class="think" open>') >= 0);
+ok("答完仍按原口径默认展开",
+   W.chatLiveHtml({ id: "t1", live: false, reasoning: "想一想", text: "答" })
+     .indexOf('<details class="think" open>') >= 0);
+
 ok("思维链增量走帧节流，不再每个 chunk 重排一次",
    /if \(kind === "think"\) \{ m\.reasoning \+= chunk; chatLivePaintSoon\(m\); \}/.test(html) &&
    /function chatLivePaintSoon\(m\)/.test(html));
