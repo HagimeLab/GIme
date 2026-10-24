@@ -1830,14 +1830,34 @@ function grade(picks) {
 }
 
 /* 主观题：先作答，提交之后才展开参考答案（和选择题的先后顺序一致）。 */
+/* 填空自动比对：只做「同一答案」的归一化比较，模糊语义不猜。
+   解答题没有可判的唯一答案，保留「标记错题」手动加。 */
+function normAns(s) {
+  return String(s || "").toLowerCase()
+    .replace(/[\s，。、；：！？“”‘’"'（）()【】\[\]<>《》,.;:!?\-_/\|]/g, "");
+}
 function submitSub() {
   var cur = q();
   if (!cur) return;
   if (!S.sub) S.sub = {};
   if (!S.sub[cur.id]) {
     var p = P(cur.id);
-    p.n++;                 /* 只记「作答过」，不写 last：主观题没有对错 */
+    p.n++;                 /* 作答过（算完成度） */
     p.t = Date.now();
+    if (cur.type === "fill") {
+      var ref = String(cur.ref || "").trim();
+      var got = String((S.text && S.text[cur.id]) || "").trim();
+      if (ref && got) {
+        if (normAns(got) === normAns(ref)) {
+          p.last = 1;
+        } else {
+          p.last = 0;
+          p.w++;
+          p.in = 1;          /* 填空答错自动进错题本 */
+          toast("答错了，已加入错题本");
+        }
+      }
+    }
   }
   S.sub[cur.id] = 1;
   render();

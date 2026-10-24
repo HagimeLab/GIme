@@ -691,6 +691,30 @@ W.submitSub();
 ok("重复点提交不重复计次", W.prog[TB + "-4"].n === dupBefore, W.prog[TB + "-4"].n);
 const pctTxt = W.document.getElementById("qPill").textContent;
 ok("练习完成度把主观题的「已提交」算进去", /完成度 100%/.test(pctTxt), pctTxt);
+/* 填空自动比对：答错进错题本，答对（忽略标点/大小写）不算错 */
+W.startSession("practice", TB, "fill");
+const fillId = W.S.order[0];
+W.S.text[fillId] = "完全不对的答案";
+const wrongBefore = W.stats(TB).wrong;
+const rateB4 = W.stats(TB).rate;
+W.submitSub();
+ok("填空答错自动进错题本",
+   W.inWrong(W.byId[fillId]) && W.prog[fillId].w === 1 && W.prog[fillId].last === 0,
+   JSON.stringify(W.prog[fillId]));
+ok("错题数 +1，但正确率仍只算客观题", W.stats(TB).wrong === wrongBefore + 1 && W.stats(TB).rate === rateB4);
+W.startSession("practice", TB, "fill");
+W.S.text[fillId] = "参考答案甲！";      /* 标点差异，归一化后应算对 */
+W.submitSub();
+ok("填空答对（忽略标点）不算错，也不会被自动移出错题本",
+   W.prog[fillId].last === 1 && W.prog[fillId].w === 1, JSON.stringify(W.prog[fillId]));
+
+/* 解答题没有唯一答案：不自动判，仍靠「标记错题」 */
+W.startSession("practice", TB, "short");
+const shortId = W.S.order[0];
+W.S.text[shortId] = "胡说八道";
+W.submitSub();
+ok("解答题不会自动判错", !W.inWrong(W.byId[shortId]) && (W.prog[shortId].w || 0) === 0,
+   JSON.stringify(W.prog[shortId]));
 
 /* 9.2 主观题不能被当成客观题判分 */
 W.startSession("practice", TB, "fill");
