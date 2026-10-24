@@ -2792,6 +2792,21 @@ W.chatBusy = false; W.chatMsgs = []; W.chatFile = null; W.chatRender();
 
 W.chatRender();
 
+/* DeepSeek 的 DSML 标记：能解析就执行，解析不了也不许亮给用户 */
+const dsmlOk = W.splitDsmlBlocks('<｜｜DSML｜｜tool_calls>\n<｜｜DSML｜｜invoke name="list_questions">\n<｜｜DSML｜｜parameter name="bank" string="true">"lp"</｜｜DSML｜｜parameter>\n<｜｜DSML｜｜parameter name="limit" string="false">5</｜｜DSML｜｜parameter>\n</｜｜DSML｜｜invoke>\n</｜｜DSML｜｜tool_calls>');
+ok("DSML 调用被解析成一次工具调用",
+   dsmlOk.calls.length === 1 && dsmlOk.calls[0].function.name === "list_questions" &&
+   JSON.parse(dsmlOk.calls[0].function.arguments).limit === 5,
+   JSON.stringify(dsmlOk.calls));
+ok("DSML 标记不进正文", dsmlOk.text === "", dsmlOk.text);
+const dsmlBad = W.splitDsmlBlocks("前文<｜｜DSML｜｜bogus>后文");
+ok("认不出的 DSML 标记也不亮给用户",
+   dsmlBad.text.indexOf("DSML") < 0 && dsmlBad.text.indexOf("前文") >= 0 &&
+   dsmlBad.text.indexOf("后文") >= 0, dsmlBad.text);
+const dsmlCut = W.splitDsmlBlocks('前半句<｜｜DSML｜｜tool_calls><｜｜DSML｜｜invoke name="import_attachment"><｜｜DSML｜｜parameter name="questions">[{"stem":"半截');
+ok("流式中断的半截 DSML 也一起剥掉",
+   dsmlCut.text === "前半句" && dsmlCut.calls.length === 0, dsmlCut.text);
+
 W.chatFile = null;
 
 W.chatFile = null;

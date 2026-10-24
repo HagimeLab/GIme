@@ -5745,6 +5745,12 @@ async function chatRun(cfg, attachMeta) {
       var sp = splitToolBlocks(msg.content);
       if (sp.calls.length) { calls = sp.calls; msg.content = sp.text; live.text = sp.text; }
     }
+    /* DSML 是另一套标记：能解析就执行，解析不了也先把标记从正文里剥掉 */
+    if (!calls.length && String(msg.content || "").indexOf("DSML") >= 0) {
+      var sd = splitDsmlBlocks(msg.content);
+      if (sd.calls.length) calls = sd.calls;
+      if (sd.text !== String(msg.content || "")) { msg.content = sd.text; live.text = sd.text; }
+    }
     if (calls.length) {
       /* 这一轮只是在调工具，不是给用户看的回答：把流式气泡收掉，别留一串工具 JSON。 */
       chatDrop(live);
@@ -5902,6 +5908,53 @@ function splitToolBlocks(text) {
     pos = close + TOOL_BLOCK_CLOSE.length;
   }
   return { text: out.trim(), calls: calls };
+}
+/* DeepSeek 网页版偶尔不用约定的 <tool_call>，而是它自家的 DSML 标记：
+   <｜｜DSML｜｜tool_calls> / <｜｜DSML｜｜invoke name="x"> / <｜｜DSML｜｜parameter name="k">…
+   真机在「停止」截断时把这坨原样亮在了聊天里。这里既解析也兜底剥离：
+   能认出 invoke/parameter 就当一次工具调用交回去；认不出也绝不把标记亮给用户。 */
+function splitDsmlBlocks(text) {
+  var s = String(text || "");
+  if (s.indexOf("DSML") < 0) return { text: s, calls: [], found: false };
+  var re = /<\s*(\/?)\s*[｜|]{1,2}\s*DSML\s*[｜|]{1,2}\s*([^>]*)>/g;
+  var out = "", pos = 0, m, calls = [], cur = null, argName = null, argBuf = "";
+  while ((m = re.exec(s))) {
+    var seg = s.slice(pos, m.index);
+    if (argName != null) argBuf += seg; else out += seg;
+    var closing = m[1] === "/";
+    var body = String(m[2] || "").replace(/^\/+/, "").trim();
+    pos = re.lastIndex;
+    if (/^invoke\b/i.test(body)) {
+      if (closing) {
+        if (cur && cur.function.name) {
+          cur.function.arguments = JSON.stringify(cur._args || {});
+          delete cur._args;
+          calls.push(cur);
+        }
+        cur = null;
+      } else {
+        var nm = /name\s*=\s*"([^"]*)"/i.exec(body) || /name\s*=\s*'([^']*)'/i.exec(body);
+        cur = { id: "dsml_" + (++toolBlockSeq), type: "function",
+                function: { name: nm ? nm[1] : "", arguments: "{}" }, _args: {} };
+      }
+    } else if (/^parameter\b/i.test(body)) {
+      var pm = /name\s*=\s*"([^"]*)"/i.exec(body) || /name\s*=\s*'([^']*)'/i.exec(body);
+      if (closing) {
+        if (cur && argName) {
+          var v = argBuf.trim();
+          try { cur._args[argName] = JSON.parse(v); } catch (e) { cur._args[argName] = v; }
+        }
+        argName = null; argBuf = "";
+      } else { argName = pm ? pm[1] : ""; argBuf = ""; }
+    } else if (/^tool_calls?$/i.test(body)) {
+      /* 外层包裹标记：丢掉 */
+    }
+    /* 认不出的 DSML 标记直接丢掉：它是标记不是正文，亮出来只会吓人 */
+  }
+  var tail = s.slice(pos);
+  /* 还在某个 invoke/parameter 里就说明这轮被截断了：后面那半截 JSON 也一起丢掉 */
+  if (cur || argName != null) argBuf += tail; else out += tail;
+  return { text: out.trim(), calls: calls, found: true };
 }
 var TOOL_BLOCK_OPEN = "<" + "tool_call" + ">";
 var TOOL_BLOCK_CLOSE = "<" + "/tool_call" + ">";
