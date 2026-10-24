@@ -641,6 +641,16 @@ ok("提交前不亮参考答案（和选择题同序）",
 W.submitSub();
 ok("提交后才展开参考答案，并给出两个自评按钮",
    qb().indexOf("参考答案") >= 0 && qb().indexOf("还要再看") >= 0 && qb().indexOf("已经掌握") >= 0);
+ok("参考答案是能收起的折叠块（默认展开）",
+   qb().indexOf('class="fold-head ref-head open"') >= 0 && qb().indexOf('id="refFold"') >= 0);
+W.toggleRef();
+W.render();
+ok("点一下就能收起，重画后仍然是收起的（状态记在这道题上）",
+   W.S.refShut[TB + "-4"] === 1 && qb().indexOf('class="fold-head ref-head open"') < 0,
+   JSON.stringify(W.S.refShut));
+W.toggleRef();
+W.render();
+ok("再点一下能展开回来", !W.S.refShut[TB + "-4"] && qb().indexOf('class="fold-head ref-head open"') >= 0);
 ok("不再有「改判为…」那颗按钮", qb().indexOf("改判为") < 0, qb().slice(-260));
 ok("主观题没有可点的选项", qb().indexOf('onclick="pick') < 0);
 ok("主观题没有「确认」按钮", W.document.getElementById("btnAct").textContent === "下一题",

@@ -1128,7 +1128,7 @@ function saveResume() {
   if (!practiceLeft(S)) { dropResume(key); return; }
   resume[key] = { sid: S.subject, tf: S.tf || "", order: S.order.slice(), idx: S.idx,
                   picks: S.picks || {}, graded: S.graded || {}, text: S.text || {}, self: S.self || {},
-                  sub: S.sub || {},
+                  sub: S.sub || {}, refShut: S.refShut || {},
                   at: Date.now() };
   store.write(LS.r, resume);
 }
@@ -1164,7 +1164,7 @@ function restorePractice(r, from) {
   S = { subject: r.sid, mode: "practice", tf: r.tf || "", order: r.order.slice(), idx: r.idx,
         title: "", state: "",
         picks: r.picks || {}, graded: r.graded || {}, text: r.text || {}, self: r.self || {},
-        sub: r.sub || {},
+        sub: r.sub || {}, refShut: r.refShut || {},
         started: Date.now(), dur: 0 };
   save();
   render();
@@ -1631,7 +1631,12 @@ function render() {
     var submitted = isRecite() || checked || !!(S.sub && S.sub[cur.id]);
     if (submitted) {
       var ref = String(cur.ref || "").trim();
-      h += '<div class="ref-box"><h4>参考答案</h4><div class="ref">' +
+      var refShut = !!(S.refShut && S.refShut[cur.id]);
+      h += '<button class="fold-head ref-head' + (refShut ? "" : " open") + '"' +
+             ' onclick="toggleRef(event)">参考答案' +
+             '<svg class="ico ar" viewBox="0 0 24 24" style="width:16px;height:16px">' +
+               '<path d="M6 9l6 6 6-6"/></svg></button>' +
+           '<div class="fold" id="refFold"><div class="explain">' +
              (ref ? esc(ref) : "（题库未提供参考答案，可对照解析自己判断）") + "</div></div>";
     }
     if (!isRecite() && !checked) {
@@ -1672,7 +1677,7 @@ function render() {
     var ex = (cur.explain || "").trim();
     /* 解析来源必须让他看得见：题源原文 vs 按知识点撰写，可信度不是一回事 */
     var src = ex ? (cur.ex_src === "题源" ? "题源" : "编写") : "";
-    h += '<button class="fold-head' + (foldOpen ? " open" : "") + '" onclick="toggleFold(event)">' +
+    h += '<button class="fold-head' + (foldOpen ? " open" : "") + '" id="exHead" onclick="toggleFold(event)">' +
            (subj ? "解析" : "答案 " + cur.answer.join("") + " · 解析") +
            (src ? '<span class="tag src">' + src + "</span>" : "") +
            '<svg class="ico ar" viewBox="0 0 24 24" style="width:16px;height:16px"><path d="M6 9l6 6 6-6"/></svg>' +
@@ -1711,6 +1716,7 @@ function render() {
   if (isExam()) { tick(); }
   else { pill.textContent = "本组完成度 " + pct + "%"; }
   syncFold();
+  syncRefFold();
 }
 
 /* 解析折叠：容器高度与内容同步变化，箭头同步转 180° */
@@ -1722,9 +1728,33 @@ function syncFold() {
   void f.offsetHeight;
   f.style.transition = "";
 }
+/* 参考答案折叠：与解析同一套动画，但状态按题记（S.refShut），切回来还是收起 */
+function syncRefFold() {
+  var f = document.getElementById("refFold");
+  if (!f) return;
+  var cur = q();
+  var shut = !!(cur && S.refShut && S.refShut[cur.id]);
+  f.style.transition = "none";
+  f.style.height = shut ? "0px" : ((f.scrollHeight || 0) + "px");
+  void f.offsetHeight;
+  f.style.transition = "";
+}
+function toggleRef(ev) {
+  if (ev && ev.stopPropagation) ev.stopPropagation();
+  var cur = q(), f = document.getElementById("refFold");
+  if (!cur || !f) return;
+  if (!S.refShut) S.refShut = {};
+  var shut = !S.refShut[cur.id];
+  S.refShut[cur.id] = shut ? 1 : 0;
+  var head = document.querySelector("#qbody .ref-head");
+  if (head) { if (shut) head.classList.remove("open"); else head.classList.add("open"); }
+  f.style.height = shut ? "0px" : ((f.scrollHeight || 0) + "px");
+  if (!shut) setTimeout(function () { f.style.height = "auto"; }, 320);
+  save();
+}
 function toggleFold(ev) {
   if (ev && ev.stopPropagation) ev.stopPropagation();
-  var f = document.getElementById("fold"), head = document.querySelector(".fold-head");
+  var f = document.getElementById("fold"), head = document.getElementById("exHead");
   if (!f) return;
   foldOpen = !foldOpen;
   if (head) { if (foldOpen) head.classList.add("open"); else head.classList.remove("open"); }
@@ -2830,7 +2860,7 @@ function clearBankProgress(sid) {
   });
   if (S && S.subject === sid) {
     S.idx = 0;
-    S.picks = {}; S.graded = {}; S.text = {}; S.self = {}; S.sub = {};
+    S.picks = {}; S.graded = {}; S.text = {}; S.self = {}; S.sub = {}; S.refShut = {};
     S.state = ""; S.doneAt = 0;
   }
   progMayEmpty = (progCount(prog) === 0);
