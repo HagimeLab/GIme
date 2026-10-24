@@ -2969,6 +2969,38 @@ Object.keys(W.byId).forEach((k) => { if (k.indexOf("cb1-") === 0 || k.indexOf("c
 delete W.prog["cb1-0"]; delete W.prog["cb1-1"]; delete W.prog["cb2-0"]; delete W.prog["cb2-1"];
 delete W.resume["cb1"];
 
+/* ---------- 29k. v1.1.2：答题卡按题型分块 ---------- */
+section("[29k] 答题卡：题号按题型归纳");
+{
+  const types = ["single", "multi", "judge", "fill", "short", "single"];
+  W.BANK.subjects.push({ id: "gt", name: "答题卡分组测试", count: types.length, custom: true, file: "gt.md" });
+  types.forEach((t, i) => {
+    const q = { id: "gt-" + i, subject: "gt", type: t, stem: "答题卡第" + (i + 1) + "题",
+                options: t === "fill" || t === "short" ? [] : [["A", "甲"], ["B", "乙"]],
+                answer: t === "fill" || t === "short" ? [] : ["A"] };
+    W.BANK.questions.push(q); W.byId[q.id] = q;
+  });
+  W.S = { subject: "gt", mode: "practice", order: types.map((_, i) => "gt-" + i), idx: 0,
+          picks: {}, graded: {}, text: {}, self: {}, state: "", title: "", dur: 0 };
+  W.renderGrid();
+  const g = String(W.document.getElementById("grid").innerHTML);
+  ok("答题卡按题型分块，五类各一个标题",
+     ["单选题", "多选题", "判断题", "填空题", "解答题"].every((t) => g.indexOf(t) >= 0), g.slice(0, 160));
+  ok("标题按「单选→多选→判断→填空→解答」的固定顺序",
+     g.indexOf("单选题") < g.indexOf("多选题") && g.indexOf("多选题") < g.indexOf("判断题") &&
+     g.indexOf("判断题") < g.indexOf("填空题") && g.indexOf("填空题") < g.indexOf("解答题"));
+  ok("每块标出题数（单选 2 题、其余各 1 题）",
+     g.indexOf("单选题") >= 0 && g.indexOf("2 题") >= 0, g.slice(0, 200));
+  ok("题号仍是整组序号（第 1、6 题在单选块，第 2 题在多选块）",
+     g.indexOf(">1<") >= 0 && g.indexOf(">6<") >= 0 &&
+     g.indexOf(">2<") > g.indexOf("多选题") && g.indexOf(">2<") < g.indexOf("判断题"), g.slice(0, 260));
+  W.jump(5);
+  ok("点题号仍跳到正确的那一题", W.S.idx === 5, W.S.idx);
+  W.BANK.subjects = W.BANK.subjects.filter((x) => x.id !== "gt");
+  W.BANK.questions = W.BANK.questions.filter((q) => q.subject !== "gt");
+  Object.keys(W.byId).forEach((k) => { if (k.indexOf("gt-") === 0) delete W.byId[k]; });
+}
+
 /* ---------- 结果 ---------- */
 console.log("\n" + "=".repeat(46));
 if (fails.length) {

@@ -545,6 +545,10 @@ button.rec:active { opacity: .62; }
 .grid button.wrong > b { background: var(--raise); color: var(--ink); box-shadow: none;
                          outline: 1.5px dashed var(--ink); }
 .grid button.cur > b { outline: 2px solid var(--ink); outline-offset: 2px; }
+.grid .gsec { flex: 0 0 100%; display: flex; align-items: baseline; gap: 8px; margin: 12px 5px 2px; }
+.grid .gsec:first-child { margin-top: 2px; }
+.grid .gsec .gst { font-size: .8125rem; font-weight: 700; color: var(--ink); }
+.grid .gsec .gsn { font-size: .6875rem; color: var(--ink-3); }
 .legend { margin-top: 16px; font-size: .6875rem; color: var(--ink-3); }
 .legend i { font-style: normal; display: inline-block; width: 11px; height: 11px; border-radius: 5px;
             margin: 0 5px 0 16px; vertical-align: -1px; background: var(--raise); box-shadow: var(--sh-sm); }
@@ -3334,17 +3338,34 @@ function abandonExam() {
   toast("已放弃这场考试，计时停止");
 }
 function openSheet() { renderGrid(); openLayer(document.getElementById("sheet")); }
+var GRID_TYPES = [["single", "单选题"], ["multi", "多选题"], ["judge", "判断题"],
+                  ["fill", "填空题"], ["short", "解答题"]];
 function renderGrid() {
   if (!S) return;
-  var h = "";
+  /* 答题卡按题型分块：题号还是整组的序号（与顶部「第 k / N 题」一致），
+     只是同一题型的排在一起，长卷子里找某类题不用一行行扫。 */
+  var byType = {};
+  GRID_TYPES.forEach(function (t) { byType[t[0]] = []; });
   S.order.forEach(function (id, i) {
-    var cls = "";
-    if (i === S.idx) cls += " cur";
-    var g = S.graded[id];
-    if (g === 1) cls += " right";
-    else if (g === 0) cls += " wrong";
-    else if ((S.picks[id] || []).length) cls += " picked";
-    h += '<button class="' + cls + '" onclick="jump(' + i + ')"><b>' + (i + 1) + "</b></button>";
+    var qq = byId[id] || P(id);
+    var t = (qq && byType[qq.type]) ? qq.type : "single";
+    byType[t].push(i);
+  });
+  var h = "";
+  GRID_TYPES.forEach(function (t) {
+    var idxs = byType[t[0]];
+    if (!idxs.length) return;
+    h += '<div class="gsec"><span class="gst">' + t[1] + '</span>' +
+         '<span class="gsn">' + idxs.length + " 题</span></div>";
+    idxs.forEach(function (i) {
+      var cls = "";
+      if (i === S.idx) cls += " cur";
+      var g = S.graded[S.order[i]];
+      if (g === 1) cls += " right";
+      else if (g === 0) cls += " wrong";
+      else if ((S.picks[S.order[i]] || []).length) cls += " picked";
+      h += '<button class="' + cls + '" onclick="jump(' + i + ')"><b>' + (i + 1) + "</b></button>";
+    });
   });
   document.getElementById("grid").innerHTML = h;
   document.getElementById("legend").innerHTML = isExam()
