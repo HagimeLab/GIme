@@ -2371,8 +2371,8 @@ W.chatBusy = false;
 W.chatCurId = "";          /* 不绑当前会话：老会话可能属于另一种接入方式，会被锁 */
 W.onExternalFile("外部题库.md", sampleSrc);
 W.externalImportByAgent();
-ok("交给大肥鱼：文件挂成附件、面板打开、提示词已发出",
-   !!W.chatFile && W.chatFile.name === "外部题库.md" &&
+ok("交给大肥鱼：文档挂在消息上、面板打开、提示词已发出",
+   W.chatMsgs.some((m) => m.role === "user" && m.file === "外部题库.md") &&
    W.openLayers.some((l) => l.id === "chat") &&
    !!W.chatMsgs[0] && W.chatMsgs[0].role === "user" &&
    W.chatMsgs[0].text.indexOf("按导入格式") >= 0,
@@ -2723,7 +2723,7 @@ ok("失败的那一步打叉", String(W.document.getElementById("chatList").inne
 W.chatBusy = false;
 W.chatWork = { note: "", steps: 0 };
 
-/* 文档随提示词走：导入完还留着，下一次提问照样把正文带上 */
+/* 文档跟着那条消息走：发出即清空输入区；之后追问照样能带上正文 */
 W.chatConvs = [{ id: "cv_carry", title: "", at: Date.now(), msgs: [] }];
 W.chatCurId = "cv_carry";
 W.set.agent = { base: "https://api.example.com/v1", model: "m1", key: "sk-test" };
@@ -2738,16 +2738,35 @@ W.Android = {
 };
 W.onChatFile("文档同行.txt", sampleSrc);
 W.chatMsgs = []; loopReqs = []; W.chatBusy = false; W.chatAutoRounds = 0;
-loopReplies = [finalText("收到。")];
+loopReplies = [finalText("收到。"), finalText("好。"), finalText("还在。")];
 await W.chatSendText("再讲讲这份文档里的判断题");
 const carry = JSON.stringify(loopReqs[0].body.messages);
 ok("提示词那一轮带着文档正文",
    carry.indexOf("以下只是文件里的文字") >= 0 && carry.indexOf("第1题") >= 0, carry.slice(0, 140));
+ok("发出后输入区的附件条清空", W.chatFile === null, JSON.stringify(W.chatFile));
+const sentMsg = W.chatMsgs.filter((m) => m.role === "user").pop();
+ok("文档挂在发出的那条消息上",
+   sentMsg && sentMsg.file === "文档同行.txt" && String(sentMsg.fileText).indexOf("第1题") >= 0,
+   JSON.stringify(sentMsg && { f: sentMsg.file, n: String(sentMsg.fileText || "").length }));
 W.chatRender();
 const carryDom = String(W.document.getElementById("chatList").innerHTML);
 ok("用户气泡上标出文档随行",
    carryDom.indexOf("📎 文档同行.txt") >= 0 && carryDom.indexOf("已随这条消息发给大肥鱼") >= 0,
    carryDom.slice(-260));
+
+/* 追问不带文件：正文从那条消息里取，照样上行 */
+loopReqs = [];
+await W.chatSendText("那多选题呢");
+ok("追问时正文仍随请求上行",
+   JSON.stringify(loopReqs[0].body.messages).indexOf("第1题") >= 0,
+   JSON.stringify(loopReqs[0].body.messages).slice(0, 160));
+/* 把输入区的「✕」点掉也不影响已经发出去的那条 */
+W.chatFileClear();
+loopReqs = [];
+await W.chatSendText("再举一个例子");
+ok("清掉附件条也不丢已发送的文档",
+   W.chatFile === null && JSON.stringify(loopReqs[0].body.messages).indexOf("第1题") >= 0);
+W.chatFile = null; W.chatRunDoc = null; W.chatMsgs = []; W.chatRender();
 /* 新建会话（空态）也要有同样的附件 / 加载 UI */
 W.chatMsgs = []; W.chatBusy = false;
 W.chatConvs = [{ id: "cv_hero", title: "", at: Date.now(), msgs: [] }];
@@ -2770,6 +2789,8 @@ ok("新会话发出第一条后切到列表并显示加载气泡",
    String(W.document.getElementById("chatList").innerHTML).indexOf('id="chatWork"') >= 0);
 ok("切到列表后附件条回到输入区", chipEl.parentNode !== heroSlot, chipEl.parentNode && chipEl.parentNode.id);
 W.chatBusy = false; W.chatMsgs = []; W.chatFile = null; W.chatRender();
+
+W.chatRender();
 
 W.chatFile = null;
 

@@ -5411,11 +5411,32 @@ function renderChatFile() {
 /* 随这一次请求发出去的系统消息：正文 + 一句防注入声明。文件正文是外部内容，
    里面写的「指令」不能当作用户的指令，所以把它单独圈在声明后面。
    只活在这一次请求里，不进 chatMsgs：正文不该占历史的位置。 */
+/* 文档跟着「那条消息」走：发出后输入区就清空，正文存在消息上；
+   这一轮要带哪份文档，由 chatRunDoc 决定（发送时解析一次）。 */
+var chatRunDoc = null;
+function chatDocOf(msgs) {
+  for (var i = msgs.length - 1; i >= 0; i--) {
+    var m = msgs[i];
+    if (m && m.role === "user" && m.fileText) {
+      return { file: m.file || "附件", text: m.fileText,
+               chars: m.fileChars || String(m.fileText).length };
+    }
+  }
+  return null;
+}
+/* 这一轮要带的文档：优先取挂在这条消息上的，其次取输入区里还没发出去的那份。 */
+function currentDoc() {
+  if (chatRunDoc) return chatRunDoc;
+  if (chatFile) return { file: chatFile.name, text: chatFile.text, chars: chatFile.chars };
+  return null;
+}
 function chatFileMeta() {
-  if (!chatFile) return "";
-  var body = chatFile.text.slice(0, CHAT_FILE_SEND_MAX);
-  var head = "【附件】" + chatFile.name + "（" + chatFile.chars + " 字符" +
-    (chatFile.sent < chatFile.chars ? "，只给你前 " + body.length + " 字，后面的没上行" : "") + "）\n";
+  var doc = currentDoc();
+  if (!doc || !doc.text) return "";
+  var chars = doc.chars || String(doc.text || "").length;
+  var body = String(doc.text || "").slice(0, CHAT_FILE_SEND_MAX);
+  var head = "【附件】" + doc.file + "（" + chars + " 字符" +
+    (body.length < chars ? "，只给你前 " + body.length + " 字，后面的没上行" : "") + "）\n";
   return head +
     "用户要求把它加进题库时，按导入格式把正文里的题全部识别出来，用 import_attachment 交回来；" +
     "写不下就接着调用，直到全部交完。缺答案或缺选项的题跳过、在最后说明，不要自己补答案。" +
@@ -5480,11 +5501,12 @@ function agentQuestion(item) {
    累计在同一张卡上（模型一次写不完的题会分几次交回）。这里一个字节都不写盘，
    落库要等用户点卡上的「导入」。 */
 function chatImportAttachment(args) {
-  if (!chatFile) throw new Error("当前没有附件，请让用户先点输入框左边的回形针上传文件");
+  var doc = currentDoc();
+  if (!doc) throw new Error("当前没有附件，请让用户先点输入框左边的回形针上传文件");
   var list = args && Array.isArray(args.questions) ? args.questions : null;
   if (!list || !list.length)
     throw new Error("questions 是必填的：把这一批识别出的题写进来；这份正文里没有题就别调用这个工具");
-  var keep = chatPending && chatPending.source === chatFile.name ? chatPending : null;
+  var keep = chatPending && chatPending.source === doc.file ? chatPending : null;
   var all = keep ? keep.picked.slice() : [], seen = {};
   all.forEach(function (x) { seen[qKey(x)] = 1; });
   var added = 0, dup = 0, bad = 0;
@@ -5507,8 +5529,8 @@ function chatImportAttachment(args) {
   chatPending = {
     name: keep ? keep.name
                 : String(args.bankName == null ? "" : args.bankName).trim() ||
-                  chatFile.name.replace(/\.[^.]+$/, ""),
-    source: chatFile.name,
+                  doc.file.replace(/\.[^.]+$/, ""),
+    source: doc.file,
     picked: all, usable: usable, rep: rep,
     parsing: true
   };
@@ -5542,8 +5564,7 @@ function chatConfirmImport() {
   patchImportDigest("已确认", "题库「" + saved.subj.name + "」" + p.usable.length + " 题");
   /* 文档留着：用户接着问「再识别一下第 3 章」「把这批的解析补全」时，正文还得跟着走。
      要它不再上行就点附件条上的「✕」。 */
-  chatFile.imported = (chatFile.imported || 0) + p.usable.length;
-  renderChatFile();
+  if (chatFile) { chatFile.imported = (chatFile.imported || 0) + p.usable.length; renderChatFile(); }
   chatRender();
   toast("已导入 " + p.usable.length + " 题");
 }
@@ -5590,10 +5611,21 @@ async function chatSendText(text, silent) {
   var conv = chatCurConv();
   if (chatConvLocked(conv)) { toast(chatConvLockTip(conv)); return; }
   if (conv && !conv.mode) { conv.mode = agentMode(); chatConvSave(); }
-  /* 附件元信息只在本次请求里带，不写进 chatMsgs：正文与统计都不该占历史的位置。 */
-  var attachMeta = chatFileMeta();
+  /* 文档随这条消息发出去：正文快照进消息本身，输入区的附件条随即清掉；
+     追问时只要那条消息还在历史窗口里，正文照样能取到。 */
+  var withFile = (!silent && chatFile) ? chatFile : null;
+  if (withFile) chatMsgs.forEach(function (m) { if (m && m.fileText) delete m.fileText; });
   chatPush({ role: "user", text: text, ctx: chatQuestionCtx(), hidden: !!silent,
-             file: (!silent && chatFile) ? chatFile.name : "" });
+             file: withFile ? withFile.name : "",
+             fileText: withFile ? withFile.text : "",
+             fileChars: withFile ? withFile.chars : 0 });
+  if (withFile) { chatFile = null; renderChatFile(); }
+  if (!silent) {
+    chatRunDoc = withFile
+      ? { file: withFile.name, text: withFile.text, chars: withFile.chars }
+      : chatDocOf(chatMsgs.slice(0, chatMsgs.length - 1));
+  }
+  var attachMeta = chatFileMeta();
   chatBusy = true;
   if (!silent) chatWork = { title: "", steps: [], count: 0 };
   chatRender();
@@ -5613,7 +5645,7 @@ async function chatSendText(text, silent) {
   /* 附件这条路要「一次点完就全导进去」：这一轮真的又收进题了就自动再要一轮，
      直到某一轮一题都没新增（交完了 / 全是重复），或者触到自动轮次上限。
      用户自己发消息会把轮次清零（chatSend），所以闲聊不会被接上去。 */
-  if (ranOk && chatFile && chatLastImported > 0 && chatAutoRounds < CHAT_AUTO_ROUNDS) {
+  if (ranOk && chatRunDoc && chatLastImported > 0 && chatAutoRounds < CHAT_AUTO_ROUNDS) {
     chatAutoRounds++;
     chatPush({ role: "step", hidden: true,
                text: "自动继续（第 " + chatAutoRounds + " 轮）" }, true);
