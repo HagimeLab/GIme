@@ -31,8 +31,8 @@ android {
         applicationId = "com.fan.shuatiku"
         minSdk = 24
         targetSdk = 36
-        versionCode = 12
-        versionName = "1.1.1"
+        versionCode = 13
+        versionName = "1.1.2"
         // Cronet 只带 ARM 两种 ABI：x86/x86_64 的 so 每个 5MB，手机上用不到
         ndk { abiFilters += listOf("arm64-v8a", "armeabi-v7a") }
     }
