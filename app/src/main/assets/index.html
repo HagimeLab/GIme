@@ -427,6 +427,7 @@ button.rec:active { opacity: .62; }
 .msg .ava { width: 28px; height: 28px; flex-basis: 28px; margin-top: 2px; }
 .msg .bubble.typing { color: var(--ink-3); }
 .msg .bubble .ub-file { display: block; margin-top: 6px; font-size: .6875rem; opacity: .72; }
+.chat-hero .chat-file { margin: 0 0 10px; width: 100%; }
 .msg .bubble.typing .wlist { display: block; margin-top: 7px; font-size: .8125rem; line-height: 1.7; }
 .msg .bubble.typing .wlist i { font-style: normal; margin-right: 7px; }
 .msg .bubble.typing .wlist i.ok { color: var(--ink-2); }
@@ -5229,6 +5230,7 @@ function chatLayout() {
   var list = document.getElementById("chatList");
   var hint = document.getElementById("chatHint");
   var input = document.getElementById("chatIn");
+  var chip = document.getElementById("chatFileChip");
   if (!panel || !hero || !slot || !foot || !input) return;
   var wasEmpty = panel.classList.contains("empty");
   var empty = chatMsgs.length === 0 && !chatBusy;
@@ -5237,11 +5239,18 @@ function chatLayout() {
   hero.hidden = !empty;
   if (list) list.style.display = empty ? "none" : "";
   if (hint) hint.style.display = empty ? "none" : "";
+  /* 附件条跟着输入框走：空态（新建会话）时它挂在 #chatFoot 里会被整块隐藏，
+     于是「这份文档会随提示词一起发」在新会话里看不见、也删不掉。 */
   if (empty) {
+    if (chip && chip.parentNode !== slot) slot.appendChild(chip);
     if (input.parentNode !== slot) slot.appendChild(input);
     foot.style.display = "none";
   } else {
-    if (input.parentNode !== foot) foot.appendChild(input);
+    /* 一起搬回去：先附件条再输入框，顺序才不会反过来 */
+    if ((chip && chip.parentNode !== foot) || input.parentNode !== foot) {
+      if (chip) foot.appendChild(chip);
+      foot.appendChild(input);
+    }
     foot.style.display = "";
   }
   /* 从空会话发出的第一条：输入框从中间滑到底部，而不是瞬移 */

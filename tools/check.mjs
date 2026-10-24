@@ -2748,6 +2748,29 @@ const carryDom = String(W.document.getElementById("chatList").innerHTML);
 ok("用户气泡上标出文档随行",
    carryDom.indexOf("📎 文档同行.txt") >= 0 && carryDom.indexOf("已随这条消息发给大肥鱼") >= 0,
    carryDom.slice(-260));
+/* 新建会话（空态）也要有同样的附件 / 加载 UI */
+W.chatMsgs = []; W.chatBusy = false;
+W.chatConvs = [{ id: "cv_hero", title: "", at: Date.now(), msgs: [] }];
+W.chatCurId = "cv_hero";
+W.onChatFile("空态附件.txt", sampleSrc);
+W.chatRender();
+const heroSlot = W.document.getElementById("chatHeroSlot");
+const chipEl = W.document.getElementById("chatFileChip");
+ok("空态里附件条跟着输入框搬进 hero",
+   chipEl.parentNode === heroSlot && !chipEl.hidden,
+   chipEl.parentNode && chipEl.parentNode.id);
+ok("空态里看得到文档名（知道自己带的是什么）",
+   String(chipEl.innerHTML).indexOf("空态附件.txt") >= 0 && !chipEl.hidden,
+   String(chipEl.innerHTML).slice(0, 80));
+W.chatBusy = true;
+W.chatPush({ role: "user", text: "识别这份" }, true);
+W.chatRender();
+ok("新会话发出第一条后切到列表并显示加载气泡",
+   W.document.getElementById("chatHero").hidden === true &&
+   String(W.document.getElementById("chatList").innerHTML).indexOf('id="chatWork"') >= 0);
+ok("切到列表后附件条回到输入区", chipEl.parentNode !== heroSlot, chipEl.parentNode && chipEl.parentNode.id);
+W.chatBusy = false; W.chatMsgs = []; W.chatFile = null; W.chatRender();
+
 W.chatFile = null;
 
 W.chatFile = null;
