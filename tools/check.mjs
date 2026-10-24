@@ -636,7 +636,12 @@ W.startSession("practice", TB, "fill");
 ok("填空题能开练习", W.S !== null && W.S.order.length === 1, W.S && W.S.order.length);
 const qb = () => String(W.document.getElementById("qbody").innerHTML);
 ok("主观题渲染成文本框", qb().indexOf('class="q-input"') >= 0);
-ok("主观题展示参考答案", qb().indexOf("参考答案") >= 0);
+ok("提交前不亮参考答案（和选择题同序）",
+   qb().indexOf("参考答案") < 0 && qb().indexOf("提交，对照答案") >= 0, qb().slice(0, 200));
+W.submitSub();
+ok("提交后才展开参考答案，并给出两个自评按钮",
+   qb().indexOf("参考答案") >= 0 && qb().indexOf("还要再看") >= 0 && qb().indexOf("已经掌握") >= 0);
+ok("不再有「改判为…」那颗按钮", qb().indexOf("改判为") < 0, qb().slice(-260));
 ok("主观题没有可点的选项", qb().indexOf('onclick="pick') < 0);
 ok("主观题没有「确认」按钮", W.document.getElementById("btnAct").textContent === "下一题",
    W.document.getElementById("btnAct").textContent);

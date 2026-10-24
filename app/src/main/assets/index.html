@@ -1128,6 +1128,7 @@ function saveResume() {
   if (!practiceLeft(S)) { dropResume(key); return; }
   resume[key] = { sid: S.subject, tf: S.tf || "", order: S.order.slice(), idx: S.idx,
                   picks: S.picks || {}, graded: S.graded || {}, text: S.text || {}, self: S.self || {},
+                  sub: S.sub || {},
                   at: Date.now() };
   store.write(LS.r, resume);
 }
@@ -1163,6 +1164,7 @@ function restorePractice(r, from) {
   S = { subject: r.sid, mode: "practice", tf: r.tf || "", order: r.order.slice(), idx: r.idx,
         title: "", state: "",
         picks: r.picks || {}, graded: r.graded || {}, text: r.text || {}, self: r.self || {},
+        sub: r.sub || {},
         started: Date.now(), dur: 0 };
   save();
   render();
@@ -1542,7 +1544,7 @@ function startSession(mode, sid, tf, from) {
   S = { subject: sid, mode: mode, tf: tf || "", order: order, idx: idx,
         title: mode === "exam" ? paperTitle() : "",
         state: mode === "exam" ? "running" : "",
-        picks: {}, graded: {}, text: {}, self: {},
+        picks: {}, graded: {}, text: {}, self: {}, sub: {},
         started: Date.now(), dur: mode === "exam" ? examMin() * 60 : 0 };
   save();
   render();
@@ -1625,17 +1627,20 @@ function render() {
     if (checked && S.self[cur.id] === 0) {
       h += '<div class="note">已标记为待复习，下次还会出现在练习里。</div>';
     }
-    var ref = String(cur.ref || "").trim();
-    h += '<div class="ref-box"><h4>参考答案</h4><div class="ref">' +
-           (ref ? esc(ref) : "（题库未提供参考答案，可对照解析自己判断）") + "</div></div>";
+    /* 和选择题一样：没作答之前不亮参考答案，点「提交，对照答案」才展开 */
+    var submitted = isRecite() || checked || !!(S.sub && S.sub[cur.id]);
+    if (submitted) {
+      var ref = String(cur.ref || "").trim();
+      h += '<div class="ref-box"><h4>参考答案</h4><div class="ref">' +
+             (ref ? esc(ref) : "（题库未提供参考答案，可对照解析自己判断）") + "</div></div>";
+    }
     if (!isRecite() && !checked) {
-      h += '<div class="selfcheck">' +
-             '<button onclick="selfCheck(0)">还要再看</button>' +
-             '<button class="pri" onclick="selfCheck(1)">已经掌握</button>' +
-           "</div>";
-    } else if (!isRecite() && checked) {
-      h += '<div class="selfcheck"><button onclick="selfCheck(' + (S.self[cur.id] === 1 ? 0 : 1) + ')">' +
-             (S.self[cur.id] === 1 ? "改判为待复习" : "改判为已掌握") + "</button></div>";
+      h += submitted
+        ? '<div class="selfcheck">' +
+            '<button onclick="selfCheck(0)">还要再看</button>' +
+            '<button class="pri" onclick="selfCheck(1)">已经掌握</button>' +
+          "</div>"
+        : '<div class="selfcheck"><button class="pri" onclick="submitSub()">提交，对照答案</button></div>';
     }
     h += '<div class="subj-tip">填空题和解答题由你自己核对，不进模拟考试。</div>';
   } else {
@@ -1800,6 +1805,15 @@ function grade(picks) {
   setTimeout(function () { body.classList.remove("shake"); quiz.classList.remove("q-flash"); }, 700);
 }
 
+/* 主观题：先作答，提交之后才展开参考答案（和选择题的先后顺序一致）。 */
+function submitSub() {
+  var cur = q();
+  if (!cur) return;
+  if (!S.sub) S.sub = {};
+  S.sub[cur.id] = 1;
+  render();
+  save();
+}
 /* 主观题的自我核对：只记录「掌握 / 待复习」，不进正确率、不进错题本。
    没有可靠判分规则，就不能让它冒充自动对错——那是把人教错的捷径。 */
 function selfCheck(ok) {
@@ -2816,7 +2830,7 @@ function clearBankProgress(sid) {
   });
   if (S && S.subject === sid) {
     S.idx = 0;
-    S.picks = {}; S.graded = {}; S.text = {}; S.self = {};
+    S.picks = {}; S.graded = {}; S.text = {}; S.self = {}; S.sub = {};
     S.state = ""; S.doneAt = 0;
   }
   progMayEmpty = (progCount(prog) === 0);
@@ -3480,7 +3494,7 @@ function openQuestion(id) {
   if (!x) return;
   var order = subjQs(x.subject, "").map(function (y) { return y.id; });
   S = { subject: x.subject, mode: "practice", tf: "", order: order, idx: order.indexOf(id),
-        picks: {}, graded: {}, text: {}, self: {}, started: Date.now(), dur: 0 };
+        picks: {}, graded: {}, text: {}, self: {}, sub: {}, started: Date.now(), dur: 0 };
   save();
   render();
   document.getElementById("quiz").classList.add("on");
