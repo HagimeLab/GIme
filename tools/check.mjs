@@ -2756,6 +2756,10 @@ W.chatWork = { title: "正在调用工具 · 第 2 步", count: 2,
                steps: [{ t: "查了题库「X」：给回 5 题", ok: true }] };
 W.chatRender();
 const workDom = String(W.document.getElementById("chatList").innerHTML);
+ok("续段时的占位气泡显示当前段落，而不是笼统的「正在想」",
+   W.chatBusy === true &&
+   W.chatLiveHtml({ id: "x", live: true, text: "", reasoning: "" })
+     .indexOf("正在调用工具 · 第 2 步") >= 0);
 ok("工作时是「转圈 + 步骤列表」（参考 Cline 的调用步骤）",
    workDom.indexOf('id="chatWork"') >= 0 && workDom.indexOf('class="spin"') >= 0 &&
    workDom.indexOf("正在调用工具 · 第 2 步") >= 0 &&

@@ -5187,7 +5187,10 @@ function chatLiveHtml(m) {
            (live ? esc(text).replace(/\n/g, "<br>") : mdFor(m)) + "</div>";
   }
   if (!out) {
-    out = '<div class="bubble typing">' + (tooling ? "正在调用工具…" : "大肥鱼正在想…") + "</div>";
+    /* 续段/续批时这里要显示「正在识别 · 第 2/2 段」，而不是笼统的「正在想」 */
+    var wait = tooling ? "正在调用工具…"
+                       : (chatBusy && chatWork && chatWork.title ? chatWork.title : "大肥鱼正在想…");
+    out = '<div class="bubble typing">' + esc(wait) + "</div>";
   }
   return out;
 }
