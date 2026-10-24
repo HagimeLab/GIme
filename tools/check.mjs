@@ -2678,6 +2678,32 @@ delete W.Android;
 W.chatPending = null;
 W.chatRender();
 
+/* 循环内部的话不上屏：界面上只有用户发言 + 一个「正在做什么」的转圈 */
+W.chatMsgs = [];
+W.chatPush({ role: "user", text: "用户自己说的话" });
+W.chatPush({ role: "step", hidden: true, text: "认了附件里的题：认出 1 题" });
+W.chatPush({ role: "user", hidden: true, text: "继续：把正文里还没交回的题接着交回来" });
+W.chatRender();
+const autoDom = String(W.document.getElementById("chatList").innerHTML);
+ok("界面上只留用户自己发的消息",
+   autoDom.indexOf("用户自己说的话") >= 0, autoDom.slice(-160));
+ok("自动续轮的提示不占聊天界面", autoDom.indexOf("继续：把正文里还没交回") < 0, autoDom.slice(-200));
+ok("工具步骤行也不占界面（只在 chatMsgs 里留痕）",
+   autoDom.indexOf("认了附件里的题") < 0 &&
+   W.chatMsgs.some((m) => m.role === "step" && m.hidden),
+   JSON.stringify({ dom: autoDom.indexOf("认了附件里的题"),
+     steps: W.chatMsgs.filter((m) => m.role === "step").map((m) => [m.hidden, String(m.text).slice(0, 10)]) }));
+
+W.chatBusy = true;
+W.chatWork = { note: "第 2 步 · 查了题库「X」：给回 5 题", steps: 2 };
+W.chatRender();
+const workDom = String(W.document.getElementById("chatList").innerHTML);
+ok("工作时只有一个转圈 + 当前步骤",
+   workDom.indexOf('id="chatWork"') >= 0 && workDom.indexOf('class="spin"') >= 0 &&
+   workDom.indexOf("第 2 步") >= 0, workDom.slice(-200));
+W.chatBusy = false;
+W.chatWork = { note: "", steps: 0 };
+
 W.chatFile = null;
 
 W.BANK.subjects = W.BANK.subjects.filter((s) => s.id !== "lp");
