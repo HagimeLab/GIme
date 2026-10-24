@@ -426,6 +426,10 @@ button.rec:active { opacity: .62; }
 .msg.me .bubble { background: var(--ink); color: var(--paper); border-top-right-radius: 6px; }
 .msg .ava { width: 28px; height: 28px; flex-basis: 28px; margin-top: 2px; }
 .msg .bubble.typing { color: var(--ink-3); }
+.msg .bubble.typing .wlist { display: block; margin-top: 7px; font-size: .8125rem; line-height: 1.7; }
+.msg .bubble.typing .wlist i { font-style: normal; margin-right: 7px; }
+.msg .bubble.typing .wlist i.ok { color: var(--ink-2); }
+.msg .bubble.typing .wlist i.err { color: #D14343; }
 /* 工具/对话循环期间的唯一提示：一个转圈 + 一句「正在做什么」 */
 .msg .bubble.typing .spin { display: inline-block; width: 12px; height: 12px; margin-right: 8px;
   border: 2px solid var(--ink-3); border-top-color: transparent; border-radius: 50%;
@@ -4915,14 +4919,34 @@ function chatDrop(m) {
 }
 /* 工具循环 / 对话循环的进度只在这里显示一句话：聊天界面上除用户发言之外，
    只应该有这一个「正在做什么」的转圈提示。 */
-var chatWork = { note: "", steps: 0 };
-function chatWorkText() { return chatWork.note || "正在想…"; }
-function chatWorkNote(text, bump) {
-  if (bump) chatWork.steps++;
-  chatWork.note = text;
+var chatWork = { title: "", steps: [], count: 0 };
+function chatWorkText() { return chatWork.title || "正在想…"; }
+/* 开源 agent（Cline / LobeChat）的做法：工作时把调用列成一串步骤，
+   当前这步在跑、跑完打勾、失败打叉。这里最多留 8 行，旧的滚掉。 */
+function chatWorkHtml() {
+  var h = esc(chatWorkText());
+  if (chatWork.steps.length) {
+    h += '<span class="wlist">' + chatWork.steps.map(function (s) {
+      return '<i class="' + (s.ok ? "ok" : "err") + '">' + (s.ok ? "✓" : "×") + "</i>" + esc(s.t);
+    }).join("<br>") + "</span>";
+  }
+  return h;
+}
+function chatWorkRepaint() {
   var el = document.getElementById("chatWork");
-  var span = el && el.querySelector ? el.querySelector(".wtxt") : null;
-  if (span) span.textContent = chatWorkText();   /* 只改这一行字，不重画整列表 */
+  var box = el && el.querySelector ? el.querySelector(".wtxt") : null;
+  if (box) box.innerHTML = chatWorkHtml();   /* 只重画这一块，不碰整个列表 */
+}
+function chatWorkTitle(t) { chatWork.title = t; chatWorkRepaint(); }
+function chatWorkStep(text, ok, asNew) {
+  if (asNew) {
+    chatWork.steps.push({ t: text, ok: ok !== false });
+    if (chatWork.steps.length > 8) chatWork.steps.shift();
+    chatWork.count++;
+  } else if (chatWork.steps.length) {
+    chatWork.steps[chatWork.steps.length - 1] = { t: text, ok: ok !== false };
+  }
+  chatWorkRepaint();
 }
 function chatHasLive() {
   for (var i = chatMsgs.length - 1; i >= 0; i--) if (chatMsgs[i].live) return true;
@@ -5123,9 +5147,9 @@ function chatLiveHtml(m) {
   if (think) {
     /* 默认展开（「把思考链显示出来」），用户点一下就收起，收起后记住不再自动弹开。
        .think-body 有 190px 上限 + 内部滚动，长思维链不会把回答挤到屏幕外。 */
-    /* 识别/回答过程中默认收起：工作时的界面只留一个加载提示，不让一屏思考链抢视线；
-       用户自己点开过（thinkOpen=true）就跟着他。答完仍按原来的口径默认展开。 */
-    var open = m.live ? (m.thinkOpen === true) : (m.thinkOpen !== false);
+    /* 思考时展开（看得到它在想什么），答完收起（结果在前，过程退到折子里）；
+       用户自己点过就按他的选择来。 */
+    var open = m.live ? (m.thinkOpen !== false) : (m.thinkOpen === true);
     var label = m.live ? (text ? "思考过程" : "正在思考…")
                        : "思考过程 · " + think.length + " 字";
     /* 用 click 而不是 ontoggle：details 插入时若带 open，浏览器也会派发 toggle，
@@ -5280,7 +5304,7 @@ function chatRender() {
   if (chatBusy && !chatHasLive()) {
     h += '<div class="msg ai" id="chatWork">' + agentAvaHtml() +
          '<div class="bubble typing"><i class="spin"></i><span class="wtxt">' +
-         esc(chatWorkText()) + "</span></div></div>";
+         chatWorkHtml() + "</span></div></div>";
   }
   list.innerHTML = h;
   var send = document.getElementById("chatSend");
@@ -5552,7 +5576,7 @@ async function chatSendText(text, silent) {
   var attachMeta = chatFileMeta();
   chatPush({ role: "user", text: text, ctx: chatQuestionCtx(), hidden: !!silent });
   chatBusy = true;
-  if (!silent) chatWork = { note: "", steps: 0 };
+  if (!silent) chatWork = { title: "", steps: [], count: 0 };
   chatRender();
   var ranOk = false;
   try {
@@ -5574,8 +5598,8 @@ async function chatSendText(text, silent) {
     chatAutoRounds++;
     chatPush({ role: "step", hidden: true,
                text: "自动继续（第 " + chatAutoRounds + " 轮）" }, true);
-    chatWorkNote("正在继续识别 · 第 " + chatAutoRounds + " 轮（已收 " +
-                 (chatPending ? chatPending.usable.length : 0) + " 题）");
+    chatWorkTitle("正在继续识别 · 第 " + chatAutoRounds + " 轮");
+    chatWorkStep("已收 " + (chatPending ? chatPending.usable.length : 0) + " 题，继续交剩下的", true, true);
     chatRender();
     await chatSendText("继续：把正文里还没交回的题接着交回来，直到全部交完；" +
                        "交完就告诉用户一共认出多少题、可收录多少题，问他是否导入。", true);
@@ -5699,7 +5723,8 @@ async function chatRun(cfg, attachMeta) {
         messages.push({ role: "tool", tool_call_id: call.id, content: payload });
         var stepTxt = toolStepText(fn.name, out, errText);
         chatPush({ role: "step", hidden: true, text: stepTxt }, true);
-        chatWorkNote("第 " + (chatWork.steps + 1) + " 步 · " + stepTxt, true);
+        chatWorkTitle("正在调用工具 · 第 " + (chatWork.count + 1) + " 步");
+        chatWorkStep(stepTxt, !errText, true);
         dig.push(toolDigestLine(fn.name, args, out, errText));
       }
       chatRender();
@@ -5738,7 +5763,7 @@ async function chatRun(cfg, attachMeta) {
     "还差什么就直说，不要再调用工具。" });
   chatPush({ role: "step", hidden: true,
              text: "工具步骤用完 " + rounds + " 步，先按已经拿到的信息作答" }, true);
-  chatWorkNote("正在整理答案（工具步骤已用完）");
+  chatWorkTitle("正在整理答案（工具步骤已用完）");
   var fin = liveBubble();
   var d2;
   try {

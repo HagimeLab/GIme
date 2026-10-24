@@ -1201,9 +1201,9 @@ ok("空消息渲染成「正在想」", W.chatLiveHtml({ id: "m1", text: "", rea
 const thinkHtml = W.chatLiveHtml({ id: "m1", text: "答案选 A。", reasoning: "先看题干" });
 ok("思考链渲染成可折叠块", thinkHtml.indexOf('<details class="think"') >= 0
    && thinkHtml.indexOf("先看题干") >= 0);
-ok("答完后思考链默认展开", thinkHtml.indexOf(" open") >= 0);
-ok("流式中思考链默认收起（10-24 改口径：识别期间只留加载提示）",
-   W.chatLiveHtml({ id: "m1", text: "x", reasoning: "y", live: true }).indexOf(" open") < 0);
+ok("答完后思考链默认收起（结果在前，过程退到折子里）", thinkHtml.indexOf(" open") < 0);
+ok("流式中思考链默认展开（思考时看得到它在想什么）",
+   W.chatLiveHtml({ id: "m1", text: "x", reasoning: "y", live: true }).indexOf(" open") >= 0);
 ok("用户展开后保持展开",
    W.chatLiveHtml({ id: "m1", text: "x", reasoning: "y", thinkOpen: true }).indexOf(" open") >= 0);
 ok("用户收起后保持收起",
@@ -1234,7 +1234,7 @@ ok("思考链与正文分通道", liveMsg && liveMsg.reasoning === "先读题。
 ok("流式结束后不再标 live", liveMsg && liveMsg.live === false);
 ok("答完后思考链仍在（不随 live 消失）", liveMsg && liveMsg.reasoning
    && W.chatLiveHtml(liveMsg).indexOf('<details class="think"') >= 0);
-ok("答完后思考链仍展开", W.chatLiveHtml(liveMsg).indexOf(" open") >= 0);
+ok("答完后思考链收起", W.chatLiveHtml(liveMsg).indexOf(" open") < 0);
 ok("流式只留一条助手气泡",
    W.chatMsgs.filter((m) => m.role === "assistant").length === 1, W.chatMsgs.length);
 ok("流式消息已落盘", (() => {
@@ -1290,15 +1290,15 @@ const paceMsg = { live: true, text: "abcdef", shown: 2 };
 ok("流式正文按 shown 截断显示", W.liveText(paceMsg) === "ab", W.liveText(paceMsg));
 ok("收尾等摊完再切 Markdown",
    /pokeLive\(live, function \(\) \{[\s\S]{0,60}live\.live = false;[\s\S]{0,30}chatRender\(\)/.test(html));
-ok("识别/回答过程中思考链默认收起",
+ok("思考时默认展开",
    W.chatLiveHtml({ id: "t1", live: true, reasoning: "想一想", text: "" })
-     .indexOf('<details class="think" open>') < 0);
+     .indexOf('<details class="think" open>') >= 0);
 ok("用户自己点开过就跟着他展开",
    W.chatLiveHtml({ id: "t1", live: true, reasoning: "想一想", text: "", thinkOpen: true })
      .indexOf('<details class="think" open>') >= 0);
-ok("答完仍按原口径默认展开",
+ok("思考完成后默认收起",
    W.chatLiveHtml({ id: "t1", live: false, reasoning: "想一想", text: "答" })
-     .indexOf('<details class="think" open>') >= 0);
+     .indexOf('<details class="think" open>') < 0);
 
 ok("思维链增量走帧节流，不再每个 chunk 重排一次",
    /if \(kind === "think"\) \{ m\.reasoning \+= chunk; chatLivePaintSoon\(m\); \}/.test(html) &&
@@ -2705,12 +2705,18 @@ ok("工具步骤行也不占界面（只在 chatMsgs 里留痕）",
      steps: W.chatMsgs.filter((m) => m.role === "step").map((m) => [m.hidden, String(m.text).slice(0, 10)]) }));
 
 W.chatBusy = true;
-W.chatWork = { note: "第 2 步 · 查了题库「X」：给回 5 题", steps: 2 };
+W.chatWork = { title: "正在调用工具 · 第 2 步", count: 2,
+               steps: [{ t: "查了题库「X」：给回 5 题", ok: true }] };
 W.chatRender();
 const workDom = String(W.document.getElementById("chatList").innerHTML);
-ok("工作时只有一个转圈 + 当前步骤",
+ok("工作时是「转圈 + 步骤列表」（参考 Cline 的调用步骤）",
    workDom.indexOf('id="chatWork"') >= 0 && workDom.indexOf('class="spin"') >= 0 &&
-   workDom.indexOf("第 2 步") >= 0, workDom.slice(-200));
+   workDom.indexOf("正在调用工具 · 第 2 步") >= 0 &&
+   workDom.indexOf("查了题库「X」：给回 5 题") >= 0 &&
+   workDom.indexOf('class="wlist"') >= 0, workDom.slice(-260));
+W.chatWork.steps.push({ t: "认了附件里的题：认出 24 题", ok: false });
+W.chatRender();
+ok("失败的那一步打叉", String(W.document.getElementById("chatList").innerHTML).indexOf('class="err"') >= 0);
 W.chatBusy = false;
 W.chatWork = { note: "", steps: 0 };
 
