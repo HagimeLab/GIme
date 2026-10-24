@@ -2898,6 +2898,66 @@ W.BANK.questions = W.BANK.questions.filter((q) => q.subject !== "lp");
 Object.keys(W.byId).forEach((k) => { if (k.indexOf("lp-") === 0) delete W.byId[k]; });
 delete W.Android;
 
+/* ---------- 29j. v1.1.2：清空本库进度 / 错题本按库分组 ---------- */
+section("[29j] 清空本库进度（带确认）与错题本分组");
+const mkBank = (id, name) => {
+  W.BANK.subjects.push({ id, name, count: 2, custom: true, file: id + ".md" });
+  for (let i = 0; i < 2; i++) {
+    const q = { id: id + "-" + i, subject: id, type: "single", stem: name + "第" + i + "题",
+                options: [["A", "甲"], ["B", "乙"]], answer: ["A"] };
+    W.BANK.questions.push(q); W.byId[q.id] = q;
+  }
+};
+mkBank("cb1", "清空测试库");
+mkBank("cb2", "另一个库");
+W.prog["cb1-0"] = { n: 1, w: 0, last: 1, b: 0, t: 1 };
+W.prog["cb1-1"] = { n: 2, w: 2, last: 0, b: 1, t: 2, in: 1 };
+W.prog["cb2-0"] = { n: 1, w: 0, last: 1, b: 0, t: 3 };
+W.resume["cb1"] = { sid: "cb1", order: ["cb1-0", "cb1-1"], idx: 1, at: 1 };
+W.S = { subject: "cb1", mode: "practice", order: ["cb1-0", "cb1-1"], idx: 1,
+        picks: { "cb1-0": ["A"] }, graded: { "cb1-0": 1 }, text: {}, self: {},
+        state: "", title: "", dur: 0 };
+
+W.askClearBank();
+const clearGlass = String(W.document.getElementById("glass").innerHTML);
+ok("清空前进确认：点名题库、说清影响、不直接清",
+   clearGlass.indexOf("清空「清空测试库」的进度") >= 0 &&
+   clearGlass.indexOf("确认清空") >= 0 && W.prog["cb1-0"].n === 1,
+   clearGlass.slice(0, 120));
+while (W.openLayers.length) W.closeTop();
+
+W.clearBankProgress("cb1");
+ok("清完：答过的记录没了、已刷归零（渲染会补一条「看过但没答」的空记录，不算进度）",
+   (!W.prog["cb1-0"] || W.prog["cb1-0"].n === 0) &&
+   W.stats("cb1").seen === 0 && W.stats("cb1").done === 0,
+   JSON.stringify(W.prog["cb1-0"]));
+ok("错题与收藏保留（只把进度清零，不抹复习材料）",
+   W.prog["cb1-1"].n === 0 && W.prog["cb1-1"].in === 1 && W.prog["cb1-1"].b === 1 &&
+   W.stats("cb1").wrong === 1, JSON.stringify(W.prog["cb1-1"]));
+ok("别的库不受影响", W.prog["cb2-0"].n === 1, JSON.stringify(W.prog["cb2-0"]));
+ok("续刷快照一起清掉", !W.resume["cb1"], JSON.stringify(W.resume["cb1"]));
+ok("当前这一组回到第 1 题",
+   W.S.idx === 0 && Object.keys(W.S.picks).length === 0, JSON.stringify(W.S.picks));
+
+/* 错题本分组 */
+W.prog["cb2-1"] = { n: 1, w: 1, last: 0, b: 0, t: 4, in: 1 };
+W.renderWrong();
+const wrongDom = String(W.document.getElementById("wrongList").innerHTML);
+ok("错题本按题库分组：两个库各一小块",
+   wrongDom.indexOf("wgroup") >= 0 && wrongDom.indexOf("清空测试库") >= 0 &&
+   wrongDom.indexOf("另一个库") >= 0, wrongDom.slice(0, 160));
+ok("每组带题数与「重刷这组」", (wrongDom.match(/重刷这组/g) || []).length === 2);
+ok("一个库的题只出现在自己那块里（顺序：库A标题 → 库A题 → 库B标题）",
+   wrongDom.indexOf("清空测试库") < wrongDom.indexOf("清空测试库第1题") &&
+   wrongDom.indexOf("清空测试库第1题") < wrongDom.indexOf("另一个库") &&
+   wrongDom.indexOf("另一个库") < wrongDom.indexOf("另一个库第1题"), "顺序不对");
+
+W.BANK.subjects = W.BANK.subjects.filter((x) => x.id !== "cb1" && x.id !== "cb2");
+W.BANK.questions = W.BANK.questions.filter((q) => q.subject !== "cb1" && q.subject !== "cb2");
+Object.keys(W.byId).forEach((k) => { if (k.indexOf("cb1-") === 0 || k.indexOf("cb2-") === 0) delete W.byId[k]; });
+delete W.prog["cb1-0"]; delete W.prog["cb1-1"]; delete W.prog["cb2-0"]; delete W.prog["cb2-1"];
+delete W.resume["cb1"];
+
 /* ---------- 结果 ---------- */
 console.log("\n" + "=".repeat(46));
 if (fails.length) {

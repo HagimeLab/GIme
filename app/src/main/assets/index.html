@@ -805,6 +805,13 @@ html.swap, html.swap * { transition: none !important; }
                background: var(--raise); box-shadow: var(--sh-sm); font-size: .8125rem; font-weight: 700; }
 .bbar button.solid { background: var(--ink); color: var(--paper); }
 .bbar button:active { box-shadow: var(--sink); }
+/* 错题本按题库分组的小标题 */
+.wgroup { display: flex; align-items: baseline; gap: 8px; margin: 18px 2px 6px; }
+.wgroup .wg-t { flex: 1; min-width: 0; font-size: .9375rem; font-weight: 700; color: var(--ink);
+                overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.wgroup .wg-n { font-size: .75rem; color: var(--ink-3); }
+.wgroup .wg-go { border: 0; background: transparent; padding: 0 2px; color: var(--ink-2);
+                 font-family: inherit; font-size: .75rem; font-weight: 600; }
 .res { position: relative; padding-left: 40px; }
 .res .cbx { position: absolute; left: 0; top: 18px; width: 24px; height: 24px; border-radius: 9px;
             border: 1.7px solid var(--ink-3); }
@@ -905,6 +912,9 @@ html.swap, html.swap * { transition: none !important; }
   <div class="q-head">
     <button class="bk" onclick="exitQuiz()"><svg class="ico" viewBox="0 0 24 24"><path d="M14.5 5.5L8 12l6.5 6.5"/></svg></button>
     <div class="ti"><b id="qTitle">单选题</b><small id="qSub"></small></div>
+    <button class="gr" onclick="askClearBank()" aria-label="清空本库进度" title="清空本库进度">
+      <svg class="ico" viewBox="0 0 24 24" style="width:19px;height:19px;margin-left:auto"><path d="M5 12a7 7 0 1 0 2-4.9"/><path d="M5 4.5v3.8h3.8"/></svg>
+    </button>
     <button class="gr" onclick="openSheet()"><svg class="ico" viewBox="0 0 24 24" style="width:19px;height:19px;margin-left:auto"><rect x="4" y="4" width="6.5" height="6.5" rx="2"/><rect x="13.5" y="4" width="6.5" height="6.5" rx="2"/><rect x="4" y="13.5" width="6.5" height="6.5" rx="2"/><rect x="13.5" y="13.5" width="6.5" height="6.5" rx="2"/></svg></button>
   </div>
   <div class="track"><i id="qBar"></i></div>
@@ -2458,15 +2468,29 @@ function renderWrong() {
            '<button onclick="enterBatch()">管理</button></div>' +
            '<div class="sl-hint" style="margin:-4px 0 14px">答对不会自动移出错题本，重做对后到「管理」里勾选移出</div>';
   }
-  h += w.slice(0, 60).map(function (x) {
+  function wrongRow(x) {
     var sel = batchSel[x.id] ? " sel" : "";
     return '<button class="res' + sel + '" data-id="' + x.id + '" onclick="' +
       (batchOn ? "tapSel(&quot;" + x.id + "&quot;)" : "openQuestion(&quot;" + x.id + "&quot;)") + '">' +
       (batchOn ? '<span class="cbx"></span>' : "") +
       "<b>" + esc(x.stem) + "</b>" +
-      "<small>" + esc(subjName(x.subject)) + " · " + typeName(x.type) + " · " +
+      "<small>" + typeName(x.type) + " · " +
       (isSubjective(x.type) ? "参考答案" : "答案") + " " + esc(answerText(x)) +
       " · " + (prog[x.id].n > 0 ? "错 " + prog[x.id].w + " 次" : "手动标记") + "</small></button>";
+  }
+  /* 按题库分组：每个库给自己一小块，不再把几个库的错题混成一锅 */
+  var groups = [];
+  BANK.subjects.forEach(function (s2) {
+    var list = w.filter(function (x) { return x.subject === s2.id; });
+    if (list.length) groups.push({ id: s2.id, name: s2.name, list: list });
+  });
+  var orphan = w.filter(function (x) { return !subjectOf(x.subject); });
+  if (orphan.length) groups.push({ id: "", name: "已删除的题库", list: orphan });
+  h += groups.map(function (g) {
+    return '<div class="wgroup"><span class="wg-t">' + esc(g.name) + "</span>" +
+           '<span class="wg-n">' + g.list.length + " 题</span>" +
+           (g.id ? '<button class="wg-go" onclick="startWrongBank(&quot;' + g.id + '&quot;)">重刷这组</button>' : "") +
+           "</div>" + g.list.slice(0, 60).map(wrongRow).join("");
   }).join("");
   if (batchOn) {
     h += '<div class="trash" id="trash"><svg class="ico" viewBox="0 0 24 24" style="width:20px;height:20px">' +
@@ -2474,6 +2498,7 @@ function renderWrong() {
   }
   document.getElementById("wrongList").innerHTML = h;
 }
+function startWrongBank(sid) { startSession("wrong", sid, ""); }
 function enterBatch() { batchOn = true; batchSel = {}; renderWrong(); }
 function exitBatch() { batchOn = false; batchSel = {}; renderWrong(); }
 function tapSel(id) {
@@ -2741,6 +2766,47 @@ function jiggleSiblings(k) {
       setTimeout(function () { r.classList.remove("jig"); }, 320);
     }, Math.abs(i - at) * 70);
   });
+}
+/* 清空「这一个题库」的进度：只抹做题记录与续刷快照，
+   错题本标记和收藏保留——那是复习材料，不该被“重刷”顺手清掉。 */
+function askClearBank() {
+  var sid = S && S.subject;
+  var s = subjectOf(sid);
+  if (!sid || !s) { toast("现在没有打开的题库"); return; }
+  var t = stats(sid);
+  glass({
+    title: "清空「" + s.name + "」的进度？",
+    desc: t.seen
+      ? "这个题库已刷 " + t.seen + " / " + t.total + " 题，清空后会回到未刷状态，方便重刷；错题本和收藏保留"
+      : "这个题库还没有做题记录，清空不会有变化；错题本和收藏保留",
+    ok: ["确认清空", function () { clearBankProgress(sid); }]
+  });
+}
+function clearBankProgress(sid) {
+  var s = subjectOf(sid);
+  if (!sid || !s) return;
+  BANK.questions.forEach(function (q) {
+    if (q.subject !== sid) return;
+    var p = prog[q.id];
+    if (!p) return;
+    /* 错题/收藏留成空进度：inWrong 与收藏都读 prog，直接删会把它们一起抹掉 */
+    var keepIn = inWrong(q) ? 1 : 0, keepB = p.b ? 1 : 0;
+    if (keepIn || keepB) prog[q.id] = { n: 0, w: 0, last: 0, t: 0, b: keepB, in: keepIn };
+    else delete prog[q.id];
+  });
+  if (S && S.subject === sid) {
+    S.idx = 0;
+    S.picks = {}; S.graded = {}; S.text = {}; S.self = {};
+    S.state = ""; S.doneAt = 0;
+  }
+  progMayEmpty = (progCount(prog) === 0);
+  save();
+  /* save() 会按当前会话再写一份快照，这里在它之后把这个库的快照删掉 */
+  delete resume[sid];
+  store.write(LS.r, resume);
+  if (S && S.subject === sid) render();
+  renderAll();
+  toast("已清空「" + s.name + "」的进度");
 }
 function askClear() {
   glass({ title: "清空全部进度？", desc: "做题记录、错题本、收藏都会被删除，无法恢复",
