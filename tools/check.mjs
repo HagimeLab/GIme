@@ -1,6 +1,6 @@
 /**
  * GIme 回归检查（无第三方依赖，node 直接跑）：
- *   1. index.html 内联脚本语法检查
+ *   1. 页面脚本语法检查（index.html 骨架 + style.css + app-*.js 三段）
  *   2. 在最小 DOM 桩上真跑一遍页面逻辑，覆盖 v1.0.1 修的几个流程：
  *      导入解析/统计口径、模拟考试交卷防重入、放弃后停表、最后一题滑动
  *   3. bank.js 内置题库结构检查
@@ -13,8 +13,12 @@ import vm from "node:vm";
 import { fileURLToPath } from "node:url";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-const HTML = path.join(ROOT, "app/src/main/assets/index.html");
-const BANK_JS = path.join(ROOT, "app/src/main/assets/bank.js");
+const ASSETS = path.join(ROOT, "app/src/main/assets");
+const HTML = path.join(ASSETS, "index.html");
+const BANK_JS = path.join(ASSETS, "bank.js");
+const CSS_FILE = path.join(ASSETS, "style.css");
+/* 页面已拆成 index.html 骨架 + style.css + 三个脚本，按页面里的真实加载顺序列出。 */
+const JS_FILES = ["app-core.js", "app-admin.js", "app-chat.js"];
 
 let pass = 0;
 const fails = [];
@@ -24,19 +28,24 @@ function ok(name, cond, detail) {
 }
 function section(t) { console.log("\n" + t); }
 
-/* ---------- 1. 内联脚本语法 ---------- */
-section("[1] index.html 内联脚本语法");
-const html = fs.readFileSync(HTML, "utf8");
-const open = html.indexOf("<script>");
-const close = html.indexOf("</script>", open);
-const src = html.slice(open + 8, close);
+/* ---------- 1. 页面脚本语法 ---------- */
+/* 页面拆成 1 个骨架 + 1 份 CSS + 3 个脚本后，绝大多数断言仍然是「在整页源码里找某段代码」，
+   所以这里重建一个合并串 html：按页面真实结构（CSS → 骨架 → 脚本）把各部分拼起来，
+   让断言不必关心代码究竟落在哪个文件。各段之间补一个换行，避免相邻两段首尾粘成一行。 */
+const skeletonHtml = fs.readFileSync(HTML, "utf8");
+const cssSource = fs.readFileSync(CSS_FILE, "utf8");
+const jsSources = JS_FILES.map((f) => fs.readFileSync(path.join(ASSETS, f), "utf8"));
+
+section("[1] 页面脚本语法");
 try {
-  new vm.Script(src, { filename: "index.inline.js" });
-  ok("内联脚本可编译", true);
+  /* 每个脚本单独编译，文件名带上真实文件，语法错时日志直接指到对的文件。 */
+  JS_FILES.forEach((f, i) => new vm.Script(jsSources[i], { filename: f }));
+  ok("页面脚本可编译", true);
 } catch (e) {
-  ok("内联脚本可编译", false, e.message);
+  ok("页面脚本可编译", false, e.message);
   process.exit(1);
 }
+const html = [cssSource].concat([skeletonHtml]).concat(jsSources).join("\n");
 
 /* ---------- 最小 DOM 桩 ---------- */
 function makeElement(id) {
@@ -115,7 +124,8 @@ vm.runInNewContext(fs.readFileSync(BANK_JS, "utf8"), sandbox, { filename: "bank.
 
 section("[2] 页面脚本装载");
 try {
-  vm.runInNewContext(src, sandbox, { filename: "index.inline.js" });
+  /* 三个脚本共用一个 sandbox，等价于它们在同一个页面里先后执行。 */
+  JS_FILES.forEach((f, i) => vm.runInNewContext(jsSources[i], sandbox, { filename: f }));
   ok("脚本在 DOM 桩上启动", true);
 } catch (e) {
   ok("脚本在 DOM 桩上启动", false, e.stack);
@@ -919,7 +929,7 @@ ok("下载走原生桥且把存放位置说清楚",
    dlCalls === 1 && toastTx().indexOf("系统「下载」目录") >= 0, dlCalls + "/" + toastTx());
 /* 「下载这份举例」按钮长在举例页里面，提示条若压在页面下面，用户点完什么都看不见。
    不点名具体浮层，直接要求 toast 是整份 CSS 里最高的一层。 */
-const cssText = html.slice(html.indexOf("<style>"), html.indexOf("</style>"));
+const cssText = cssSource;
 const zs = (cssText.match(/z-index:\s*\d+/g) || []).map((s) => parseInt(s.split(":")[1], 10));
 const toastZ = parseInt((/\.toast\s*\{[^}]*?z-index:\s*(\d+)/.exec(cssText) || [])[1], 10);
 ok("提示条压在全部浮层之上（举例页里点下载能看见反馈）",

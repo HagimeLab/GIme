@@ -1,0 +1,823 @@
+/* ============================================================
+   黑白灰 · 轻量 Neumorphism
+   色彩只用 黑 / 白 / 多级浅灰；正误靠「形态」区分，不靠颜色
+   阴影：柔和弥散双向光；圆角：卡片 26 / 内层 20 / 胶囊 999
+   动效：250ms cubic-bezier(0.16,1,0.3,1) 回弹，退出 200ms ease-in
+   ============================================================ */
+* { margin: 0; padding: 0; box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+/* 安卓内核给点过的按钮画一圈系统橙焦点环，破坏黑白灰；触屏没有键盘导航，直接去掉 */
+button:focus, input:focus { outline: none; }
+
+:root, [data-theme="light"] {
+  --paper: #EDEEF1;
+  --surface: #F2F3F6;
+  --raise: #F5F6F9;
+  --ink: #14161A;
+  --ink-2: #6B7078;
+  --ink-3: #A2A7AF;
+  --line: #E1E3E8;
+  /* 「已登录」这类成功态文字用。暗色下要提亮，否则在深底上读不出来 */
+  --ok: #1F8A4C;
+  --sh: -8px -8px 18px rgba(255,255,255,.9), 8px 8px 20px rgba(20,22,26,.07);
+  --sh-sm: -4px -4px 10px rgba(255,255,255,.85), 4px 4px 10px rgba(20,22,26,.06);
+  /* 大圆角卡用的柔化投影：模糊半径必须远大于偏移，否则高光那圈圆角和卡片自己的
+     圆角不同心，左上会露出第二层"方角"轮廓（--sh-sm 的 10px 糊不住 20px 的角） */
+  --sh-soft: -3px -3px 14px rgba(255,255,255,.6), 4px 6px 14px rgba(20,22,26,.045);
+  --sink: inset -4px -4px 9px rgba(255,255,255,.8), inset 5px 5px 11px rgba(20,22,26,.08);
+  --r-card: 26px;
+  --r-in: 20px;
+  --ease: cubic-bezier(0.16, 1, 0.3, 1);
+}
+/* 系统栏高度是设备事实，不是主题色板的一部分，所以单独只挂在 :root 上。
+   混进上面那条规则的话，带 data-theme="light" 的换肤快照会把 --sat/--sab 重置成 0，
+   快照内容比真界面高出一截，扩散时圆里圆外错开，看着就是界面在抖。 */
+:root {
+  --sat: 0px;
+  --sab: 0px;
+  --st: max(env(safe-area-inset-top), var(--sat));
+  --sb: max(env(safe-area-inset-bottom), var(--sab));
+}
+[data-theme="dark"] {
+  --paper: #17181B;
+  --surface: #1C1E22;
+  --raise: #212429;
+  --ink: #F2F3F5;
+  --ink-2: #9BA1A9;
+  --ink-3: #6A6F77;
+  --line: #2C2F35;
+  --ok: #4ECB82;
+  --sh: -8px -8px 18px rgba(255,255,255,.04), 8px 8px 22px rgba(0,0,0,.55);
+  --sh-sm: -4px -4px 10px rgba(255,255,255,.035), 4px 4px 10px rgba(0,0,0,.45);
+  /* 大圆角卡用的柔化投影：模糊半径必须远大于偏移，否则高光那圈圆角和卡片自己的
+     圆角不同心，左上会露出第二层"方角"轮廓（--sh-sm 的 10px 糊不住 20px 的角）。
+     暗色这档特意收得比亮色狠：真机量过，6/10/24@.42 会把 10px 的网格间隙压暗 4.9 级
+     （间隙 19.1 vs 底色 24.0），收到 3/5/12@.24 只剩 2.1 级，悬浮感还在。 */
+  --sh-soft: -2px -2px 12px rgba(255,255,255,.018), 3px 5px 12px rgba(0,0,0,.24);
+  --sink: inset -4px -4px 9px rgba(255,255,255,.03), inset 5px 5px 11px rgba(0,0,0,.5);
+}
+
+html { font-size: 16px; }
+body {
+  font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", "Noto Sans CJK SC", "Microsoft YaHei", sans-serif;
+  background: var(--paper);
+  color: var(--ink);
+  min-height: 100vh;
+  line-height: 1.6;
+  overflow-x: hidden;
+  -webkit-user-select: none; user-select: none;
+  -webkit-font-smoothing: antialiased;
+}
+button { font: inherit; border: none; background: none; color: inherit; cursor: pointer; }
+input { font: inherit; }
+svg { display: block; }
+.ico { width: 22px; height: 22px; stroke: currentColor; fill: none; stroke-width: 1.7;
+       stroke-linecap: round; stroke-linejoin: round; }
+
+/* ---------------- 通用卡片 ---------------- */
+/* 注意：<button> 上的 display:table/table-cell 会被 Chrome 降级，
+   所有含按钮的横向布局一律用 flex */
+.card { background: var(--raise); border-radius: var(--r-card); box-shadow: var(--sh); }
+.pad { padding: 22px; }
+.sec-title { display: flex; align-items: baseline; margin: 26px 0 14px; }
+.sec-title b { flex: 1; font-size: 1.0625rem; font-weight: 700; letter-spacing: .5px; }
+.sec-title span { font-size: .8125rem; color: var(--ink-3); }
+
+/* ---------------- 首页 ---------------- */
+.page { display: none; padding: calc(var(--st) + 18px) 22px 118px; }
+.page.on { display: block; }
+
+.hello { display: flex; align-items: center; margin-bottom: 22px; }
+.hello .txt { flex: 1; min-width: 0; }
+.hello .txt i { font-style: normal; display: block; font-size: .8125rem; color: var(--ink-2); }
+.hello .txt b { display: block; font-size: 1.375rem; font-weight: 800; letter-spacing: .3px; }
+.hello .bl { flex: 0 0 auto; display: flex; align-items: center; margin-left: 14px; }
+.hello .bl .icon-btn + .icon-btn { margin-left: 8px; }
+/* 两个圆形按钮共用一个尺寸变量：圆心必须落在同一条水平线上，
+   各写一个 44/42 迟早会再对不齐 */
+.hello { --round: 44px; }
+.icon-btn { width: var(--round); height: var(--round); border-radius: 50%; background: var(--raise);
+            box-shadow: var(--sh-sm); display: inline-flex; align-items: center; justify-content: center;
+            flex: 0 0 auto; }
+.icon-btn:active { box-shadow: var(--sink); }
+
+.search { display: flex; align-items: center; width: 100%; border-radius: 999px;
+          background: var(--surface); box-shadow: var(--sink); padding: 13px 18px; color: var(--ink-3); }
+.search b { flex: 1; margin-left: 9px; font-weight: 400; font-size: .9375rem; text-align: left; }
+
+/* 六个题型卡片：窄屏 3×2，宽一点排成一行。
+   点卡片直接进对应题型的练习，卡片本身不再展开说明 */
+.cats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
+@media (min-width: 520px) { .cats { grid-template-columns: repeat(6, 1fr); } }
+.cat-wrap { min-width: 0; }
+.cat { display: block; width: 100%; text-align: center;
+       padding: 15px 4px 13px; border-radius: var(--r-in); background: var(--raise); box-shadow: var(--sh-soft);
+       transition: background .2s ease, color .2s ease, box-shadow .24s ease,
+                   transform .28s cubic-bezier(.34, 1.56, .64, 1); }
+.cat:active { box-shadow: var(--sink); transform: scale(.955); }
+.cat .ico { display: block; margin: 0 auto 8px; width: 21px; height: 21px; }
+.cat b { display: block; font-size: .75rem; font-weight: 600;
+         white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.cat i { display: block; font-style: normal; font-size: .6875rem; color: var(--ink-3); margin-top: 2px; }
+
+/* 分类区整体折叠：外层容器定高 + overflow:hidden，高度由 JS 量一次再过渡。
+   不用 grid-template-rows 0fr→1fr —— 那个写法要 Chrome 107+，
+   这台机器的 WebView 是 Chrome 80，过渡会被直接忽略，折叠变成瞬跳。
+   只动一个容器，六张卡片是一起出现/消失的，不存在逐张错位。 */
+.cats-fold { overflow: hidden; transition: height .3s var(--ease); }
+.cats-fold-in { min-height: 0; }
+.cats-fold.closed .cats { opacity: 0; transition: opacity .18s ease; }
+.cats-fold .cats { opacity: 1; transition: opacity .25s ease .06s; }
+.cats-head { align-items: center; }
+.cats-toggle { display: inline-flex; align-items: center; flex: 0 0 auto;
+               margin: -6px -8px -6px 0; padding: 6px 8px; border-radius: 999px;
+               font-size: .8125rem; color: var(--ink-3); }
+.cats-toggle:active { background: var(--surface); }
+.cats-toggle .ar { margin-left: 3px; transition: transform .3s var(--ease); }
+.cats-toggle[aria-expanded="false"] .ar { transform: rotate(-90deg); }
+@media (prefers-reduced-motion: reduce) {
+  .cat, .cats-fold, .cats-fold .cats, .cats-toggle .ar,
+  .fold, .fold-head .ar, .swipe > .card, .swipe > .task { transition: none; }
+}
+
+.task { display: flex; align-items: center; width: 100%; padding: 15px 18px; margin-bottom: 12px;
+        border-radius: var(--r-in); background: var(--raise); box-shadow: var(--sh-sm); text-align: left; }
+.task:active { box-shadow: var(--sink); }
+.task .ck { flex: 0 0 30px; }
+.task .bd { flex: 1; padding-right: 10px; }
+.task .bd b { display: block; font-size: .9375rem; font-weight: 600; }
+.task .bd small { display: block; font-size: .75rem; color: var(--ink-3); margin-top: 1px; }
+.task .rt { flex: 0 0 auto; text-align: right; font-size: 1.0625rem; font-weight: 800;
+            white-space: nowrap; }
+.task .rt i { font-style: normal; font-size: .6875rem; color: var(--ink-3); font-weight: 400; }
+.box { display: block; width: 22px; height: 22px; border-radius: 8px; border: 1.7px solid var(--ink-3); }
+.box.ok { background: var(--ink); border-color: var(--ink); }
+.box.ok:after { content: ""; display: block; width: 6px; height: 11px; margin: 2px auto 0;
+                border: solid var(--paper); border-width: 0 2px 2px 0; transform: rotate(45deg); }
+
+.rec { display: flex; align-items: center; width: 100%; padding: 16px 0; border-bottom: 1px solid var(--line); }
+.rec:last-child { border-bottom: none; }
+.rec .n { flex: 1; font-size: .875rem; }
+.rec .n i { display: block; font-style: normal; font-size: .6875rem; color: var(--ink-3); }
+.rec .p { flex: 0 0 92px; text-align: right; }
+.rec .p b { font-size: 1.125rem; font-weight: 800; }
+.rec .p small { display: block; font-size: .6875rem; color: var(--ink-3); }
+button.rec { background: none; border: 0; border-bottom: 1px solid var(--line); color: inherit;
+  font: inherit; text-align: left; -webkit-tap-highlight-color: transparent; }
+button.rec:active { opacity: .62; }
+
+/* ---------------- 底部 tab ---------------- */
+.tabs {
+  position: fixed; left: 18px; right: 18px; bottom: calc(var(--sb) + 16px);
+  z-index: 800; display: flex; padding: 10px 6px;
+  border-radius: 999px; background: var(--raise); box-shadow: var(--sh);
+}
+.tab { flex: 1; text-align: center; color: var(--ink-3); padding: 6px 0; }
+.tab .ico { margin: 0 auto 3px; width: 20px; height: 20px; }
+.tab span { display: block; font-size: .625rem; font-weight: 600; letter-spacing: .3px; }
+.tab.on { color: var(--ink); }
+.tab.on .ico { stroke-width: 2.2; }
+/* 中间那颗大肥鱼：和答题页用的是同一套线稿头像（agent-light/dark.png）。
+   它不是第五个页面，只是「打开对话」的入口，所以永远没有 .on，也不参与胶囊的选中态。 */
+.tab.ask-tab { flex: 0 0 46px; padding: 0; }
+.tab.ask-tab .ask-fish { width: 34px; height: 34px; margin: 0 auto; position: relative; }
+.tab.ask-tab .ask-fish img { position: absolute; inset: 0; width: 100%; height: 100%;
+                              object-fit: contain; display: block; opacity: 0; }
+.tab.ask-tab .ask-fish .ag-l { opacity: 1; }
+[data-theme="dark"] .tab.ask-tab .ask-fish .ag-l { opacity: 0; }
+[data-theme="dark"] .tab.ask-tab .ask-fish .ag-d { opacity: 1; }
+.tab.ask-tab .ask-dot { display: none; position: absolute; top: -1px; right: 0; width: 9px; height: 9px;
+                        border-radius: 50%; background: #E5484D; border: 2px solid var(--raise); }
+.tab.ask-tab.unread .ask-dot { display: block; }
+/* 选中态不再只是换字色：一枚按下去的凹槽在四个按钮之间流动。
+   .tabs 是 fixed，它就是胶囊的包含块（无边框，所以按钮的 offsetLeft/Top 可直接当 left/top 用）；
+   按钮要压在凹槽之上，所以按钮 z-index:1、胶囊 0。底色与阴影全部沿用主题令牌，不引入彩色。 */
+.tab { position: relative; z-index: 1; }
+.tab-pill { position: absolute; z-index: 0; left: 0; top: 0; width: 0; height: 0;
+            border-radius: 999px; background: var(--raise); box-shadow: var(--sink); }
+
+/* ---------------- 启动页 ----------------
+   两层：#splash 是主题底色的幕布 + Logo；#stage 是把首页真实节点临时搬进来的裁剪舞台。
+   揭幕靠舞台的 clip-path 圆从 0 涨到 150%，所以是「首页从 Logo 位置张开来」，
+   而不是幕布越盖越多。clip-path 在 Blink 里走主线程逐帧重绘，圆的边缘是矢量裁剪，
+   不会被合成层放大糊掉——这是不用 transform 缩放遮罩的原因。
+   只用到 transform / opacity / clip-path，Chrome 80 全部支持。 */
+#splash { position: fixed; top: 0; left: 0; right: 0; bottom: 0; z-index: 1400;
+          background: var(--paper); display: flex; flex-direction: column;
+          align-items: center; justify-content: center; }
+.sp-logo { width: 104px; height: 104px; border-radius: 50%; background: var(--raise);
+           box-shadow: var(--sink); display: flex; align-items: center; justify-content: center;
+           color: var(--ink); }
+/* 启动页这只猫是两张位图，一套主题一张；墨色不写死，由 design/make_icons.py 从上面的
+   --ink 令牌生成，改色板后重跑那个脚本即可。没走"一张图 + CSS mask 变色"：真机和桌面
+   headless 两边都量过，挂上 mask 之后整只猫被裁没了（headless 连一张已知正确的 alpha
+   圆点都画不出来），所以退回最笨但看得见的办法。 */
+.sp-cat { width: 82px; height: 82px; }   /* 新线稿笔画只有旧坐猫的一半粗：62 太小、84 偏大，真机裁到 82 */
+.sp-cat-d, [data-theme="dark"] .sp-cat-l { display: none; }
+[data-theme="dark"] .sp-cat-d { display: block; }
+.sp-word { margin-top: 22px; font-size: 1.0625rem; font-weight: 800; letter-spacing: 1.6px;
+           color: var(--ink); opacity: 0; }
+.sp-sub { margin-top: 7px; font-size: .75rem; letter-spacing: 2.5px; color: var(--ink-3); opacity: 0; }
+#stage { position: fixed; top: 0; left: 0; right: 0; bottom: 0; z-index: 1450; overflow: hidden;
+         pointer-events: none; clip-path: circle(0px at 50% 50%); }
+
+/* 题库名最长 30 字：卡片里必须自己收窄，否则会顶到右边的百分比上 */
+.bk-name { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.bk-pct { flex: 0 0 auto; }
+
+/* ---------------- 答题页 ---------------- */
+/* 答题页外壳改成 flex 列：只有 .q-body 滚，头部/进度条/操作条各占固定一格。
+   上一版把 .q-foot 做成 sticky 贴底，结果条子会把滚过来的选项从字中间切一半；
+   移出滚动区才是"主操作常驻可见"又不压内容的做法。
+   min-height:0 不能省——老 flexbox 里滚动项默认 min-height:auto，会被内容撑到无限高，滚动条直接失效。 */
+#quiz { position: fixed; top: 0; left: 0; right: 0; bottom: 0; z-index: 850;
+        background: var(--paper); display: flex; flex-direction: column;
+        opacity: 0; visibility: hidden;
+        transition: opacity .18s linear, visibility .18s linear; }
+#quiz.on { opacity: 1; visibility: visible; }
+/* 幽灵铺满的那一帧换层：底色同为 --paper，关掉过渡直接换才没有一帧空档 */
+#quiz.snap { transition: none; }
+.q-head, .track { flex: 0 0 auto; }
+.q-head { display: flex; align-items: center; padding: calc(var(--st) + 14px) 18px 6px; }
+.q-head .bk { flex: 0 0 46px; height: 42px; display: flex; align-items: center; }
+.q-head .ti { flex: 1; text-align: center; }
+.q-head .ti b { font-size: 1.0625rem; font-weight: 700; }
+.q-head .ti small { display: block; font-size: .6875rem; color: var(--ink-3); }
+.q-head .gr { flex: 0 0 46px; height: 42px; display: flex; align-items: center; justify-content: flex-end; }
+
+/* ---------- 卡片 → 答题页 共享元素转场 ----------
+   幽灵夹在列表和 #quiz(850) 之间：它铺满时正好等于 #quiz 的底色，换层看不出来。
+   飞行层压在幽灵上，只负责"跟着走"，不吃点击。 */
+.share-ghost { position: fixed; left: 0; top: 0; z-index: 800; transform-origin: 0 0;
+               pointer-events: none; background: var(--raise); }
+.share-fly { position: fixed; z-index: 810; pointer-events: none; white-space: nowrap; }
+
+.track { height: 4px; border-radius: 2px; background: var(--surface); box-shadow: var(--sink);
+         margin: 10px 22px 0; overflow: hidden; }
+.track i { display: block; height: 100%; width: 0; background: var(--ink);
+           transition: width .45s cubic-bezier(.34, 1.56, .64, 1); }   /* 超调后回弹 */
+
+.q-body { flex: 1 1 auto; min-height: 0; overflow-y: auto; -webkit-overflow-scrolling: touch;
+          padding: 20px 22px calc(var(--sb) + 130px); }
+.stem-card { padding: 22px; border-radius: var(--r-card); background: var(--raise); box-shadow: var(--sh); }
+.stem-card .tagrow { margin-bottom: 12px; }
+.tag { display: inline-block; padding: 4px 11px; border-radius: 999px; background: var(--surface);
+       box-shadow: var(--sh-sm); font-size: .6875rem; font-weight: 600; color: var(--ink-2); margin-right: 6px; }
+.tag.solid { background: var(--ink); color: var(--paper); box-shadow: none; }
+.stem { font-size: 1.0625rem; line-height: 1.8; white-space: pre-wrap;
+        -webkit-user-select: text; user-select: text; }
+.note { margin-top: 14px; padding: 11px 14px; border-radius: 14px; border: 1.5px dashed var(--ink-3);
+        font-size: .75rem; line-height: 1.7; color: var(--ink-2); }
+
+.opts { margin-top: 18px; }
+.opt { display: flex; align-items: center; width: 100%; padding: 17px 18px; margin-bottom: 13px;
+       border-radius: var(--r-in); background: var(--raise); box-shadow: var(--sh-sm); text-align: left;
+       font-size: .9375rem; }
+.opt:active { box-shadow: var(--sink); }
+.opt .k { flex: 0 0 28px; font-weight: 800; color: var(--ink-2); }
+.opt .v { flex: 1; line-height: 1.65; -webkit-user-select: text; user-select: text; }
+.opt .m { flex: 0 0 34px; text-align: right; font-size: .8125rem; font-weight: 800; }
+.opt.sel { background: var(--surface); box-shadow: var(--sink); }
+.opt.sel .k { color: var(--ink); }
+.opt.right { background: var(--ink); color: var(--paper); box-shadow: var(--sh-sm); }
+.opt.right .k, .opt.right .m { color: var(--paper); }
+.opt.wrong { background: var(--raise); box-shadow: none; border: 1.5px dashed var(--ink); }
+.opt.wrong .v { opacity: .62; }
+.opt.wrong .k { color: var(--ink); }
+.opt.miss { box-shadow: none; border: 1.5px solid var(--line); }
+.opt.miss .k, .opt.miss .v { color: var(--ink-3); }
+.opt.miss .m { color: var(--ink-2); font-weight: 600; font-size: .6875rem; }
+.opt.dim { opacity: .45; }
+.opt.right .m, .opt.wrong .m { font-size: 1.375rem; font-weight: 900; }
+
+/* 填空题 / 解答题：不判分，只给「你的作答 / 参考答案」两块和两个自我核对按钮 */
+.q-input { width: 100%; min-height: 96px; padding: 16px 18px; border-radius: var(--r-in);
+           border: 1.5px solid var(--line); outline: none; resize: vertical;
+           background: var(--raise); color: var(--ink); font-size: .9375rem; line-height: 1.7;
+           font-family: inherit; -webkit-user-select: text; user-select: text; }
+.q-input:focus { border-color: var(--ink-3); }
+/* 题库改名那一格：与 .q-input 同一套边框，只是单行 */
+.rn-box { width: 100%; padding: 16px 18px; border-radius: var(--r-in); border: 1.5px solid var(--line);
+          outline: none; background: var(--raise); color: var(--ink); font-size: .9375rem;
+          font-family: inherit; -webkit-user-select: text; user-select: text; }
+.rn-box:focus { border-color: var(--ink-3); }
+.ref-box { margin-top: 16px; padding: 18px; border-radius: var(--r-in);
+           background: var(--surface); box-shadow: var(--sink); }
+.ref-box h4 { font-size: .6875rem; letter-spacing: 1px; color: var(--ink-3); margin-bottom: 8px; }
+.ref-box .ref { font-size: .9375rem; line-height: 1.8; white-space: pre-wrap;
+                -webkit-user-select: text; user-select: text; }
+.selfcheck { display: flex; margin-top: 16px; }
+.selfcheck button { flex: 1; padding: 14px 0; border-radius: var(--r-in); background: var(--raise);
+                    box-shadow: var(--sh-sm); font-size: .875rem; font-weight: 700; }
+.selfcheck button + button { margin-left: 12px; }
+.selfcheck button.pri { background: var(--ink); color: var(--paper); }
+.subj-tip { margin-top: 14px; font-size: .6875rem; line-height: 1.7; color: var(--ink-3); }
+
+.explain { margin-top: 6px; padding: 18px; border-radius: var(--r-in); background: var(--surface);
+           box-shadow: var(--sink); font-size: .875rem; line-height: 1.8;
+           -webkit-user-select: text; user-select: text; }
+.explain b { display: block; font-size: .6875rem; letter-spacing: 1px; color: var(--ink-2); margin-bottom: 8px; }
+
+/* 判分结果条：黑底白字大块，答完一眼能看到 */
+.verdict { display: flex; align-items: center; width: 100%; margin: 16px 0 2px; padding: 18px 20px;
+           border-radius: var(--r-in); background: var(--ink); color: var(--paper);
+           box-shadow: var(--sh); animation: pop .28s var(--ease); }
+.verdict .mk { flex: 0 0 40px; font-size: 1.75rem; font-weight: 900; line-height: 1; }
+.verdict .tx { flex: 1; }
+.verdict .tx b { display: block; font-size: 1.125rem; font-weight: 800; letter-spacing: 1px; }
+.verdict .tx i { display: block; font-style: normal; font-size: .75rem; opacity: .72; margin-top: 2px; }
+@keyframes pop { from { transform: scale(.92); opacity: 0; } to { transform: scale(1); opacity: 1; } }
+@keyframes shake { 10%,90% { transform: translateX(-3px); } 20%,80% { transform: translateX(5px); }
+                   30%,50%,70% { transform: translateX(-8px); } 40%,60% { transform: translateX(8px); } }
+.shake { animation: shake .45s both; }
+.q-flash { animation: flash .5s ease-out; }
+@keyframes flash { from { background: var(--raise); } to { background: var(--paper); } }
+
+.tools { display: flex; width: 100%; margin-top: 18px; }
+.tools button { flex: 1; padding: 13px 0; border-radius: var(--r-in);
+                background: var(--raise); box-shadow: var(--sh-sm); font-size: .8125rem; font-weight: 600;
+                color: var(--ink-2); }
+.tools button:active { box-shadow: var(--sink); }
+.tools button + button { margin-left: 12px; }
+.tools .ico { width: 17px; height: 17px; display: inline-block; vertical-align: -4px; margin-right: 6px; }
+.tools button.on { background: var(--ink); color: var(--paper); box-shadow: var(--sh-sm); }
+
+/* 悬浮操作条：不再占底部一整格，整块浮在题目上方；按钮、鱼和两行小字一起缩小 */
+.q-foot { position: absolute; left: 22px; right: 22px; bottom: calc(var(--sb) + 14px);
+          z-index: 6; padding: 8px 10px 10px; border-radius: 26px;
+          background: var(--paper); box-shadow: var(--sh); }
+.navrow { display: flex; align-items: center; width: 100%; }
+.navrow button { flex: 1; padding: 10px 0; border-radius: 999px;
+                 font-size: .875rem; font-weight: 700; background: var(--raise); box-shadow: var(--sh-sm); }
+.navrow button:active { box-shadow: var(--sink); }
+.navrow button + button { margin-left: 8px; }
+.navrow .main { background: var(--ink); color: var(--paper); }
+.navrow button[disabled] { opacity: .35; }
+/* 答题页中间那颗「问大肥鱼」头像：和上/下题按钮同一排；方形、无底色，线稿直接落在页面上 */
+.navrow .ask { flex: 0 0 42px; padding: 0; border-radius: 14px; position: relative;
+               background: transparent; box-shadow: none; overflow: visible; }
+.navrow .ask img { width: 100%; height: 100%; object-fit: contain; display: none; }
+.navrow .ask .ag-l { display: block; }
+/* 深色：背景仍是深色（透明，露出页面），鱼本身换成白色线稿 */
+[data-theme="dark"] .navrow .ask .ag-l { display: none; }
+[data-theme="dark"] .navrow .ask .ag-d { display: block; }
+.navrow .ask .ask-dot { display: none; position: absolute; top: 1px; right: 1px; width: 9px; height: 9px;
+                        border-radius: 50%; background: #E5484D; border: 2px solid var(--paper); }
+.navrow .ask.unread .ask-dot { display: block; }
+/* 大肥鱼头像：浅色用图二、深色用图三 */
+.ava { flex: 0 0 30px; width: 30px; height: 30px; border-radius: 50%; overflow: hidden;
+       background: var(--raise); box-shadow: var(--sh-sm); }
+.ava img { width: 100%; height: 100%; object-fit: cover; display: none; }
+.ava .ag-l { display: block; }
+[data-theme="dark"] .ava .ag-l { display: none; }
+[data-theme="dark"] .ava .ag-d { display: block; }
+/* 回退换肤快照嵌在旧主题的 html 下，按快照自身主题覆盖祖先主题的鱼图选择。 */
+.reveal[data-theme="light"] .tab.ask-tab .ask-fish .ag-l { opacity: 1; }
+.reveal[data-theme="light"] .tab.ask-tab .ask-fish .ag-d { opacity: 0; }
+.reveal[data-theme="light"] .navrow .ask .ag-l,
+.reveal[data-theme="light"] .ava .ag-l { display: block; }
+.reveal[data-theme="light"] .navrow .ask .ag-d,
+.reveal[data-theme="light"] .ava .ag-d { display: none; }
+/* 大肥鱼对话：从底部上滑，消息区自己滚，输入条常驻 */
+.sheet.chat { height: 74vh; max-height: 74vh; overflow: hidden; display: flex; flex-direction: column;
+              padding: 0 18px calc(var(--sb) + 10px); z-index: 990; }
+.chat-head { display: flex; align-items: center; gap: 10px; padding: 4px 0 10px; }
+.chat-head .ava { width: 34px; height: 34px; flex-basis: 34px;
+                  background: transparent; box-shadow: none; }
+.chat-head b { flex: 1; font-size: 1rem; }
+.chat-head .chat-cfg { padding: 6px 10px; border-radius: 12px; background: var(--surface);
+                       box-shadow: var(--sink); font-size: .75rem; color: var(--ink-2); }
+/* 图标按钮（新建 / 历史）：比「设置」再窄一点，只放一颗线稿图标 */
+.chat-head .chat-cfg.chat-ico { padding: 6px 8px; display: inline-flex; align-items: center; }
+.chat-head .chat-cfg.chat-ico .ico { width: 16px; height: 16px; margin: 0; stroke: currentColor;
+                                     fill: none; stroke-width: 2; stroke-linecap: round; }
+/* 历史会话列表：一行一个会话，右侧垃圾桶单独一颗按钮 */
+.conv-list { margin: 4px 0 8px; }
+.conv-row { display: flex; align-items: stretch; gap: 8px; margin: 8px 0; }
+.conv-row.on .conv-main { box-shadow: inset 0 0 0 2px var(--ink-3); }
+.conv-main { flex: 1; min-width: 0; text-align: left; padding: 12px 14px; border-radius: var(--r-in);
+             background: var(--surface); box-shadow: var(--sink); }
+.conv-main b { display: block; font-size: .875rem; font-weight: 600; color: var(--ink);
+               overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.conv-main small { display: block; margin-top: 3px; font-size: .6875rem; color: var(--ink-3); }
+.conv-main small .cm { font-style: normal; margin-left: 6px; padding: 0 5px; border-radius: 4px;
+                       background: var(--raise); color: var(--ink-3); }
+.conv-row.locked .conv-main, .conv-row.locked .conv-del { opacity: .55; }
+.conv-del { flex: 0 0 44px; display: flex; align-items: center; justify-content: center;
+            border-radius: var(--r-in); background: var(--surface); box-shadow: var(--sink);
+            color: var(--ink-3); }
+.conv-del .ico { width: 17px; height: 17px; stroke: currentColor; fill: none;
+                 stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+.chat-list { flex: 1; overflow-y: auto; -webkit-overflow-scrolling: touch; padding: 4px 0 8px; }
+.chat-empty { margin: 18px 6px; padding: 16px; border-radius: var(--r-in); border: 1.5px dashed var(--ink-3);
+              color: var(--ink-3); font-size: .8125rem; line-height: 1.7; }
+.msg { display: flex; align-items: flex-start; margin: 10px 0; gap: 8px; }
+.msg.me { justify-content: flex-end; }
+.msg .bubble { max-width: 76%; padding: 10px 13px; border-radius: 16px; font-size: calc(.875rem * var(--chat-fs, 1)); line-height: 1.65;
+               background: var(--raise); box-shadow: var(--sh-sm); word-break: break-word;
+               -webkit-user-select: text; user-select: text; }
+.msg.ai .bubble { border-top-left-radius: 6px; }
+.msg.me .bubble { background: var(--ink); color: var(--paper); border-top-right-radius: 6px; }
+.msg .ava { width: 28px; height: 28px; flex-basis: 28px; margin-top: 2px; }
+.msg .bubble.typing { color: var(--ink-3); }
+.msg .bubble .ub-file { display: block; margin-top: 6px; font-size: .6875rem; opacity: .72; }
+.chat-hero .chat-file { margin: 0 0 10px; width: 100%; }
+.msg .bubble.typing .wlist { display: block; margin-top: 7px; font-size: .8125rem; line-height: 1.7; }
+.msg .bubble.typing .wlist i { font-style: normal; margin-right: 7px; }
+.msg .bubble.typing .wlist i.ok { color: var(--ink-2); }
+.msg .bubble.typing .wlist i.err { color: #D14343; }
+/* 工具/对话循环期间的唯一提示：一个转圈 + 一句「正在做什么」 */
+.msg .bubble.typing .spin { display: inline-block; width: 12px; height: 12px; margin-right: 8px;
+  border: 2px solid var(--ink-3); border-top-color: transparent; border-radius: 50%;
+  vertical-align: -1px; animation: spin .8s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+/* 大肥鱼正文的 Markdown：只作用于 .bubble.md，思考链与用户消息不受影响 */
+.bubble.md p { margin: 0 0 8px; }
+.bubble.md p:last-child { margin-bottom: 0; }
+.bubble.md h1, .bubble.md h2, .bubble.md h3,
+.bubble.md h4, .bubble.md h5, .bubble.md h6 { margin: 12px 0 6px; line-height: 1.35; font-weight: 700; }
+.bubble.md h1 { font-size: 1.2em; }
+.bubble.md h2 { font-size: 1.1em; }
+.bubble.md h3, .bubble.md h4, .bubble.md h5, .bubble.md h6 { font-size: 1em; }
+.bubble.md h1:first-child, .bubble.md h2:first-child, .bubble.md h3:first-child { margin-top: 0; }
+.bubble.md ul, .bubble.md ol { margin: 4px 0 8px; padding-left: 1.4em; }
+.bubble.md li { margin: 2px 0; }
+.bubble.md code { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+                  font-size: .9em; padding: 1px 4px; border-radius: 4px; background: var(--surface); }
+.bubble.md pre { margin: 8px 0; padding: 10px 12px; border-radius: 10px; overflow-x: auto;
+                 background: var(--surface); border: 1px solid var(--line); }
+.bubble.md pre code { padding: 0; background: none; font-size: .85em; line-height: 1.55; }
+.bubble.md blockquote { margin: 8px 0; padding: 2px 0 2px 10px;
+                        border-left: 3px solid var(--line); color: var(--ink-2); }
+.bubble.md hr { border: 0; border-top: 1px solid var(--line); margin: 10px 0; }
+.bubble.md .md-link { color: inherit; text-decoration: underline; text-underline-offset: 2px; cursor: pointer; }
+/* 流式回答：思考链在上、正文在下，同一个气泡列里长出来 */
+.msg .live { flex: 1; min-width: 0; max-width: 78%; display: flex; flex-direction: column;
+             align-items: flex-start; gap: 6px; }
+.msg .live .bubble { max-width: 100%; }
+.think { max-width: 100%; padding: 7px 11px; border-radius: 12px; background: var(--surface);
+         border: 1px solid var(--line); font-size: calc(.75rem * var(--chat-fs, 1)); line-height: 1.6; color: var(--ink-2); }
+/* 点击 summary 后 Android WebView 会留一圈默认橙色 focus 描边，难看，去掉了。
+   可访问性不受影响：details 开合本身有箭头方向（▸/▾）提示。 */
+.think > summary { cursor: pointer; list-style: none; font-size: .6875rem; color: var(--ink-3);
+                   letter-spacing: .3px; outline: none; -webkit-tap-highlight-color: transparent; }
+.think > summary:focus, .think > summary:focus-visible { outline: none; }
+.think:focus, .think:focus-within { outline: none; }
+.think > summary::-webkit-details-marker { display: none; }
+.think > summary::before { content: "▸ "; }
+.think[open] > summary::before { content: "▾ "; }
+.think-body { margin-top: 6px; max-height: 190px; overflow-y: auto; white-space: pre-wrap;
+              word-break: break-word; }
+.chat-note { margin: 8px 4px; text-align: center; font-size: .6875rem; color: var(--ink-3); }
+.chat-hint { font-size: .6875rem; color: var(--ink-3); padding: 2px 2px 8px; line-height: 1.5; }
+/* 附件条：贴在输入框上方。正文只留在内存里，条上只显示文件名与识别结果。 */
+.chat-file { display: flex; align-items: center; gap: 8px; margin: 0 2px 6px;
+             padding: 8px 10px; border-radius: 12px; background: var(--raise);
+             border: 1.5px solid var(--line); font-size: .75rem; color: var(--ink); }
+.chat-file[hidden] { display: none; }
+.chat-file svg { flex: 0 0 auto; color: var(--ink-3); }
+.chat-file .fname { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.chat-file .fsub { color: var(--ink-3); margin-left: 6px; }
+.chat-file .fx { flex: 0 0 auto; width: 26px; height: 26px; padding: 0; border-radius: 50%;
+                 border: none; background: transparent; color: var(--ink-3); font-size: 16px; line-height: 1; }
+.chat-att { flex: 0 0 40px; width: 40px; height: 44px; padding: 0; border-radius: 14px; border: none;
+            background: transparent; color: var(--ink-3); display: flex; align-items: center; justify-content: center; }
+.chat-att:active { background: var(--raise); }
+/* 待确认的附件导入：和 note 同样占一行，但带两个按钮 */
+.chat-confirm .cf-name { font-weight: 600; color: var(--ink); }
+.chat-confirm .cf-warn { margin-top: 8px; font-size: .75rem; font-weight: 600; color: var(--ink); }
+.chat-confirm .cf-wait { margin-top: 8px; font-size: .75rem; color: var(--ink-3); }
+.chat-confirm .cf-acts { display: flex; gap: 10px; margin-top: 10px; }
+.chat-confirm button { flex: 1; padding: 9px 0; border-radius: 12px; border: none; font-size: .8125rem; }
+.chat-confirm .cf-ok { background: var(--ink); color: var(--paper); }
+.chat-confirm .cf-no { background: var(--surface); color: var(--ink); }
+.chat-in { display: flex; align-items: flex-end; gap: 10px; padding-top: 6px; }
+.chat-in textarea { flex: 1; min-height: 44px; max-height: 96px; resize: none; padding: 12px 14px;
+                    border-radius: 16px; border: 1.5px solid var(--line); background: var(--raise);
+                    font-family: inherit; font-size: .875rem; color: var(--ink); line-height: 1.4; }
+.chat-in textarea:focus { border-color: var(--ink-3); outline: none; }
+/* 空会话（新对话）：头像放大、名字与输入框居中，虚线提示在输入框下面。
+   发送后整组收起，输入框回到底部（chatFoot），头部名字重新出现。 */
+.chat-hero { flex: 1; min-height: 0; display: flex; flex-direction: column; align-items: center;
+             justify-content: center; padding: 4px 0 14px; }
+.chat-hero[hidden] { display: none; }
+.chat-hero .hero-ava { width: 96px; height: 96px; flex-basis: 96px; background: transparent;
+                       box-shadow: none; margin-bottom: 2px; }
+.chat-hero .hero-name { font-size: 1.25rem; font-weight: 700; color: var(--ink); margin: 2px 0 18px; }
+.chat-hero .hero-slot { width: 100%; max-width: 560px; }
+.chat-hero .chat-in { width: 100%; padding-top: 0; }
+.chat-hero .hero-hint { width: 100%; max-width: 560px; margin: 14px 0 0; text-align: center; }
+/* 空会话时头部只留按钮：大头像和名字在中间，避免重复 */
+.chat.empty .chat-head .ava, .chat.empty .chat-head b { visibility: hidden; }
+.chat-send { flex: 0 0 64px; padding: 12px 0; border-radius: 16px; background: var(--ink); color: var(--paper);
+             font-size: .8125rem; font-weight: 700; box-shadow: var(--sh-sm); }
+.chat-send[disabled] { opacity: .4; }
+/* 忙的时候这颗变成「停止」：换个低调的描边样式，避免被当成主操作误点 */
+.chat-send.stop { background: var(--surface); color: var(--ink); box-shadow: var(--sink); }
+.pill { margin-top: 8px; text-align: center; font-size: .625rem; color: var(--ink-3); letter-spacing: .5px; }
+.ask-hint { margin-top: 8px; text-align: center; font-size: .625rem; color: var(--ink-3); line-height: 1.4; }
+
+/* ---------------- 遮罩 / 底部弹层 / 居中弹窗 / Toast ---------------- */
+.overlay { position: fixed; top: 0; left: 0; right: 0; bottom: 0; z-index: 900;
+           background: rgba(20,22,26,0); visibility: hidden;
+           transition: background .2s ease, visibility .25s; }
+.overlay.on { background: rgba(20,22,26,.35); visibility: visible; }
+
+.sheet { position: fixed; bottom: 0; left: 0; right: 0; z-index: 1000;
+         background: var(--paper); border-radius: var(--r-card) var(--r-card) 0 0;
+         max-height: 85vh; overflow-y: auto; padding: 0 22px calc(var(--sb) + 22px);
+         transform: translateY(100%); transition: transform .25s var(--ease); }
+.sheet.on { transform: translateY(0); }
+.handle { width: 36px; height: 4px; border-radius: 2px; background: var(--line); margin: 12px auto 6px; }
+.sheet h2 { font-size: 1.125rem; font-weight: 700; padding: 12px 0 16px; }
+.grid { display: flex; flex-wrap: wrap; margin: 0 -5px; }
+.grid button { flex: 0 0 12.5%; padding: 5px; background: none; }
+.grid button > b { display: block; font-weight: 600; font-size: .8125rem; padding: 8px 0;
+                   text-align: center; border-radius: 14px; background: var(--raise); box-shadow: var(--sh-sm); }
+.grid button.right > b { background: var(--ink); color: var(--paper); }
+.grid button.picked > b { background: var(--surface); color: var(--ink); box-shadow: var(--sink); }
+.grid button.wrong > b { background: var(--raise); color: var(--ink); box-shadow: none;
+                         outline: 1.5px dashed var(--ink); }
+.grid button.cur > b { outline: 2px solid var(--ink); outline-offset: 2px; }
+.grid .gsec { flex: 0 0 100%; display: flex; align-items: baseline; gap: 8px; margin: 12px 5px 2px; }
+.grid .gsec:first-child { margin-top: 2px; }
+.grid .gsec .gst { font-size: .8125rem; font-weight: 700; color: var(--ink); }
+.grid .gsec .gsn { font-size: .6875rem; color: var(--ink-3); }
+.legend { margin-top: 16px; font-size: .6875rem; color: var(--ink-3); }
+.legend i { font-style: normal; display: inline-block; width: 11px; height: 11px; border-radius: 5px;
+            margin: 0 5px 0 16px; vertical-align: -1px; background: var(--raise); box-shadow: var(--sh-sm); }
+.legend i:first-child { margin-left: 0; }
+.legend i.dash { background: none; box-shadow: none; outline: 1.5px dashed var(--ink); }
+
+.glass { position: fixed; top: 50%; left: 50%; z-index: 1010; width: 85vw; max-width: 320px;
+         background: var(--paper); border-radius: var(--r-card); padding: 30px 24px 20px; text-align: center;
+         box-shadow: var(--sh); transform: translate(-50%,-50%) scale(.9); opacity: 0; visibility: hidden;
+         transition: transform .25s var(--ease), opacity .25s var(--ease), visibility .25s; }
+.glass.on { transform: translate(-50%,-50%) scale(1); opacity: 1; visibility: visible; }
+.glass .big { font-size: 4rem; font-weight: 800; line-height: 1; letter-spacing: -1px; }
+.glass .icon { font-size: 1.5rem; font-weight: 800; }
+.glass h2 { font-size: 1.125rem; font-weight: 700; margin: 10px 0 4px; }
+.glass p { font-size: .8125rem; color: var(--ink-2); margin-bottom: 22px; }
+.glass .btns { display: flex; width: 100%; }
+.glass .btns button { flex: 1; padding: 14px 0; font-size: .9375rem; font-weight: 700; }
+.glass .btns button.pri { background: var(--ink); color: var(--paper); border-radius: var(--r-in); }
+.glass .btns button.sec { color: var(--ink-3); font-weight: 600; }
+
+/* 更新弹窗：版本信息固定在上，日志区自己滚，底部两个按钮始终看得见 */
+.glass.upd { width: 88vw; max-width: 360px; max-height: 80vh; display: flex; flex-direction: column;
+             padding: 26px 22px 16px; text-align: left; }
+.glass.upd .upd-h { text-align: center; }
+.glass.upd .upd-h h2 { margin: 6px 0 2px; }
+.glass.upd .upd-h p { margin-bottom: 14px; }
+.glass.upd .upd-ver { display: flex; justify-content: space-between; padding: 7px 0;
+                      font-size: .8125rem; color: var(--ink-3); border-top: 1px solid var(--line); }
+.glass.upd .upd-ver b { color: var(--ink); font-weight: 700; font-variant-numeric: tabular-nums; }
+.glass.upd .upd-log { flex: 1 1 auto; min-height: 0; overflow-y: auto; margin: 10px 0 0;
+                      padding: 2px 0 2px 2px; -webkit-overflow-scrolling: touch; }
+.glass.upd .upd-log h3 { font-size: .6875rem; font-weight: 700; color: var(--ink-3);
+                         letter-spacing: .8px; padding: 10px 0 8px; }
+.glass.upd .upd-log li { position: relative; padding: 0 0 9px 14px;
+                         font-size: .8125rem; line-height: 1.6; color: var(--ink-2); }
+.glass.upd .upd-log li:before { content: ""; position: absolute; left: 2px; top: .62em;
+                                width: 4px; height: 4px; border-radius: 2px; background: var(--ink-3); }
+.glass.upd .upd-log .none { font-size: .8125rem; color: var(--ink-3); padding: 6px 0 12px; }
+.glass.upd .upd-acts { flex: 0 0 auto; display: flex; margin-top: 12px;
+                       border-top: 1px solid var(--line); padding-top: 12px; }
+.glass.upd .upd-acts button { flex: 1; padding: 14px 0; font-size: .9375rem; font-weight: 700; }
+.glass.upd .upd-acts button.pri { background: var(--ink); color: var(--paper); border-radius: var(--r-in); }
+.glass.upd .upd-acts button.sec { color: var(--ink-3); font-weight: 600; }
+.glass.upd .upd-acts button[disabled] { opacity: .45; }
+
+/* 自动检查发现新版本时的小窗：只放版本号和两个按钮，不展开日志。
+   和 .upd 分开写，免得两套布局互相影响 */
+.glass.note { width: 82vw; max-width: 300px; padding: 26px 22px 16px; text-align: center; }
+.glass.note h2 { margin: 8px 0 6px; }
+.glass.note p { margin-bottom: 16px; }
+.glass.note .note-ver { display: flex; justify-content: space-between; padding: 8px 0;
+                        font-size: .8125rem; color: var(--ink-3); border-top: 1px solid var(--line); }
+.glass.note .note-ver b { color: var(--ink); font-weight: 700; font-variant-numeric: tabular-nums; }
+.glass.note .note-acts { display: flex; margin-top: 14px; border-top: 1px solid var(--line); padding-top: 12px; }
+.glass.note .note-acts button { flex: 1; padding: 14px 0; font-size: .9375rem; font-weight: 700; }
+.glass.note .note-acts button.pri { background: var(--ink); color: var(--paper); border-radius: var(--r-in); }
+.glass.note .note-acts button.sec { color: var(--ink-3); font-weight: 600; }
+
+/* 提示条要在所有浮层之上：格式举例页里点下载，提示若压在页面下面就等于没反馈。
+   1500 比 splash(1400) / 入场舞台(1450) 都高。 */
+.toast { position: fixed; top: calc(var(--st) + 80px); left: 50%; z-index: 1500;
+         transform: translateX(-50%) translateY(-100px); opacity: 0;
+         background: var(--ink); color: var(--paper); border-radius: 999px; padding: 11px 22px;
+         font-size: .8125rem; font-weight: 600; max-width: 80vw; line-height: 1.45; text-align: center;
+         overflow: hidden; box-shadow: var(--sh);
+         transition: transform .2s ease-out, opacity .2s ease-out; }
+.toast.on { transform: translateX(-50%) translateY(0); opacity: 1; }
+
+.fs { position: fixed; top: 0; left: 0; right: 0; bottom: 0; z-index: 1100; background: var(--paper);
+      transform: translateX(100%); transition: transform .3s var(--ease); overflow-y: auto; }
+.fs.on { transform: translateX(0); }
+.fs-head { display: flex; align-items: center; padding: calc(var(--st) + 14px) 18px 12px; }
+.fs-head button { flex: 0 0 46px; }
+.fs-head h2 { flex: 1; text-align: center; font-size: 1.0625rem; font-weight: 700; }
+.fs-head i { flex: 0 0 46px; }
+.fs-body { padding: 6px 22px 40px; }
+.srch { width: 100%; padding: 15px 20px; font-size: .9375rem; border-radius: 999px; border: none; outline: none;
+        background: var(--surface); color: var(--ink); box-shadow: var(--sink);
+        -webkit-user-select: text; user-select: text; }
+.res { display: block; width: 100%; text-align: left; padding: 16px 2px; border-bottom: 1px solid var(--line); }
+.res b { font-size: .9375rem; font-weight: 600; display: block; line-height: 1.6; }
+.res small { font-size: .6875rem; color: var(--ink-3); }
+.bignum { font-size: 4.5rem; font-weight: 800; line-height: 1; letter-spacing: -2px; }
+.cap { font-size: .75rem; color: var(--ink-3); margin: 4px 0 24px; }
+.metrics { display: flex; }
+.metric { flex: 1; text-align: center; }
+.metric b { display: block; font-size: 1.5rem; font-weight: 800; }
+.metric i { font-style: normal; font-size: .6875rem; color: var(--ink-3); }
+.row { display: flex; align-items: center; width: 100%; padding: 16px 0;
+       border-bottom: 1px solid var(--line); font-size: .9375rem; text-align: left; }
+.row:last-child { border-bottom: none; }
+.row > span:first-child { flex: 1; }
+.row em { font-style: normal; color: var(--ink-3); font-size: .75rem; display: block; }
+.row .rt { text-align: right; font-weight: 700; }
+/* 有新版本时挂在「检查更新」文字后的小红点。行高、间距、点击区都不动，
+   只用 inline-block + 负外边距，重渲染列表也照样跟着状态走 */
+.row .dot { display: inline-block; width: 7px; height: 7px; border-radius: 50%;
+            background: #E5484D; margin-left: 7px; vertical-align: 2px; }
+.sw { float: right; width: 46px; height: 27px; border-radius: 999px; background: var(--surface);
+      box-shadow: var(--sink); position: relative; transition: background .2s; margin-top: 1px; }
+.sw:after { content: ""; position: absolute; top: 3px; left: 3px; width: 21px; height: 21px; border-radius: 50%;
+            background: var(--raise); box-shadow: 0 2px 5px rgba(20,22,26,.18); transition: transform .2s var(--ease); }
+.sw.on { background: var(--ink); }
+.sw.on:after { transform: translateX(19px); background: #fff; }
+
+/* ---------------- 动效：主题圆形扩散 / 涟漪 / 弹性 ---------------- */
+::view-transition-old(root), ::view-transition-new(root) { animation: none; mix-blend-mode: normal; }
+::view-transition-new(root) { animation: vt-in .5s ease-in-out; }
+@keyframes vt-in {
+  from { clip-path: circle(0px at var(--vx, 50%) var(--vy, 50%)); }
+  to   { clip-path: circle(var(--vr, 150%) at var(--vx, 50%) var(--vy, 50%)); }
+}
+/* 老内核（Android WebView < 111）不支持 View Transitions：退化成自己裁一层快照，见 themedSnapshot */
+.reveal { position: fixed; top: 0; left: 0; right: 0; bottom: 0; z-index: 1200;
+          pointer-events: none; overflow: hidden; background: var(--paper); color: var(--ink); }
+/* 换肤落定那一帧：掐掉所有元素自己的过渡，让真界面一次到位（原因见 setTheme 里 paint 的注释） */
+html.swap, html.swap * { transition: none !important; }
+/* 开关组联动：同组其他开关按距离错峰轻震 */
+@keyframes jig { 0%,100% { transform: translateX(0); } 25% { transform: translateX(-3px); }
+                 50% { transform: translateX(3px); } 75% { transform: translateX(-2px); } }
+.row.jig { animation: jig .3s ease-in-out; }
+/* 批量勾选：错峰 5% 弹性放大 */
+@keyframes pop5 { 0% { transform: scale(1); } 55% { transform: scale(1.05); } 100% { transform: scale(1); } }
+.pop { animation: pop5 .26s ease-in-out; }
+/* 解析折叠：容器高度同步 + 箭头 180° */
+.fold { overflow: hidden; height: 0; transition: height .3s ease-in-out; }
+.fold-head { display: flex; align-items: center; width: 100%; margin-top: 12px; padding: 14px 18px;
+             border-radius: var(--r-in); background: var(--raise); box-shadow: var(--sh-sm);
+             font-size: .8125rem; font-weight: 700; }
+.fold-head .ar { margin-left: auto; transition: transform .3s var(--ease); color: var(--ink-3); }
+.fold-head.open { box-shadow: var(--sink); }
+.fold-head.open .ar { transform: rotate(180deg); }
+/* 解析来源标记：题源=实心胶囊，编写=虚线框。只用形状区分，不引入颜色 */
+.fold-head .tag { padding: 3px 9px; margin-right: 8px; }
+.fold-head .tag.src { background: none; box-shadow: none; border: 1px dashed var(--ink-3); color: var(--ink-3); }
+/* 卡片删除：飞向角落图标（JS 逐帧驱动，这里只留被飞行体样式） */
+.fly { position: fixed; z-index: 1300; pointer-events: none; border-radius: var(--r-in);
+       background: var(--raise); box-shadow: var(--sh); display: flex; align-items: center;
+       padding: 0 16px; font-size: .8125rem; font-weight: 600; overflow: hidden; }
+.trash { position: fixed; right: 18px; bottom: calc(var(--sb) + 96px); z-index: 1250;
+         width: 52px; height: 52px; border-radius: 50%; background: var(--raise); box-shadow: var(--sh);
+         display: flex; align-items: center; justify-content: center; }
+.trash.hot { box-shadow: var(--sink); }
+
+/* ---------------- 题型标签栏：选中放大、两侧让位 ---------------- */
+.tbar { display: flex; margin: 0 -4px 18px; position: relative; }
+.tbar button { flex: 1; min-width: 0; margin: 0 4px; padding: 10px 0; border-radius: 999px;
+               background: var(--raise); box-shadow: var(--sh-sm); font-size: .8125rem; font-weight: 600;
+               color: var(--ink-2); white-space: nowrap;
+               transition: flex-grow .3s var(--ease), background .2s ease, color .2s ease, box-shadow .2s ease; }
+.tbar button.on { flex: 2.1; background: var(--ink); color: var(--paper); box-shadow: var(--sh); font-weight: 700; }
+/* 题型有六种，字号调到 120% 时一行放不下：改成横向滚动，别把字压扁或换行 */
+.tbar.scroll { overflow-x: auto; overflow-y: hidden; -webkit-overflow-scrolling: touch;
+               scrollbar-width: none;
+               /* 下面 9px 是留给滑动下划线的跑道：加 9px 内边距、减 9px 外边距，
+                  整块与下方内容的距离和改造前逐像素相同 */
+               padding-bottom: 11px; margin-bottom: 9px;
+               /* 右边缘淡出：内容被裁一半时看着像 bug，加一层渐隐就变成「还能往右滑」的暗示 */
+               -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 22px), transparent);
+               mask-image: linear-gradient(to right, #000 calc(100% - 22px), transparent); }
+/* 题型筛选的毛毛虫下划线。元素跟着每次渲染重建，所以「上一枚在哪」记在 JS 的 tfU 里，
+   关键帧中间那一帧把条拉成同时盖住新旧两枚的长度，两头不同步收尾，就是虫在爬。 */
+.tbar-u { position: absolute; bottom: 3px; left: 0; width: 0; height: 3px;
+          border-radius: 999px; background: var(--ink); opacity: .72; }
+.tbar.scroll::-webkit-scrollbar { display: none; }
+.tbar.scroll button { flex: 0 0 auto; padding: 10px 15px; }
+.tbar.scroll button.on { flex: 0 0 auto; }
+
+/* ---------------- 组卷：题库多选 ---------------- */
+.pick { display: flex; align-items: center; width: 100%; padding: 13px 16px; margin-bottom: 9px;
+        border-radius: var(--r-in); background: var(--raise); box-shadow: var(--sh-sm); text-align: left; }
+.pick:active { box-shadow: var(--sink); }
+.pick .cbx { flex: 0 0 24px; width: 22px; height: 22px; border-radius: 8px; border: 1.7px solid var(--ink-3); }
+.pick.on .cbx { background: var(--ink); border-color: var(--ink); position: relative; }
+.pick.on .cbx:after { content: ""; position: absolute; left: 7px; top: 3px; width: 6px; height: 11px;
+                      border: solid var(--paper); border-width: 0 2px 2px 0; transform: rotate(45deg); }
+.pick b { flex: 1; margin-left: 12px; font-size: .875rem; font-weight: 600; }
+.pick i { font-style: normal; font-size: .75rem; color: var(--ink-3); }
+.pick.on i { color: var(--paper); opacity: .6; }
+.sl-hint { font-size: .6875rem; color: var(--ink-3); margin: -14px 0 18px; }
+
+/* ---------------- 左滑面板：题库卡片与首页「今日待刷」行共用 ---------------- */
+.swipe { position: relative; margin-bottom: 14px; }
+.swipe-acts { position: absolute; top: 0; right: 0; bottom: 0; display: flex;
+              border-radius: var(--r-card); overflow: hidden; }
+.swipe-act { width: 92px; border: 0; background: var(--ink); color: var(--paper);
+             font-family: inherit; font-size: .8125rem; font-weight: 700; }
+/* 两格之间的分隔线用文字色画，深浅主题下都靠对比度站住，不另配颜色 */
+.swipe-act + .swipe-act { position: relative; }
+.swipe-act + .swipe-act:before { content: ""; position: absolute; left: 0; top: 50%;
+  width: 1px; height: 22px; margin-top: -11px; background: currentColor; opacity: .22; }
+/* 面板实际多宽由里面几个按钮决定；JS 在 touchstart 时把 --swx 写成它的真实宽度，
+   所以「删除」一格和「改名+删除」两格都能正好滑到位 */
+.swipe > .card, .swipe > .task { position: relative; z-index: 1; margin-bottom: 0; transition: transform .25s var(--ease); }
+.swipe.open > .card, .swipe.open > .task { transform: translateX(var(--swx, -92px)); }
+/* ---------------- 吸附滑杆：拖动-惯性过冲-回弹落位 ---------------- */
+.sl { margin: 22px 0 26px; }
+.sl-top { display: flex; align-items: baseline; margin-bottom: 14px; }
+.sl-top b { flex: 1; font-size: .9375rem; font-weight: 700; }
+.sl-top i { font-style: normal; font-size: 1.375rem; font-weight: 800; }
+.sl-track { position: relative; height: 34px; border-radius: 999px; background: var(--surface);
+            box-shadow: var(--sink); touch-action: none; }
+.sl-fill { position: absolute; top: 0; left: 0; bottom: 0; width: 0; border-radius: 999px;
+           background: var(--ink); opacity: .12; }
+.sl-knob { position: absolute; top: 50%; left: 0; width: 30px; height: 30px; margin: -15px 0 0 -15px;
+           border-radius: 50%; background: var(--raise); box-shadow: var(--sh-sm); }
+.sl-knob:after { content: ""; position: absolute; top: 9px; left: 13px; width: 4px; height: 12px;
+                 border-radius: 2px; background: var(--ink); opacity: .55; }
+.sl.snap .sl-knob, .sl.snap .sl-fill { transition: left .42s cubic-bezier(.34, 1.56, .64, 1), width .42s cubic-bezier(.34, 1.56, .64, 1); }
+.sl-ticks { position: relative; height: 17px; margin-top: 9px; }
+.sl-ticks span { position: absolute; font-size: .6875rem; color: var(--ink-3); }
+.sheet-act { width: 100%; padding: 17px 0; border-radius: var(--r-in); background: var(--ink);
+             color: var(--paper); font-size: .9375rem; font-weight: 700; margin-top: 6px; }
+/* 面板里的次级动作：与 .sheet-act 同一形状，用凹下去的那一档区分主次 */
+.sheet-act2 { flex: 1; margin-left: 10px; padding: 14px 0; border: 0; border-radius: var(--r-in);
+              background: var(--surface); color: var(--ink); box-shadow: var(--sink);
+              font-family: inherit; font-size: .875rem; font-weight: 600; }
+.sheet-act2:first-child { margin-left: 0; }
+/* 二选一并排：两个入口左右各一半。竖排时主按钮整行、次按钮被压成一小截，
+   看上去像两个不同量级的东西，其实这是同一层的两条路。 */
+.sheet-pair { display: flex; gap: 10px; margin-top: 6px; }
+.sheet-pair > .sheet-act, .sheet-pair > .sheet-act2 { flex: 1 1 0; width: auto; margin: 0; }
+/* 这两个是同一层的两条路，不分主次：底色统一用「反色」——
+   浅色主题下是深底浅字，深色主题下自动翻成浅底深字（--ink / --paper 随主题互换）。 */
+.sheet-pair > .sheet-act2 { background: var(--ink); color: var(--paper); box-shadow: none; }
+/* 接入方式切换：一个按钮同时说清「现在用的是什么」和「点下去会换成什么」，
+   两行字而不是两套配置并排，免得用户以为要同时填登录和 Key */
+.ag-switch { display: block; width: 100%; margin: 0 0 16px; padding: 13px 16px; border: 0;
+             border-radius: var(--r-in); background: var(--surface); box-shadow: var(--sink);
+             font-family: inherit; text-align: left; }
+.ag-switch .ag-now { display: block; font-size: .875rem; font-weight: 700; color: var(--ink); }
+.ag-switch .ag-go { display: block; margin-top: 3px; font-size: .6875rem; color: var(--ink-2); }
+.ag-switch:active { box-shadow: var(--sh-sm); }
+.ag-ok { margin: 0 0 6px; font-size: .8125rem; font-weight: 700; color: var(--ok); }
+/* 对话字号：与上面的「接入方式切换」是两件事，用一根线明确隔开，避免被当成同一组开关 */
+.ag-sep { height: 1px; margin: 20px 0 18px; background: var(--line); }
+.ag-fs-h { display: flex; align-items: baseline; justify-content: space-between; margin: 0 0 10px; }
+.ag-fs-h b { font-size: .9375rem; }
+.ag-fs-v { font-size: .8125rem; color: var(--ink-3); }
+.ag-fs-row { display: flex; gap: 10px; }
+.ag-fs-b { flex: 1; padding: 12px 0; border: 0; border-radius: 14px; background: var(--surface);
+          box-shadow: var(--sink); font-family: inherit; font-size: .9375rem; font-weight: 700; color: var(--ink); }
+.ag-fs-b:active { box-shadow: none; }
+.ag-fs-b[disabled] { opacity: .35; }
+/* 实时预览：这里用的就是聊天气泡那套字号和行高，改完立刻能看到效果 */
+.ag-fs-demo { margin: 12px 0 0; padding: 10px 13px; border-radius: 14px; background: var(--raise);
+              box-shadow: var(--sh-sm); line-height: 1.65; color: var(--ink);
+              font-size: calc(.875rem * var(--chat-fs, 1)); }
+/* 格式举例正文：要能整段选中复制，所以不能靠默认的非可选中 */
+.sample-box { margin-top: 14px; padding: 18px; border-radius: var(--r-in); background: var(--surface);
+              box-shadow: var(--sink); font-family: monospace; font-size: .8125rem; line-height: 1.8;
+              white-space: pre-wrap; word-break: break-word;
+              -webkit-user-select: text; user-select: text; }
+
+/* ---------------- 批量勾选 ---------------- */
+.bbar { display: flex; margin-bottom: 14px; }
+.bbar button { flex: 1; margin: 0 4px; padding: 12px 0; border-radius: var(--r-in);
+               background: var(--raise); box-shadow: var(--sh-sm); font-size: .8125rem; font-weight: 700; }
+.bbar button.solid { background: var(--ink); color: var(--paper); }
+.bbar button:active { box-shadow: var(--sink); }
+/* 错题本的题库分组：组头是一张能收起/展开的卡片，右边直接「刷 N 题」 */
+.wgroup { display: flex; align-items: stretch; gap: 8px; margin: 14px 0 4px; }
+.wgroup .wg-head { flex: 1; min-width: 0; display: flex; align-items: baseline; gap: 8px;
+                   padding: 13px 15px; border: 0; border-radius: var(--r-in); text-align: left;
+                   background: var(--surface); box-shadow: var(--sink); font-family: inherit; }
+.wgroup .wg-t { flex: 1; min-width: 0; font-size: .9375rem; font-weight: 700; color: var(--ink);
+                overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.wgroup .wg-n { font-size: .75rem; color: var(--ink-3); }
+.wgroup .wg-chev { font-size: .75rem; color: var(--ink-3); }
+.wgroup .wg-go { flex: 0 0 auto; padding: 0 15px; border: 0; border-radius: var(--r-in);
+                 background: var(--ink); color: var(--paper); font-family: inherit;
+                 font-size: .8125rem; font-weight: 600; }
+.res { position: relative; padding-left: 40px; }
+.res .cbx { position: absolute; left: 0; top: 18px; width: 24px; height: 24px; border-radius: 9px;
+            border: 1.7px solid var(--ink-3); }
+.res.sel .cbx { background: var(--ink); border-color: var(--ink); }
+.res.sel .cbx:after { content: ""; display: block; width: 6px; height: 12px; margin: 3px auto 0;
+                      border: solid var(--paper); border-width: 0 2px 2px 0; transform: rotate(45deg); }
+.res.sel { background: var(--raise); border-radius: var(--r-in); }
