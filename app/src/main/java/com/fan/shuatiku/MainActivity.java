@@ -575,6 +575,14 @@ public class MainActivity extends Activity {
         @JavascriptInterface
         public void fpProbe(final String url) {
             if (!BuildConfig.DEBUG) return;
+            /* 这个方法会照页面给的地址真发一次请求（还带 App 的 UA），
+               不设闸等于给页面留了个任意 GET 的口子。发布包本来就 return 了，
+               debug 包也别让它打非 http(s) 的东西。 */
+            final String bad = BridgeGuard.probeUrl(url);
+            if (bad != null) {
+                android.util.Log.w("GImeBridge", "fpProbe 拒绝：" + bad + " url=" + url);
+                return;
+            }
             new Thread(new Runnable() {
                 @Override public void run() {
                     String out;
@@ -604,8 +612,22 @@ public class MainActivity extends Activity {
         /** 页面把工具执行结果交回 HTTP 线程。 */
         @JavascriptInterface
         public void mcpReply(String id, String json) {
+            /* 三个前提：id 长得像自己发出去的（防伪造注入）、确实在等、
+               回包没超长。不满足就丢，并且留一行日志——静默丢弃最难查。 */
+            if (!BridgeGuard.okId(id)) {
+                android.util.Log.w("GImeBridge", "mcpReply 拒绝：id 非法 " + id);
+                return;
+            }
+            String bad = BridgeGuard.reply(json);
+            if (bad != null) {
+                android.util.Log.w("GImeBridge", "mcpReply 拒绝：" + bad + " id=" + id);
+                return;
+            }
             McpWait w = mcpWait.get(id);
-            if (w == null) return;
+            if (w == null) {
+                android.util.Log.w("GImeBridge", "mcpReply 丢弃：没有这个在等的请求 id=" + id);
+                return;
+            }
             w.response = json == null ? "" : json;
             w.latch.countDown();
         }
@@ -630,6 +652,28 @@ public class MainActivity extends Activity {
          */
         @JavascriptInterface
         public void chatApi(final String id, final String url, final String body, final String key) {
+            /* 这是桥里权限最大的一个口子：body 原样发出去，key 也可能跟着走。
+               id 必须是自己发出去的那种形状（页面靠它把增量对回气泡，
+               伪造的 id 只会让 onChatApi 打到一条不存在的消息上），
+               地址与体长也得先过闸，别让一次拼接失误变成对外发请求。 */
+            if (!BridgeGuard.okId(id)) {
+                android.util.Log.w("GImeBridge", "chatApi 拒绝：id 非法 " + id);
+                return;
+            }
+            String badUrl = BridgeGuard.chatUrl(url);
+            if (badUrl != null) {
+                android.util.Log.w("GImeBridge", "chatApi 拒绝：" + badUrl + " url=" + url);
+                js("window.onChatApi(" + quote(id) + ",400," + quote(
+                        "{\"error\":{\"message\":" + quote("接口地址不合法：" + badUrl) + "}}") + ")");
+                return;
+            }
+            String badBody = BridgeGuard.body(body);
+            if (badBody != null) {
+                android.util.Log.w("GImeBridge", "chatApi 拒绝：" + badBody + " id=" + id);
+                js("window.onChatApi(" + quote(id) + ",400," + quote(
+                        "{\"error\":{\"message\":" + quote(badBody) + "}}") + ")");
+                return;
+            }
             /* 内置通道：页面把接口地址填成 builtin://deepseek 就走到这里。
                这条路不需要 API Key —— 用的是 App 里存的 DeepSeek 登录态。 */
             if (url != null && url.startsWith("builtin://")) {
@@ -755,6 +799,13 @@ public class MainActivity extends Activity {
         /** 取消一个还在跑的大肥鱼请求（掐断连接，不用等到超时）。 */
         @JavascriptInterface
         public void dsCancel(String id) {
+            /* id 必须是页面自己发出去的那种形状；乱填的 id 只会在
+               chatEmit 的桶里乱删，或者去 cancel 一个不存在的会话。 */
+            String bad = BridgeGuard.okId(id) ? null : "id 非法";
+            if (bad != null) {
+                android.util.Log.w("GImeBridge", "dsCancel 拒绝：" + bad + " id=" + id);
+                return;
+            }
             /* 先把还没发出去的增量丢掉：用户点了停止，屏幕上不该再多冒半句。
                顺序不能反——先 cancel 的话，收尾的 flush 可能把缓冲又推上去。 */
             chatEmit.drop(id);
@@ -788,8 +839,23 @@ public class MainActivity extends Activity {
             updater.check(Updater.versionOf(MainActivity.this));
         }
 
+        /**
+         * 页面让下载某个地址的更新包。
+         *
+         * <p>进的是系统下载器，下完直接拉安装页——所以这个入口必须锁死来源：
+         * https、发布源白名单、本仓库 release 目录下的 .apk。页面正常只会传
+         * {@code onUpdateInfo.urls} 里那几条（由 {@link DownloadSources} 生成），
+         * 这里拒掉的一律留日志，方便发现「谁在拼别的地址」。
+         */
         @JavascriptInterface
         public void downloadUpdate(String url) {
+            String bad = BridgeGuard.downloadUrl(url);
+            if (bad != null) {
+                android.util.Log.w("GImeBridge", "downloadUpdate 拒绝：" + bad + " url=" + url);
+                js("window.onUpdateError&&window.onUpdateError("
+                        + quote("更新包地址不可信，已拒绝。可以点「打开发布页」手动下载") + ")");
+                return;
+            }
             updater.download(url);
         }
 
@@ -801,9 +867,21 @@ public class MainActivity extends Activity {
                 JSONArray arr = new JSONArray(urlsJson);
                 for (int i = 0; i < arr.length(); i++) {
                     String u = arr.optString(i, "");
-                    if (!u.isEmpty()) list.add(u);
+                    if (u.isEmpty()) continue;
+                    String bad = BridgeGuard.downloadUrl(u);
+                    if (bad != null) {
+                        android.util.Log.w("GImeBridge", "downloadUpdateFrom 跳过：" + bad + " url=" + u);
+                        continue;
+                    }
+                    list.add(u);
                 }
             } catch (Exception ignored) {
+            }
+            if (list.isEmpty()) {
+                android.util.Log.w("GImeBridge", "downloadUpdateFrom 拒绝：没有一个可用源");
+                js("window.onUpdateError&&window.onUpdateError("
+                        + quote("更新包地址不可信，已拒绝。可以点「打开发布页」手动下载") + ")");
+                return;
             }
             updater.download(list);
         }
@@ -829,10 +907,19 @@ public class MainActivity extends Activity {
         @JavascriptInterface
         public void openUrl(final String url) {
             if (url == null || url.isEmpty()) return;
+            /* 这个地址会原样进 Intent.ACTION_VIEW。放行前必须确认是 http(s)：
+               javascript:/file:/intent: 之类送进去，轻则被系统解析成别的动作，
+               重则借已安装的 App 做一次非预期的跳转。 */
+            final String bad = BridgeGuard.navUrl(url);
+            if (bad != null) {
+                android.util.Log.w("GImeBridge", "openUrl 拒绝：" + bad + " url=" + url);
+                js("window.toast&&window.toast(" + quote("这个链接不是网页地址，已拦下") + ")");
+                return;
+            }
             runOnUiThread(new Runnable() {
                 @Override public void run() {
                     try {
-                        Intent i = new Intent(Intent.ACTION_VIEW, Uri.parse(url));
+                        Intent i = new Intent(Intent.ACTION_VIEW, Uri.parse(url.trim()));
                         i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
                         startActivity(i);
                     } catch (Exception e) {

@@ -89,6 +89,16 @@ if errorlevel 1 goto fail
 java "-Dfile.encoding=UTF-8" -cp "%OUT%" com.fan.shuatiku.RiskGuardTest
 if errorlevel 1 goto fail
 echo.
+echo === js bridge guard (url / download source / callback id) ===
+rem 桥方法对页面完全开放，这几条规则是 P0 的安全底线：
+rem 交给系统的地址只认 http(s)，下载包只认发布源白名单，回调 id 必须像自己发出去的。
+rem BridgeGuard 刻意不依赖 Android，这里连 DownloadSources 一起编，顺带钉住
+rem 「白名单和生成规则不许脱节」——两边任何一边改动都会在这一段先红。
+javac -encoding UTF-8 -d "%OUT%" "%~dp0..\app\src\main\java\com\fan\shuatiku\DownloadSources.java" "%~dp0..\app\src\main\java\com\fan\shuatiku\BridgeGuard.java" "%~dp0BridgeTest.java"
+if errorlevel 1 goto fail
+java "-Dfile.encoding=UTF-8" -cp "%OUT%" com.fan.shuatiku.BridgeTest
+if errorlevel 1 goto fail
+echo.
 echo === openai stream (api-key mode sse parsing) ===
 rem 需要本地 mock（mock-openai-sse.py）；没起时测试自己 SKIP，不算失败。
 javac -encoding UTF-8 -cp "%JSON_JAR%" -d "%OUT%" "%~dp0..\app\src\main\java\com\fan\shuatiku\OpenAiStream.java" "%~dp0OpenAiStreamTest.java"

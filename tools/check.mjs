@@ -1917,7 +1917,7 @@ ok("上游报错也要先把已收到的那半句推出去",
    /ApiException ae\) \{[\s\S]{0,200}chatEmit\.flush\(\);/.test(mainSrc));
 ok("Activity 销毁前 flush", /onDestroy\(\)[\s\S]{0,220}chatEmit\.flush\(\);/.test(mainSrc));
 ok("点停止先 drop 再 cancel（别让缓冲补上后半句）",
-   /public void dsCancel\(String id\) \{[\s\S]{0,200}chatEmit\.drop\(id\);[\s\S]{0,120}dsBridge\.cancel\(id\)/.test(mainSrc));
+   /public void dsCancel\(String id\) \{[\s\S]{0,600}chatEmit\.drop\(id\);[\s\S]{0,120}dsBridge\.cancel\(id\)/.test(mainSrc));
 
 /* 一次性回调不能跟着合并：早发一帧晚发一帧无所谓，但顺序必须保证 */
 ok("一次性回调仍然直发 js()",
@@ -1944,6 +1944,85 @@ W.chatConvs = [];
 W.chatCurId = "";
 W.S = null;
 W.byId["nb1-0"].explain = "";
+
+/* ---------- 24c. JS 桥入参加固 ---------- */
+section("[24c] JS 桥入参加固");
+
+/* 桥方法对页面完全开放：页面里任何一段脚本都能拿任意参数调它们。
+   P0 把三条底线钉在 BridgeGuard 里（纯逻辑、零 Android 依赖），
+   规则的穷举用例在 tools/BridgeTest.java，由 check.cmd 单独跑；
+   这里只查「闸门有没有真的接到桥方法上」——漏接是比规则写错更常见的事故。 */
+const bridgeGuardSrc = fs.readFileSync(path.join(ROOT, "app/src/main/java/com/fan/shuatiku/BridgeGuard.java"), "utf8");
+ok("BridgeGuard 存在且不依赖 Android",
+   bridgeGuardSrc.indexOf("import android") < 0 && /public final class BridgeGuard/.test(bridgeGuardSrc));
+ok("四个上限写成常量",
+   /static final int MAX_URL = 2048;/.test(bridgeGuardSrc) &&
+   /static final int MAX_ID = 64;/.test(bridgeGuardSrc) &&
+   /static final int MAX_BODY = 512 \* 1024;/.test(bridgeGuardSrc) &&
+   /static final int MAX_REPLY = 4 \* 1024 \* 1024;/.test(bridgeGuardSrc));
+
+/* openUrl：会原样进 Intent.ACTION_VIEW，只许 http(s) */
+ok("openUrl 过闸后才建 Intent",
+   /public void openUrl\(final String url\) \{[\s\S]{0,400}BridgeGuard\.navUrl\(url\)[\s\S]{0,600}Intent\.ACTION_VIEW/.test(mainSrc));
+ok("openUrl 被拒时给用户一句话，不静默",
+   /BridgeGuard\.navUrl\(url\)[\s\S]{0,300}window\.toast/.test(mainSrc));
+
+/* fpProbe：debug 下会照着给定地址真发请求，协议与长度都要管 */
+ok("fpProbe 过闸",
+   /public void fpProbe\(final String url\) \{[\s\S]{0,400}BridgeGuard\.probeUrl\(url\)/.test(mainSrc));
+
+/* downloadUpdate / downloadUpdateFrom：进系统下载器，下完直接拉安装页 */
+ok("downloadUpdate 过闸后才交给下载器",
+   /public void downloadUpdate\(String url\) \{[\s\S]{0,500}BridgeGuard\.downloadUrl\(url\)[\s\S]{0,500}updater\.download\(url\)/.test(mainSrc));
+ok("downloadUpdateFrom 逐条过滤，不整串透传",
+   /public void downloadUpdateFrom\(String urlsJson\)[\s\S]{0,700}BridgeGuard\.downloadUrl\(u\)[\s\S]{0,300}list\.add\(u\)/.test(mainSrc));
+ok("downloadUpdateFrom 全被拒时不空转下载器",
+   /public void downloadUpdateFrom\(String urlsJson\)[\s\S]{0,900}if \(list\.isEmpty\(\)\)[\s\S]{0,300}return;/.test(mainSrc));
+ok("下载源白名单与 DownloadSources 的六个入口一致",
+   ["cdn.jsdelivr.net", "fastly.jsdelivr.net", "testingcf.jsdelivr.net",
+    "gcore.jsdelivr.net", "github.com", "raw.githubusercontent.com"]
+     .every(function (h) { return bridgeGuardSrc.indexOf('"' + h + '"') >= 0; }));
+
+/* chatApi：桥里权限最大的口子（body 原样发、key 可能随之走） */
+ok("chatApi 先校验 id",
+   /public void chatApi\(final String id, final String url, final String body, final String key\) \{[\s\S]{0,400}BridgeGuard\.okId\(id\)/.test(mainSrc));
+ok("chatApi 校验地址", /BridgeGuard\.chatUrl\(url\)/.test(mainSrc));
+ok("chatApi 校验请求体长度", /BridgeGuard\.body\(body\)/.test(mainSrc));
+ok("chatApi 被拒时回 400 而不是装死",
+   /BridgeGuard\.body\(body\)[\s\S]{0,400}onChatApi\([\s\S]{0,80}400/.test(mainSrc));
+
+/* 回调配对：带 id 的方法必须防伪造 */
+ok("mcpReply 校验 id 并给未知 id 留日志",
+   /public void mcpReply\(String id, String json\) \{[\s\S]{0,600}BridgeGuard\.okId\(id\)[\s\S]{0,700}Log\.w\("GImeBridge"/.test(mainSrc));
+ok("mcpReply 回包有长度上限", /BridgeGuard\.reply\(json\)/.test(mainSrc));
+ok("dsCancel 也校验 id", /public void dsCancel\(String id\) \{[\s\S]{0,300}BridgeGuard\.okId\(id\)/.test(mainSrc));
+
+/* 拒绝必须留痕：页面 console 进不了 logcat（没装 WebChromeClient），
+   现场排查全靠这一口。 */
+ok("被拒统一打 GImeBridge 日志",
+   (mainSrc.match(/Log\.[iw]\("GImeBridge"/g) || []).length >= 6);
+
+/* 导出面文档必须跟着改：新增桥方法不更新这张表，就等于没有清单 */
+const bridgeDoc = path.join(ROOT, "docs/JS桥方法表.md");
+ok("《JS桥方法表》存在", fs.existsSync(bridgeDoc));
+if (fs.existsSync(bridgeDoc)) {
+  const doc = fs.readFileSync(bridgeDoc, "utf8");
+  const methods = (mainSrc.match(/@JavascriptInterface/g) || []).length;
+  ok("桥方法数与文档标注一致（" + methods + " 个）",
+     doc.indexOf("当前 **" + methods + " 个**") >= 0);
+  /* 只看 @JavascriptInterface 紧跟着的那一个声明：
+     MainActivity 里还有一堆 public 方法（Runnable 的 run、Listener 回调等），
+     它们不是桥方法，不该出现在这张表里。 */
+  const declared = [];
+  const re = /@JavascriptInterface\s*\n\s*public (?:void|String|boolean) (\w+)\(/g;
+  let m2;
+  while ((m2 = re.exec(mainSrc))) declared.push(m2[1]);
+  ok("解析出的桥方法数与注解数一致", declared.length === methods);
+  const missing = declared.filter(function (n) { return doc.indexOf("`" + n + "(") < 0; });
+  ok("文档覆盖了全部桥方法" + (missing.length ? "（缺 " + missing.join(",") + "）" : ""),
+     missing.length === 0);
+}
+
 
 /* ---------- 25. 固定前缀与 token 裁剪 ---------- */
 section("[25] 固定前缀与 token 裁剪");
