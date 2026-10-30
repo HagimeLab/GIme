@@ -2328,6 +2328,104 @@ ok("解析不出界面时不留空框", (() => {
   const plain = W.chatPush({ role: "assistant", text: "没有围栏的一句话", reasoning: "", live: false });
   return W.ouiSplit(plain).src === "" && W.mdFor(plain).indexOf("没有围栏的一句话") >= 0;
 })());
+ok("卡片挂在气泡下方，自己占满一行", (() => {
+  /* .msg 是横向 flex（头像 + 气泡）。占位直接当第三个孩子会被挤到气泡
+     右边、只剩窄窄一条，真机量出来只有 204px。所以外面要包一层纵向的
+     .msg-body：气泡在上、卡片在下，两者同宽。 */
+  return html.indexOf('<div class="msg-body">') >= 0
+      && /msg-body[\s\S]{0,160}oui-slot/.test(html)
+      && cssText.indexOf(".msg-body") >= 0
+      && /\.msg-body\s*\{[^}]*flex-direction:\s*column/.test(cssText)
+      && /\.oui-slot\s*\{[^}]*width:\s*100%/.test(cssText);
+})());
+
+/* ---------- 30c. OpenUI 卡片动作路由：点了要真的接回对话 ---------- */
+section("[30c] OpenUI 卡片动作路由");
+
+/* P0 只把动作丢给原生桥打日志，页面上什么都没发生——点了像坏的一样。
+   这里补的是「点了之后对话继续」这一层，只做 GIme 真有语义的动作。 */
+ok("动作路由存在且只认这几种动词", (() => {
+  if (typeof W.chatOuiRoute !== "function") return false;
+  const src = String(W.chatOuiRoute);
+  return src.indexOf('"send"') >= 0 && src.indexOf('"value"') >= 0
+      && src.indexOf('"submit"') >= 0 && src.indexOf('"nav"') >= 0;
+})());
+ok("send: 把内容当作用户消息发回 agent", (() => {
+  /* 这是「卡片能继续交互」的核心：不接这一条，按钮永远只是装饰。 */
+  const src = String(W.chatOuiRoute);
+  const i = src.indexOf('"send"');
+  const seg = src.slice(i, i + 420);
+  return seg.indexOf("chatAsk(say)") >= 0 && seg.indexOf("chatOuiOpenPanel()") >= 0;
+})());
+ok("send: 没带参数时退回按钮文字", /var say = arg \|\| \(node && node\.textContent/.test(String(W.chatOuiRoute)));
+ok("value: 只填进输入框不发出去，并且留住焦点", (() => {
+  const src = String(W.chatOuiRoute);
+  const i = src.indexOf('"value"');
+  const seg = src.slice(i, i + 520);
+  /* bindTap 回调返回后会 blur 当前输入框，除非这个旗标立着 */
+  return seg.indexOf("box.value = arg") >= 0 && seg.indexOf("window.__ouiKeepFocus = true") >= 0
+      && seg.indexOf("chatAsk") < 0;
+})());
+ok("submit: 表单值拼成「标签：值」多行发回", (() => {
+  const src = String(W.chatOuiRoute);
+  const i = src.indexOf('"submit"');
+  const seg = src.slice(i, i + 620);
+  return seg.indexOf("window.readForm") >= 0 && seg.indexOf('"："') >= 0
+      && seg.indexOf('lines.join("\\n")') >= 0 && seg.indexOf("chatAsk") >= 0;
+})());
+ok("submit: 空表单只提示，不发空消息", /if \(!lines\.length\) \{ toast\(/.test(String(W.chatOuiRoute)));
+ok("正忙时点卡片会吭声，不静默丢掉", (() => {
+  /* chatAsk 在 chatBusy 时是静默 return 的。卡片上点了没反应最容易被
+     当成 bug，所以 send:/submit: 两条路都要自己先说一句。 */
+  const src = String(W.chatOuiRoute);
+  const s = src.indexOf('"send"');
+  const b = src.indexOf('"submit"');
+  const sendSeg = src.slice(s, s + 520);
+  const subSeg = src.slice(b, b + 720);
+  return sendSeg.indexOf("if (chatBusy) { toast(") >= 0
+      && subSeg.indexOf("if (chatBusy) { toast(") >= 0;
+})());
+ok("nav: 只认四个底部页签，且先收面板再切页", (() => {
+  const src = String(W.chatOuiRoute);
+  const i = src.indexOf('"nav"');
+  const seg = src.slice(i, i + 520);
+  return seg.indexOf('["home", "bank", "wrong", "me"]') >= 0
+      && seg.indexOf("closeTop()") >= 0 && seg.indexOf("goTab(tab)") >= 0;
+})());
+ok("不认识的动词明确说不支持，不静默吞掉", (() => {
+  /* agent 那边还有 approve:/toggle:/insight:，是它的计划域；
+     GIme 没有这块业务，硬套只会点出一个莫名其妙的状态，所以要吭声。 */
+  return /toast\("这个卡片动作 GIme 还不支持：" \+ verb\)/.test(String(W.chatOuiRoute));
+})());
+ok("面板关着时点历史卡片也能把对话打开", (() => {
+  const src = String(W.chatOuiOpenPanel);
+  return typeof W.chatOuiOpenPanel === "function"
+      && src.indexOf('getElementById("chat")') >= 0
+      && src.indexOf('contains("on")') >= 0
+      && src.indexOf("openChatTab()") >= 0;
+})());
+ok("回传原生桥之后还要在页面里走一遍", (() => {
+  /* 两条都不能少：桥是给原生打日志的，路由才是让对话继续的 */
+  const src = String(W.chatOuiAction);
+  return src.indexOf("window.onOuiAction") >= 0 && src.indexOf("chatOuiRoute(verb, arg") >= 0;
+})());
+ok("Select 走底部选择面板，不再退化成「点一下换一个」", (() => {
+  /* openui-ui 只在 ctx.onPick 存在时才走面板；不传就自己循环切换，选项一多等于盲点 */
+  return html.indexOf("onPick: function (title, options, current, done)") >= 0
+      && html.indexOf("chatOuiPickSheet(title, options, current, done)") >= 0;
+})());
+ok("选择面板复用 sheet3 与 .pick-* 既有样式", (() => {
+  const src = String(W.chatOuiPickSheet);
+  return src.indexOf('getElementById("sheet3")') >= 0
+      && src.indexOf("pick-list") >= 0 && src.indexOf("pick-opt") >= 0
+      && src.indexOf("pick-t") >= 0 && src.indexOf("openLayer(sh)") >= 0;
+})());
+ok("选中当前值有标记，点一行就写回并收面板", (() => {
+  const sheet = String(W.chatOuiPickSheet);
+  const pick = String(W.chatOuiPick);
+  return sheet.indexOf('" on"') >= 0 && sheet.indexOf("当前") >= 0
+      && pick.indexOf("fn(v)") >= 0 && pick.indexOf("closeTop()") >= 0;
+})());
 
 /* ---------- 31. 会话规则与空会话界面 ---------- */
 section("[31] 会话规则与空会话界面");

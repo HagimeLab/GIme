@@ -684,8 +684,8 @@ function stripUIFence(s) {
   var i = raw.search(/```(?:openui-lang|openui)/i);
   return i >= 0 ? raw.slice(0, i).trim() : raw;
 }
-/* 卡片按钮的通用回传口：P0 只把动作原样交出去，不猜业务语义（动作路由留 P1）。
-   WebView 的 console 进不了 logcat，所以借原生桥打一行，现场验收看得到。 */
+/* 卡片按钮的通用回传口：动作原样交给原生桥（打一行日志，现场验收看得到）。
+   WebView 的 console 进不了 logcat，所以只能借桥口。 */
 window.onOuiAction = function (action, payload) {
   try {
     if (window.Android && Android.ouiAction) {
@@ -693,6 +693,65 @@ window.onOuiAction = function (action, payload) {
     }
   } catch (e) { /* 老包没有这个桥口就当没发生，别把气泡点崩 */ }
 };
+
+/* 动作路由：只做 GIme 真有语义的四种，其余明确说「不支持」。
+   对照 agent 的 runUIAction，那边还有 approve:/toggle:/insight:，
+   那是它的计划域（plan），GIme 没有这块业务，硬套只会点出一个莫名其妙的状态。 */
+function chatOuiRoute(verb, arg, m, node, form) {
+  if (verb === "send") {
+    /* 没带参数就退回按钮文字：Button("继续", {action: "send"}) 是很自然的写法 */
+    var say = arg || (node && node.textContent ? String(node.textContent) : "");
+    if (!nz(say)) { toast("这个按钮没带要发的内容"); return; }
+    /* chatAsk 在 chatBusy 时是静默 return 的。卡片上点了没反应最容易
+       被当成 bug，所以这里自己先说一句，别让用户对着空气点。 */
+    if (chatBusy) { toast("大肥鱼还在回上一条，等它说完再点"); return; }
+    chatOuiOpenPanel();
+    chatAsk(say);
+    return;
+  }
+  if (verb === "value") {
+    if (!arg) { toast("这个按钮没带要填的内容"); return; }
+    chatOuiOpenPanel();
+    var box = document.getElementById("chatText");
+    if (!box) return;
+    box.value = arg;
+    /* bindTap 会在回调返回后把输入框的焦点收走，除非这个旗标立着。
+       value: 的语义就是「把话放进输入框让我改」，焦点必须留住。 */
+    window.__ouiKeepFocus = true;
+    try { box.focus(); } catch (e) { }
+    return;
+  }
+  if (verb === "submit") {
+    var vals = [];
+    try { vals = (window.readForm ? window.readForm(form) : []) || []; } catch (e) { vals = []; }
+    var lines = [];
+    for (var i = 0; i < vals.length; i++) {
+      var k = vals[i] && vals[i][0], v = vals[i] && vals[i][1];
+      if (nz(k) && nz(v)) lines.push(String(k) + "：" + String(v));
+    }
+    if (!lines.length) { toast("表单还是空的，填一点再提交"); return; }
+    if (chatBusy) { toast("大肥鱼还在回上一条，等它说完再提交"); return; }
+    chatOuiOpenPanel();
+    chatAsk(lines.join("\n"));
+    return;
+  }
+  if (verb === "nav") {
+    var tab = String(arg || "").replace(/^#?tab-/, "");
+    if (["home", "bank", "wrong", "me"].indexOf(tab) < 0) { toast("没有这个页面：" + arg); return; }
+    closeTop();          /* 卡片在会话面板里，切页之前先把面板收掉 */
+    goTab(tab);
+    return;
+  }
+  toast("这个卡片动作 GIme 还不支持：" + verb);
+}
+
+/* 卡片可能在面板关着的时候被点（历史会话里的卡），发消息前先把它打开 */
+function chatOuiOpenPanel() {
+  var ch = document.getElementById("chat");
+  if (ch && ch.classList && ch.classList.contains("on")) return;
+  openChatTab();
+}
+
 /* 把一条消息上的动作摊成通用载荷：submit 带上表单值，其余带上按钮文字 */
 function chatOuiAction(m, action, node, form) {
   var s = String(action || "");
@@ -706,12 +765,48 @@ function chatOuiAction(m, action, node, form) {
     payload.label = String(node.textContent);
   }
   try { window.onOuiAction(s, payload); } catch (e) { }
+  /* 回传之后还要在页面里走一遍，否则按钮点下去屏幕上什么都不会发生 */
+  try { chatOuiRoute(verb, arg, m, node, form); } catch (e) { /* 路由出错不能把气泡点崩 */ }
 }
 /* 表单边打边存会把 localStorage 写爆：停手 400ms 再落一次盘 */
 var _ouiSaveTimer = 0;
 function chatOuiTouched() {
   clearTimeout(_ouiSaveTimer);
   _ouiSaveTimer = setTimeout(chatSave, 400);
+}
+/* Select 的选项面板：复用 #sheet3 与 .pick-* 那套样式（题库列表、管理面板都在用）。
+   done 是 openui-ui 给的回调，点一行就把值写回隐藏域并触发 onChange。 */
+var _ouiPickOpts = null, _ouiPickDone = null;
+function chatOuiPickSheet(title, options, current, done) {
+  var opts = [];
+  var src = options || [];
+  for (var i = 0; i < src.length; i++) opts.push(String(src[i]));
+  if (!opts.length) return;
+  var sh = document.getElementById("sheet3");
+  if (!sh) return;
+  var h = '<div class="handle"></div><h2>' + esc(nz(title) || "选一个") + '</h2><div class="pick-list">';
+  for (var k = 0; k < opts.length; k++) {
+    var on = opts[k] === String(current == null ? "" : current);
+    h += '<button class="pick-opt' + (on ? " on" : "") + '" onclick="chatOuiPick(' + k + ')">' +
+      '<span class="pick-t">' + esc(opts[k]) + '</span>' +
+      (on ? '<i class="pick-ok">当前</i>' : "") +
+      '</button>';
+  }
+  h += '</div>';
+  _ouiPickOpts = opts;
+  _ouiPickDone = done || null;
+  sh.innerHTML = h;
+  openLayer(sh);
+}
+function chatOuiPick(idx) {
+  var v = _ouiPickOpts && _ouiPickOpts[idx];
+  var fn = _ouiPickDone;
+  _ouiPickOpts = null;
+  _ouiPickDone = null;
+  if (v == null) return;
+  /* 先写值再收面板：pick 会改隐藏域并触发 onChange，节点得还活着 */
+  if (fn) { try { fn(v); } catch (e) { } }
+  closeTop();
 }
 /* 气泡的 innerHTML 落地后再把围栏里的界面挂成真组件：
    renderOpenUI 返回的是 DOM 元素，拼不进字符串，只能后挂。 */
@@ -733,7 +828,12 @@ function chatOuiMount(root) {
       var card = window.renderOpenUI(src, {
         values: m.formValues,
         onChange: chatOuiTouched,
-        onAction: function (action, node, form) { chatOuiAction(m, action, node, form); }
+        onAction: function (action, node, form) { chatOuiAction(m, action, node, form); },
+        /* 不接这个回调的话，Select 会退化成「点一下换下一个」——
+           选项一多就变成盲点，用户根本看不到还有什么可选的 */
+        onPick: function (title, options, current, done) {
+          chatOuiPickSheet(title, options, current, done);
+        }
       });
       if (card) slot.appendChild(card);
     } catch (e) { /* 画不出来就当没有这张卡：正文那段 Markdown 还在 */ }
@@ -977,7 +1077,11 @@ function chatRender() {
     /* 围栏里的界面等 innerHTML 落地后再挂成真组件（字符串里塞不了 DOM）。
        只看 live：思考链答完也留着（默认折叠），拿 reasoning 当条件会漏掉一半回答。 */
     if (!me && !m.live && ouiSplit(m).src) {
-      inner += '<div class="oui-slot" data-oui="' + esc(m.id || "") + '"></div>';
+      /* 卡片要挂在气泡下方、自己占满一行。.msg 是横向 flex（头像 + 气泡），
+         直接当第三个孩子塞进来会被挤到气泡右边、只剩窄窄一条，
+         所以这里多包一层纵向的 .msg-body。 */
+      inner = '<div class="msg-body">' + inner +
+              '<div class="oui-slot" data-oui="' + esc(m.id || "") + '"></div></div>';
     }
     h += '<div class="msg' + (me ? " me" : " ai") + '" data-mid="' + esc(m.id || "") + '">' +
          (me ? "" : agentAvaHtml()) + inner + "</div>";

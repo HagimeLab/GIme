@@ -842,7 +842,23 @@ html.swap, html.swap * { transition: none !important; }
 }
 
 /* 卡片在气泡里的落点：innerHTML 塞不进 DOM，先占位、挂载完成后再画进去 */
-.oui-slot { display: block; margin-top: 10px; }
+/* 带卡片的回答外面多包一层纵向容器：.msg 是横向 flex（头像 + 内容），
+   卡片直接当第三个孩子会被挤到气泡右边，只剩一条窄缝。
+   这一层让气泡和卡片上下排，并且撑满 .msg 里除头像外的全部宽度。 */
+.msg-body {
+  flex: 1 1 auto;
+  min-width: 0;
+  max-width: calc(100% - 36px);   /* 让出左边头像 28 + 间距 8 */
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+}
+.msg-body .bubble { max-width: 100%; }
+/* .live 原本靠 flex:1 在横向 .msg 里撑开；换到纵向容器里要收回，
+   否则它会沿竖直方向抢高度 */
+.msg-body .live { flex: 0 0 auto; max-width: 100%; }
+/* 卡片比气泡宽：气泡按文字长度收缩，卡片要占满整行才好看 */
+.oui-slot { display: block; width: 100%; margin-top: 10px; }
 .oui-slot:empty { display: none; }   /* 画不出来就当没这张卡，不留空框 */
 
 .oui-stack {
