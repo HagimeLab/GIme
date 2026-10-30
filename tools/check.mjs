@@ -1,6 +1,6 @@
 /**
  * GIme 回归检查（无第三方依赖，node 直接跑）：
- *   1. 页面脚本语法检查（index.html 骨架 + style.css + app-*.js 三段）
+ *   1. 页面脚本语法检查（index.html 骨架 + style.css + ui/*.js + app-*.js）
  *   2. 在最小 DOM 桩上真跑一遍页面逻辑，覆盖 v1.0.1 修的几个流程：
  *      导入解析/统计口径、模拟考试交卷防重入、放弃后停表、最后一题滑动
  *   3. bank.js 内置题库结构检查
@@ -17,8 +17,10 @@ const ASSETS = path.join(ROOT, "app/src/main/assets");
 const HTML = path.join(ASSETS, "index.html");
 const BANK_JS = path.join(ASSETS, "bank.js");
 const CSS_FILE = path.join(ASSETS, "style.css");
-/* 页面已拆成 index.html 骨架 + style.css + 三个脚本，按页面里的真实加载顺序列出。 */
-const JS_FILES = ["app-core.js", "app-admin.js", "app-chat.js"];
+/* 页面已拆成 index.html 骨架 + style.css + 五个脚本，按页面里的真实加载顺序列出。
+   ui/openui-*.js 是并入的 OpenUI 渲染器（core 是官方 UMD bundle，ui 是宿主适配层），
+   它们必须在 app-chat.js 之前就位，因为气泡渲染要用 window.renderOpenUI。 */
+const JS_FILES = ["ui/openui-core.js", "ui/openui-ui.js", "app-core.js", "app-admin.js", "app-chat.js"];
 
 let pass = 0;
 const fails = [];
@@ -2158,6 +2160,56 @@ ok("用户消息不进 Markdown 渲染", html.indexOf('(me ? "" : " md")') >= 0)
 ok("链接走原生打开", html.indexOf("data-md-href") >= 0
    && html.indexOf("Android.openUrl") >= 0
    && /public void openUrl\((?:final )?String url\)/.test(mainSrc));
+
+/* ---------- 30b. OpenUI 卡片：围栏拆分 / 流式遮挡 / 通用回传 ---------- */
+section("[30b] OpenUI 卡片渲染");
+
+ok("OpenUI 渲染器与表单读取器都已就位", typeof W.renderOpenUI === "function" && typeof W.readForm === "function");
+ok("OpenUI 解析器能解析一段界面源码", (() => {
+  try {
+    const r = W.OpenUI.parse('root = Stack([Title("进度", {level: 1}), Progress({value: 60, label: "完成"}), Button("继续", {action: "send:继续"})])');
+    return !!r && !!r.root && r.root.typeName === "Stack";
+  } catch (e) { return false; }
+})());
+
+/* 三条：正文与围栏分开、源码不进正文、流式期把没收尾的围栏藏起来 */
+const uiMsg = W.chatPush({
+  role: "assistant",
+  text: '先说结论。\n\n```openui-lang\nroot = Title("卡片")\n```',
+  reasoning: "",
+  live: false
+});
+ok("围栏被单独抽出来", (() => {
+  const s = W.ouiSplit(uiMsg);
+  return s.src.indexOf('Title("卡片")') >= 0 && s.text === "先说结论。";
+})());
+ok("正文渲染不含界面源码", W.mdFor(uiMsg).indexOf("openui-lang") < 0
+   && W.mdFor(uiMsg).indexOf("先说结论。") >= 0);
+ok("流式期把没收尾的围栏藏住", W.stripUIFence('abc\n```openui-lang\nroot = X') === "abc"
+   && W.stripUIFence("没有围栏") === "没有围栏");
+ok("只有收尾后的回答才挂卡片占位", (() => {
+  /* 占位只在「不是我的、不在流式」两条都成立时拼进去；
+     innerHTML 落地后再由 chatOuiMount 挂真 DOM（字符串里塞不了节点）。
+     不能拿 reasoning 当条件：思考链答完也留着，加了它带思考的回答就永远挂不上卡。 */
+  return typeof W.chatRender === "function"
+      && html.indexOf('data-oui="') >= 0
+      && html.indexOf("chatOuiMount(list)") >= 0
+      && /!me && !m\.live && ouiSplit\(m\)\.src/.test(html);
+})());
+ok("思考链不影响卡片挂载", (() => {
+  /* 真机踩过：模型先想再答，reasoning 非空；旧条件把它排除，卡片就永远不出现。 */
+  const m = W.chatPush({ role: "assistant", text: '想完了。\n\n```openui-lang\nroot = Stack([Title("x")])\n```',
+                         reasoning: "先想一想", live: false });
+  W.chatRender();
+  return W.ouiSplit(m).src.indexOf("Title") >= 0 && W.ouiSplit(m).text === "想完了。";
+})());
+ok("卡片按钮回传走原生桥（console 进不了 logcat）",
+   html.indexOf("window.onOuiAction") >= 0 && html.indexOf("Android.ouiAction") >= 0
+   && /public void ouiAction\(String action, String payloadJson\)/.test(mainSrc));
+ok("解析不出界面时不留空框", (() => {
+  const plain = W.chatPush({ role: "assistant", text: "没有围栏的一句话", reasoning: "", live: false });
+  return W.ouiSplit(plain).src === "" && W.mdFor(plain).indexOf("没有围栏的一句话") >= 0;
+})());
 
 /* ---------- 31. 会话规则与空会话界面 ---------- */
 section("[31] 会话规则与空会话界面");

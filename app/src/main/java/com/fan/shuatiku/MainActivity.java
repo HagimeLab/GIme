@@ -684,6 +684,13 @@ public class MainActivity extends Activity {
             getSharedPreferences(PREFS, MODE_PRIVATE).edit().putBoolean(PREF_LIGHT, light).apply();
         }
 
+        /** OpenUI 卡片上的按钮点了：P0 只留痕，不猜业务语义；动作路由留到 P1。
+            页面的 console 进不了 logcat（没装 WebChromeClient），所以借这一口打一行便于现场验收。 */
+        @JavascriptInterface
+        public void ouiAction(String action, String payloadJson) {
+            android.util.Log.i("GImeOui", "onOuiAction action=" + action + " payload=" + payloadJson);
+        }
+
         /** 当前版本号，页面拿来显示，也拿来和 Release 的 tag 比对。 */
         @JavascriptInterface
         public String appVersion() {

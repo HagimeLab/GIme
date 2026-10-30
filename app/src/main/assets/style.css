@@ -821,3 +821,354 @@ html.swap, html.swap * { transition: none !important; }
 .res.sel .cbx:after { content: ""; display: block; width: 6px; height: 12px; margin: 3px auto 0;
                       border: solid var(--paper); border-width: 0 2px 2px 0; transform: rotate(45deg); }
 .res.sel { background: var(--raise); border-radius: var(--r-in); }
+
+/* ==== OpenUI ==== */
+/* 来源：D:\desktop\agent\public\style.css
+   - OpenUI 组件规则：第 1995–2230 行（.oui* / .oui-btn / .oui-field / .oui-select / .oui-table / .oui-form）
+   - 选择面板规则：第 2232–2272 行（.pick-*  —— openui-ui.js 通过 opts.onPick 弹出，宿主侧渲染，
+     类名来自 agent 的 app.js pickSheet() 第 392–405 行；不想要自定义面板可整段删掉）
+   抽取方式：原样搬运，未改写任何声明；唯一的追加是文件末尾的「变量桥接」块（见下）。
+   变量依赖见 openui-css-report.md。 */
+/* OpenUI Lang 生成的交互界面：全部落到现有黑白令牌上 */
+.oui {
+  width: 100%;
+  padding: 14px;
+  border-radius: 18px;
+  background: var(--surface);
+  border: 1px solid var(--stroke);
+  box-shadow: var(--shadow);
+  color: var(--text);
+  font-size: 14px;
+}
+
+/* 卡片在气泡里的落点：innerHTML 塞不进 DOM，先占位、挂载完成后再画进去 */
+.oui-slot { display: block; margin-top: 10px; }
+.oui-slot:empty { display: none; }   /* 画不出来就当没这张卡，不留空框 */
+
+.oui-stack {
+  display: flex;
+  flex-direction: column;
+}
+/* flex gap 要 Chrome 84+，本机 WebView 是 80，改用相邻兄弟 margin（等价效果） */
+.oui-stack > * + * {
+  margin-top: 10px;
+}
+
+.oui-row {
+  display: flex;
+  flex-wrap: wrap;
+  margin: -4px;
+}
+.oui-row > * {
+  margin: 4px;
+}
+
+.oui-card {
+  padding: 12px;
+  border-radius: 14px;
+  background: var(--surface-2);
+}
+
+.oui-card-t {
+  margin-bottom: 8px;
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.oui-title.l1 {
+  font-size: 18px;
+  font-weight: 700;
+  line-height: 1.35;
+}
+
+.oui-title.l2 {
+  font-size: 16px;
+  font-weight: 700;
+  line-height: 1.35;
+}
+
+.oui-title.l3 {
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.oui-text {
+  line-height: 1.65;
+}
+
+.oui-text.muted {
+  color: var(--muted);
+}
+
+.oui-badge {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: var(--surface-3);
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.oui-div {
+  width: 100%;
+  margin: 2px 0;
+  border: 0;
+  border-top: 1px solid var(--stroke);
+}
+
+.oui-metric {
+  padding: 10px 12px;
+  border-radius: 12px;
+  background: var(--surface-2);
+}
+
+.oui-metric-k {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.oui-metric-v {
+  margin-top: 2px;
+  font-size: 20px;
+  font-weight: 700;
+}
+
+.oui-metric-h {
+  margin-top: 2px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.oui-progress {
+  display: flex;
+  flex-direction: column;
+}
+.oui-progress > * + * {
+  margin-top: 6px;
+}
+
+.oui-progress-t {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.oui-progress-bar {
+  height: 8px;
+  border-radius: 999px;
+  background: var(--surface-3);
+  overflow: hidden;
+}
+
+.oui-progress-bar i {
+  display: block;
+  height: 100%;
+  background: var(--bar);
+  border-radius: 999px;
+}
+
+.oui-btn {
+  padding: 10px 16px;
+  border-radius: var(--r-pill);
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.oui-btn.primary {
+  background: var(--text);
+  color: var(--on-accent);
+}
+
+.oui-btn.secondary {
+  background: var(--surface-2);
+  color: var(--text);
+}
+
+.oui-field {
+  display: flex;
+  flex-direction: column;
+}
+.oui-field > * + * {
+  margin-top: 4px;
+}
+
+.oui-label {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.oui-input {
+  width: 100%;
+  padding: 10px 12px;
+  border: 1px solid transparent;
+  border-radius: 12px;
+  background: var(--surface-2);
+  color: var(--text);
+  font: inherit;
+  font-size: 14px;
+  outline: none;
+}
+
+.oui-input:focus {
+  border-color: var(--muted);
+}
+
+/* 选择项：外观与输入框一致，弹出的是 App 自己的面板而不是系统下拉 */
+.oui-select {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  padding: 10px 12px;
+  border: 1px solid transparent;
+  border-radius: 12px;
+  background: var(--surface-2);
+  color: var(--text);
+  font: inherit;
+  font-size: 14px;
+  text-align: left;
+}
+
+.oui-select:active {
+  border-color: var(--stroke-2);
+}
+
+.oui-select-t {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.oui-chev {
+  flex: 0 0 auto;
+  width: 8px;
+  height: 8px;
+  margin: -4px 2px 0 10px;
+  border-right: 1.5px solid var(--muted);
+  border-bottom: 1.5px solid var(--muted);
+  transform: rotate(45deg);
+}
+
+.oui-toggle {
+  display: flex;
+  align-items: center;
+  font-size: 14px;
+}
+.oui-toggle > * + * {
+  margin-left: 8px;
+}
+
+.oui-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+
+.oui-table th,
+.oui-table td {
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--stroke);
+  text-align: left;
+}
+
+.oui-table th {
+  background: var(--surface-2);
+  font-weight: 600;
+}
+
+.oui-form {
+  display: flex;
+  flex-direction: column;
+}
+.oui-form > * + * {
+  margin-top: 10px;
+}
+
+/* ---- 选择面板（可选，见上方说明） ---- */
+/* 选择面板：黑白列表，当前值整行反色并打勾 */
+.pick-list {
+  display: flex;
+  flex-direction: column;
+  max-height: 54vh;
+  overflow-y: auto;
+  border-radius: 16px;
+  background: var(--surface-2);
+}
+
+.pick-opt {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  padding: 15px 16px;
+  color: var(--text);
+  font-size: 15px;
+  text-align: left;
+}
+
+.pick-opt + .pick-opt {
+  border-top: 1px solid var(--stroke);
+}
+
+.pick-opt.on {
+  background: var(--text);
+  color: var(--on-accent);
+  font-weight: 600;
+}
+
+.pick-t {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.pick-ok {
+  flex: 0 0 auto;
+  margin-left: 12px;
+  font-size: 14px;
+  font-style: normal;
+}
+
+/* —— 变量桥接 ——
+   上面抽出的规则引用了 11 个 agent 主题令牌：--surface / --surface-2 / --surface-3 /
+   --text / --muted / --on-accent / --bar / --stroke / --stroke-2 / --r-pill / --shadow。
+   下面是 agent 的取值（明色见 style.css 第 3–47 行，暗色见第 50–80 行）原样抄录。
+
+   ⚠ 作用域故意不写 :root，而是挂在 .oui / .pick-list 上：
+      GIme 自己的 index.html:20 与 :49 已经在 :root / [data-theme="dark"] 上定义了
+      --surface（#F2F3F6 / #1C1E22），与本文件的 --surface（#ffffff / #1d1d20）
+      同名但语义不同（GIme 是拟物灰面，agent 是扁平白面）。若把令牌写到 :root，
+      加载本文件后会把 GIme 全局的 --surface 顶掉。
+      改成后代作用域后，自定义属性只在 .oui / .pick-list 子树内生效，GIme 的
+      :root 完全不受影响；用 :root .oui（0,2,0）而非 .oui（0,1,0）是为了在层叠上
+      稳胜 GIme 的 :root（0,1,0）与 [data-theme="dark"]（0,1,0）。
+      组件规则本身一个字没动，仍然原样引用 --surface 等名字。 */
+:root .oui,
+:root .pick-list {
+  --surface: #ffffff;
+  --surface-2: #f2f2f4;
+  --surface-3: #eaeaed;
+  --text: #111113;
+  --muted: #8b8b92;
+  --on-accent: #ffffff;
+  --bar: #111113;
+  --stroke: rgba(17, 17, 19, 0.07);
+  --stroke-2: rgba(17, 17, 19, 0.14);
+  --r-pill: 999px;
+  --shadow: 0 4px 16px rgba(0, 0, 0, 0.04);
+}
+
+/* 暗色：agent 用 html[data-theme="dark"]，GIme 用的也是 document.documentElement 的
+   data-theme="dark"（index.html:2730/2760 写入），机制一致。
+   这里提到 (0,3,0) 是为了压过上面明色块（0,2,0）。 */
+:root[data-theme="dark"] .oui,
+:root[data-theme="dark"] .pick-list {
+  --surface: #1d1d20;
+  --surface-2: #26262a;
+  --surface-3: #2e2e33;
+  --text: #f3f3f5;
+  --muted: #9a9aa2;
+  --on-accent: #111113;
+  --bar: #f3f3f5;
+  --stroke: rgba(255, 255, 255, 0.08);
+  --stroke-2: rgba(255, 255, 255, 0.16);
+  --shadow: 0 4px 16px rgba(0, 0, 0, 0.3);
+}

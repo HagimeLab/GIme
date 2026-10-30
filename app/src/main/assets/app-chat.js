@@ -657,13 +657,95 @@ function mdToHtml(src) {
   flushP();
   return out.join("");
 }
+/* ---- OpenUI 卡片：正文里的 ```openui-lang 围栏画成可点组件 ----
+   围栏交给 ui/openui-ui.js（window.renderOpenUI）画，余下的正文照旧走 Markdown；
+   源码永远不进气泡 —— 解析不出来就整条按纯 Markdown 显示，也不留空框。
+   缓存按「消息 id + 原文」失效，和 MD_CACHE 一个路子。 */
+var UI_FENCE = /```(?:openui-lang|openui)[^\n]*\n([\s\S]*?)```/i;
+var OUI_CACHE = {};
+function ouiSplit(m) {
+  var id = (m && m.id) || "";
+  var text = String((m && m.text) || "");
+  var c = OUI_CACHE[id];
+  if (c && c.t === text) return c;
+  var out = { t: text, text: text, src: "" };
+  var hit = text.match(UI_FENCE);
+  if (hit) {
+    out.src = String(hit[1] || "").trim();
+    out.text = text.replace(hit[0], "").replace(/\n{3,}/g, "\n\n").trim();
+  }
+  if (Object.keys(OUI_CACHE).length > 60) OUI_CACHE = {};
+  OUI_CACHE[id] = out;
+  return out;
+}
+/* 流式阶段围栏还没收尾：先把它后面的内容藏起来，免得源码在气泡里闪一下再消失 */
+function stripUIFence(s) {
+  var raw = String(s == null ? "" : s);
+  var i = raw.search(/```(?:openui-lang|openui)/i);
+  return i >= 0 ? raw.slice(0, i).trim() : raw;
+}
+/* 卡片按钮的通用回传口：P0 只把动作原样交出去，不猜业务语义（动作路由留 P1）。
+   WebView 的 console 进不了 logcat，所以借原生桥打一行，现场验收看得到。 */
+window.onOuiAction = function (action, payload) {
+  try {
+    if (window.Android && Android.ouiAction) {
+      Android.ouiAction(String(action || ""), JSON.stringify(payload || {}));
+    }
+  } catch (e) { /* 老包没有这个桥口就当没发生，别把气泡点崩 */ }
+};
+/* 把一条消息上的动作摊成通用载荷：submit 带上表单值，其余带上按钮文字 */
+function chatOuiAction(m, action, node, form) {
+  var s = String(action || "");
+  var cut = s.indexOf(":");
+  var verb = cut < 0 ? s : s.slice(0, cut);
+  var arg = cut < 0 ? "" : s.slice(cut + 1);
+  var payload = { verb: verb, arg: arg, mid: (m && m.id) || "" };
+  if (verb === "submit") {
+    try { payload.values = window.readForm ? window.readForm(form) : []; } catch (e) { payload.values = []; }
+  } else if (node && node.textContent) {
+    payload.label = String(node.textContent);
+  }
+  try { window.onOuiAction(s, payload); } catch (e) { }
+}
+/* 表单边打边存会把 localStorage 写爆：停手 400ms 再落一次盘 */
+var _ouiSaveTimer = 0;
+function chatOuiTouched() {
+  clearTimeout(_ouiSaveTimer);
+  _ouiSaveTimer = setTimeout(chatSave, 400);
+}
+/* 气泡的 innerHTML 落地后再把围栏里的界面挂成真组件：
+   renderOpenUI 返回的是 DOM 元素，拼不进字符串，只能后挂。 */
+function chatOuiMount(root) {
+  if (!root || !root.querySelectorAll || !window.renderOpenUI) return;
+  var slots = root.querySelectorAll("[data-oui]");
+  for (var i = 0; i < slots.length; i++) {
+    var slot = slots[i];
+    var id = (slot.getAttribute && slot.getAttribute("data-oui")) || "";
+    var m = null;
+    for (var j = 0; j < chatMsgs.length; j++) {
+      if (chatMsgs[j] && chatMsgs[j].id === id) { m = chatMsgs[j]; break; }
+    }
+    if (!m) continue;
+    var src = ouiSplit(m).src;
+    if (!src) continue;
+    if (!m.formValues) m.formValues = {};
+    try {
+      var card = window.renderOpenUI(src, {
+        values: m.formValues,
+        onChange: chatOuiTouched,
+        onAction: function (action, node, form) { chatOuiAction(m, action, node, form); }
+      });
+      if (card) slot.appendChild(card);
+    } catch (e) { /* 画不出来就当没有这张卡：正文那段 Markdown 还在 */ }
+  }
+}
 /* 已落盘的回答不会变，按 id 缓存；换文字或超量就重算/清空 */
 function mdFor(m) {
   var id = (m && m.id) || "";
   var text = String((m && m.text) || "");
   var c = MD_CACHE[id];
   if (c && c.t === text) return c.h;
-  var h = mdToHtml(text);
+  var h = mdToHtml(ouiSplit(m).text);
   if (Object.keys(MD_CACHE).length > 300) MD_CACHE = {};
   MD_CACHE[id] = { t: text, h: h };
   return h;
@@ -736,6 +818,8 @@ function chatLiveHtml(m) {
      这一轮的气泡最后会被丢掉，但流式期间不能闪一串 JSON。 */
   var tooling = /^\s*<tool_call/.test(text);
   if (tooling) text = "";
+  /* OpenUI 围栏还没收完就先藏起来：半截源码在气泡里闪一下再变成卡片很扎眼 */
+  if (m.live) text = stripUIFence(text);
   var out = "";
   if (think) {
     /* 默认展开（「把思考链显示出来」），用户点一下就收起，收起后记住不再自动弹开。
@@ -890,6 +974,11 @@ function chatRender() {
       ? '<div class="live">' + chatLiveHtml(m) + "</div>"
       : '<div class="bubble' + (me ? "" : " md") + '">' +
         (me ? esc(m.text).replace(/\n/g, "<br>") : mdFor(m)) + "</div>";
+    /* 围栏里的界面等 innerHTML 落地后再挂成真组件（字符串里塞不了 DOM）。
+       只看 live：思考链答完也留着（默认折叠），拿 reasoning 当条件会漏掉一半回答。 */
+    if (!me && !m.live && ouiSplit(m).src) {
+      inner += '<div class="oui-slot" data-oui="' + esc(m.id || "") + '"></div>';
+    }
     h += '<div class="msg' + (me ? " me" : " ai") + '" data-mid="' + esc(m.id || "") + '">' +
          (me ? "" : agentAvaHtml()) + inner + "</div>";
   });
@@ -916,6 +1005,7 @@ function chatRender() {
          chatWorkHtml() + "</span></div></div>";
   }
   list.innerHTML = h;
+  chatOuiMount(list);
   var send = document.getElementById("chatSend");
   if (send) {
     /* 忙的时候「发送」变成「停止」：网络卡住时用户至少能自己脱身，
