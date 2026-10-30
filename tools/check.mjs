@@ -1879,7 +1879,8 @@ ok("onDelta 不再判空", /m\.onDelta = function \(kind, chunk\)/.test(html));
 /* 原生侧：API Key 走 OpenAiStream，且它解析的是标准 SSE */
 ok("chatApi 调用了 OpenAiStream", /OpenAiStream\.run\(url, key, body/.test(mainSrc));
 ok("流式增量回抛给页面",
-   /window\.onChatStream\([^)]*"text"/.test(mainSrc) || /onChatStream[\s\S]{0,60}text/.test(mainSrc));
+   /m\.onDelta = function \(kind, chunk\)/.test(html) &&
+   /if \(kind === "think"\) \{ m\.reasoning \+= chunk/.test(html), "页面没有接收增量的口子");
 ok("思维链也回抛", /onChatStream[\s\S]{0,80}think/.test(mainSrc) || mainSrc.indexOf("onReasoning") >= 0);
 ok("发请求时带 stream:true", /body\.put\("stream", true\)/.test(streamSrc));
 ok("请求 Accept 是 event-stream", /setRequestProperty\("Accept", "text\/event-stream"\)/.test(streamSrc));
@@ -1892,6 +1893,44 @@ ok("4xx 给可照做的提示", /httpHint/.test(streamSrc));
 
 /* 4xx 拿不到错误体是 JDK 的坑，注释里要留痕，免得以后又「修」回去 */
 ok("记录了 4xx 读不到错误体的坑", /HttpRetryException/.test(streamSrc));
+
+/* ---------- 24b. 流式增量合并上屏（120ms） ---------- */
+section("[24b] 流式增量合并上屏");
+
+/* 上游一个字一个字地吐，逐字 evaluateJavascript 会把 WebView 拖死（真机表现为掉帧、
+   输入吞字）。这里攒 120ms 发一批：调用次数掉一个量级，页面收到的仍是同一段文本。 */
+ok("合并窗口写成常量 120ms", /private static final long EMIT_MS = 120;/.test(mainSrc));
+ok("合并器是按 id+kind 分开攒的", /void push\(final String id, final String kind, final String delta\)/.test(mainSrc));
+ok("定时器到点自己 flush", /h\.postDelayed\(this, EMIT_MS\)/.test(mainSrc) &&
+   /@Override public void run\(\)[\s\S]{0,60}flush\(\);/.test(mainSrc));
+ok("正文增量走合并口，不再直接 js()",
+   /chatEmit\.push\(id, "text", d\);/.test(mainSrc) &&
+   !/window\.onChatStream[\s\S]{0,80}quote\(d\)[\s\S]{0,40}onReasoning/.test(mainSrc));
+ok("思维链增量也走同一个合并口", /chatEmit\.push\(id, "think", d\);/.test(mainSrc));
+ok("flush 时才真正调 window.onChatStream",
+   /void flush\(\)[\s\S]{0,700}window\.onChatStream\(/.test(mainSrc));
+
+/* 收尾三处必须把缓冲推完，否则屏幕上少半句（这正是「掉字」的来源） */
+ok("收尾 finally 里先 flush 再回 onChatApi",
+   /finally \{[\s\S]{0,200}chatEmit\.flush\(\);/.test(mainSrc));
+ok("上游报错也要先把已收到的那半句推出去",
+   /ApiException ae\) \{[\s\S]{0,200}chatEmit\.flush\(\);/.test(mainSrc));
+ok("Activity 销毁前 flush", /onDestroy\(\)[\s\S]{0,220}chatEmit\.flush\(\);/.test(mainSrc));
+ok("点停止先 drop 再 cancel（别让缓冲补上后半句）",
+   /public void dsCancel\(String id\) \{[\s\S]{0,200}chatEmit\.drop\(id\);[\s\S]{0,120}dsBridge\.cancel\(id\)/.test(mainSrc));
+
+/* 一次性回调不能跟着合并：早发一帧晚发一帧无所谓，但顺序必须保证 */
+ok("一次性回调仍然直发 js()",
+   /js\("window\.onImportText&&window\.onImportText\(/.test(mainSrc) &&
+   /js\("window\.onChatFile&&window\.onChatFile\(/.test(mainSrc));
+ok("内置通道沿用自带 Streamer，不重复接管",
+   /new DeepSeekBridge\.Sink\(\) \{[\s\S]{0,120}js\(script\);/.test(mainSrc));
+
+/* 页面侧：onChatStream 收到的是「一段」而不是「一个字」，累加逻辑不变 */
+ok("页面把整段增量一次抛给 onDelta",
+   /window\.onChatStream = function \(id, kind, text\) \{[\s\S]{0,300}w\.onDelta\(kind, String\(text/.test(html));
+ok("onDelta 仍是追加语义（合并不会改变拼出来的正文）",
+   /m\.onDelta = function \(kind, chunk\)[\s\S]{0,300}\+= chunk/.test(html));
 
 /* 清理：不留 API Key / 会话 / 改写过的解析 */
 delete W.Android;

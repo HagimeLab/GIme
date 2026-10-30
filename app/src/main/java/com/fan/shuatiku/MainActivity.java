@@ -80,6 +80,9 @@ public class MainActivity extends Activity {
     /** 大肥鱼的后端：走 App 内置的 DeepSeek 反代，不需要 API Key。 */
     private DeepSeekBridge dsBridge;
 
+    /** 流式增量的合并出口；一次性回调不走它，仍然直接 js()。 */
+    private ChatEmitter chatEmit;
+
     private static final class McpWait {
         final java.util.concurrent.CountDownLatch latch = new java.util.concurrent.CountDownLatch(1);
         volatile String response;
@@ -130,6 +133,7 @@ public class MainActivity extends Activity {
             @Override public void run() { killTouchHaptics(web); }
         });
         web.addJavascriptInterface(new Bridge(), "Android");
+        chatEmit = new ChatEmitter();
         /* 这台 ROM 的 WebView 在没挂 WebViewClient 时，页面内导航会退化成
            startActivity(file:///android_asset/index.html)，被 StrictMode 判成
            FileUriExposed 直接崩掉进程（10-19 用 CDP 触发一次 location.reload() 就复现）。
@@ -140,7 +144,11 @@ public class MainActivity extends Activity {
             @Override public Activity activity() { return MainActivity.this; }
         });
         /* 大肥鱼改走 App 内置通道：页面发请求 → 这里直连 DeepSeek 网页协议。
-           用户只需要用官方手机号登录一次，不再需要 API Key 或外部反代服务。 */
+           用户只需要用官方手机号登录一次，不再需要 API Key 或外部反代服务。
+           注意：内置通道的增量不经过 ChatEmitter。DeepSeekBridge 里的 Streamer
+           已经按「40ms 或够 24 字」自己合并过了，而且 P0 明确不碰 DeepSeek*；
+           在这里把它的脚本字符串再拆一次，等于用「解析 + 重新转义」换一点点
+           调用次数，转义一错就会吃掉正文，不值得。 */
         dsBridge = new DeepSeekBridge(this, new DeepSeekBridge.Sink() {
             @Override public void toJs(String script) { js(script); }
         });
@@ -391,6 +399,74 @@ public class MainActivity extends Activity {
         });
     }
 
+    /* ---------------- 流式批量上屏 ----------------
+       上游一个 token 一帧地吐，逐帧 evaluateJavascript 会把 WebView 主线程
+       打满：页面卡、字反而冒得更慢。这里把增量先攒在 StringBuilder 里，
+       120ms 合并成一次 js()。120 是 agent 版实测值（MainActivity 的 Emitter）：
+       再短省不下调用次数，再长肉眼就能看出成块。
+       只接流式高频回调（chatApi 的 content/reasoning 增量）；pageReady、
+       更新弹窗这类一次性 js() 不走这里，早发一帧晚发一帧无所谓。
+       内置通道（DeepSeekBridge）有自己的 Streamer 按 40ms/24 字合并，
+       属「不碰 DeepSeek*」的既有实现，这里不重复接管。 */
+    private static final long EMIT_MS = 120;
+
+    private final class ChatEmitter implements Runnable {
+        private final android.os.Handler h = new android.os.Handler(android.os.Looper.getMainLooper());
+        /* 同一个 (id, kind) 合并成一段：正文和思维链分开攒，别混在一起 */
+        private final java.util.LinkedHashMap<String, StringBuilder> bufs =
+                new java.util.LinkedHashMap<String, StringBuilder>();
+        private boolean scheduled;
+
+        void push(final String id, final String kind, final String delta) {
+            if (delta == null || delta.isEmpty()) return;
+            String key = id + "\u0000" + kind;
+            synchronized (bufs) {
+                StringBuilder b = bufs.get(key);
+                if (b == null) { b = new StringBuilder(); bufs.put(key, b); }
+                b.append(delta);
+            }
+            if (!scheduled) {
+                scheduled = true;
+                h.postDelayed(this, EMIT_MS);
+            }
+        }
+
+        /** 丢掉这个 id 还没发出去的增量（取消时用：别让半句话挂在屏幕上）。 */
+        void drop(final String id) {
+            synchronized (bufs) {
+                java.util.Iterator<String> it = bufs.keySet().iterator();
+                while (it.hasNext()) {
+                    if (it.next().startsWith(id + "\u0000")) it.remove();
+                }
+            }
+        }
+
+        /** 收尾前必须调，否则缓冲里的尾巴会丢。 */
+        void flush() {
+            h.removeCallbacks(this);
+            scheduled = false;
+            java.util.LinkedHashMap<String, StringBuilder> copy;
+            synchronized (bufs) {
+                if (bufs.isEmpty()) return;
+                copy = new java.util.LinkedHashMap<String, StringBuilder>(bufs);
+                bufs.clear();
+            }
+            for (java.util.Map.Entry<String, StringBuilder> e : copy.entrySet()) {
+                String key = e.getKey();
+                int cut = key.indexOf('\u0000');
+                String chunk = e.getValue().toString();
+                if (chunk.isEmpty()) continue;
+                js("window.onChatStream(" + quote(key.substring(0, cut)) + ","
+                        + quote(key.substring(cut + 1)) + "," + quote(chunk) + ")");
+            }
+        }
+
+        @Override public void run() {
+            scheduled = false;
+            flush();
+        }
+    }
+
     private static String quote(String s) {
         try {
             return JSONObject.quote(s);
@@ -472,6 +548,8 @@ public class MainActivity extends Activity {
         synchronized (this) {
             if (mcp != null) { mcp.stop(); mcp = null; }
         }
+        /* 页面马上就没了，缓冲里的增量再攒着也没人收；先推完再拆桥。 */
+        if (chatEmit != null) chatEmit.flush();
         if (dsBridge != null) { dsBridge.shutdown(); dsBridge = null; }
         super.onDestroy();
     }
@@ -584,11 +662,11 @@ public class MainActivity extends Activity {
                             finish[0] = OpenAiStream.run(url, key, body, new OpenAiStream.Listener() {
                                 @Override public void onContent(String d) {
                                     content.append(d);
-                                    js("window.onChatStream(" + quote(id) + ",\"text\"," + quote(d) + ")");
+                                    chatEmit.push(id, "text", d);
                                 }
                                 @Override public void onReasoning(String d) {
                                     reasoning.append(d);
-                                    js("window.onChatStream(" + quote(id) + ",\"think\"," + quote(d) + ")");
+                                    chatEmit.push(id, "think", d);
                                 }
                                 @Override public void onToolCall(int index, String cid, String name, String argsChunk) {
                                     calls.add(index, cid, name, argsChunk);
@@ -596,7 +674,9 @@ public class MainActivity extends Activity {
                                 @Override public void onFinish(String reason) { finish[0] = reason; }
                             });
                         } catch (OpenAiStream.ApiException ae) {
-                            /* 上游明确报错：按它的状态码回，页面能显示可读原因 */
+                            /* 上游明确报错：按它的状态码回，页面能显示可读原因。
+                               先把缓冲推出去，别让最后半句卡在 Java 侧。 */
+                            chatEmit.flush();
                             code = ae.code > 0 ? ae.code : 502;
                             text = ae.getMessage();
                             js("window.onChatApi(" + quote(id) + "," + code + "," + quote(
@@ -627,6 +707,9 @@ public class MainActivity extends Activity {
                         text = e.getMessage() == null ? e.getClass().getSimpleName() : e.getMessage();
                     } finally {
                         if (c != null) c.disconnect();
+                        /* 必须在 onChatApi 之前把这批增量推完：页面收到「结束」
+                            就不会再往气泡里追加了，留在缓冲里等于丢字。 */
+                        chatEmit.flush();
                     }
                     final int fc = code;
                     final String ft = text;
@@ -672,6 +755,9 @@ public class MainActivity extends Activity {
         /** 取消一个还在跑的大肥鱼请求（掐断连接，不用等到超时）。 */
         @JavascriptInterface
         public void dsCancel(String id) {
+            /* 先把还没发出去的增量丢掉：用户点了停止，屏幕上不该再多冒半句。
+               顺序不能反——先 cancel 的话，收尾的 flush 可能把缓冲又推上去。 */
+            chatEmit.drop(id);
             if (dsBridge != null) dsBridge.cancel(id);
         }
 
