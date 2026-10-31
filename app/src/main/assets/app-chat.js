@@ -1971,7 +1971,14 @@ async function chatRun(cfg, attachMeta) {
     if (isBuiltin) body.search = webSearchOn();
     if (!lastRound) { body.tools = chatTools(); body.tool_choice = "auto"; }
     try {
-      data = await chatRequest(cfg, body, onDelta);
+      data = await chatRequestNet(cfg, body, onDelta, function () {
+        /* 这一轮还没执行任何工具，恢复后整轮重发；清掉半截，避免重复 */
+        live.text = "";
+        live.reasoning = "";
+        live.shown = 0;
+        live._html = "";
+        try { chatLivePaint(live); } catch (x) { }
+      });
     } catch (e) {
       chatDrop(live);
       throw e;
@@ -2149,7 +2156,12 @@ async function chatRun(cfg, attachMeta) {
       chatPush({ role: "step", hidden: true, text: "输出中断，自动续写中…" }, true);
       var cdata, cm, cfr = "";
       try {
-        cdata = await chatRequest(cfg, cbody, live.onDelta);
+        cdata = await chatRequestNet(cfg, cbody, live.onDelta, function () {
+          live.text = beforeText;
+          live.shown = beforeText.length;
+          live._html = "";
+          try { chatLivePaint(live); } catch (x) { }
+        });
         cm = cdata && cdata.choices && cdata.choices[0] && cdata.choices[0].message;
         cfr = (cdata && cdata.choices && cdata.choices[0] && cdata.choices[0].finish_reason) || "";
       } catch (e) {
@@ -2215,8 +2227,15 @@ async function chatRun(cfg, attachMeta) {
        报给 RunTrace.uncounted，诊断包才不会系统性少算一整轮 prompt。 */
     var uncPt = Math.round(JSON.stringify(messages).length / 2);
     agentCall("uncounted", { promptTokens: uncPt });
-    d2 = await chatRequest(cfg, { model: cfg.model, messages: messages, temperature: 0.3,
-                                  max_tokens: fileRun ? CHAT_FILE_MAX_TOKENS : CHAT_MAX_TOKENS }, fin.onDelta);
+    d2 = await chatRequestNet(cfg, { model: cfg.model, messages: messages, temperature: 0.3,
+                                     max_tokens: fileRun ? CHAT_FILE_MAX_TOKENS : CHAT_MAX_TOKENS },
+                              fin.onDelta, function () {
+      fin.text = "";
+      fin.reasoning = "";
+      fin.shown = 0;
+      fin._html = "";
+      try { chatLivePaint(fin); } catch (x) { }
+    });
   } catch (e) { chatDrop(fin); throw e; }
   var m2 = d2 && d2.choices && d2.choices[0] && d2.choices[0].message;
   var a2 = String((m2 && m2.content) || "").trim();
@@ -2787,6 +2806,46 @@ function chatHitlAction(arg) {
     (out && out.receipt ? "（回执 " + out.receipt + "）" : "") });
   chatRender();
   toast(err ? "执行失败" : "已执行");
+}
+/* 网络失败自动续跑：同一请求重试；调用方在 beforeRetry 里清掉本次已流出的半截，
+   避免恢复后同一气泡出现重复内容。最多 8 次，用户点停止立即退出。 */
+var CHAT_NET_RETRIES = 8;   /* 可用 window.__netRetryMax 覆盖（测试/现场排查） */
+function chatNetError(e) {
+  var m = String(e && e.message ? e.message : e || "");
+  /* 配置/鉴权类错误重试不会变好，交给调用方直接显示 */
+  if (/Cleartext|not permitted|invalid api key|未登录|登录失效|40003|40301/i.test(m)) return false;
+  return /连不上|网络|timeout|timed out|network|ERR_INTERNET|ERR_|unreachable|failed to connect|502|503|504/i.test(m);
+}
+function chatWaitNet(ms) {
+  return new Promise(function (resolve) {
+    var done = false;
+    function fin() { if (!done) { done = true; resolve(); } }
+    try { window.addEventListener("online", fin, { once: true }); } catch (e) { }
+    setTimeout(fin, ms);
+  });
+}
+async function chatRequestNet(cfg, body, onDelta, beforeRetry, maxTries) {
+  var tries = 0;
+  var max = maxTries != null ? maxTries
+    : (window.__netRetryMax != null ? window.__netRetryMax : CHAT_NET_RETRIES);
+  max = Math.max(0, Number(max) || 0);
+  var hint = document.getElementById("chatHint");
+  var hintText = hint ? hint.textContent : "";
+  while (true) {
+    try {
+      var out = await chatRequest(cfg, body, onDelta);
+      if (hint && hint.textContent.indexOf("网络断开") >= 0) hint.textContent = hintText;
+      return out;
+    } catch (e) {
+      if (!chatNetError(e) || ++tries > max) throw e;
+      if (beforeRetry) { try { beforeRetry(); } catch (x) { } }
+      chatPush({ role: "step", hidden: true,
+                 text: "网络中断，等待恢复后自动续跑（" + tries + "/" + max + "）" }, true);
+      if (hint) hint.textContent = "网络断开，正在等待恢复后自动续跑…";
+      await chatWaitNet(Math.min(10000, 2000 * tries));
+      if (!chatBusy) throw new Error("已停止");
+    }
+  }
 }
 function chatRequest(cfg, body, onDelta) {
   return new Promise(function (resolve, reject) {

@@ -1662,10 +1662,12 @@ ok("已停止时不诱导切通道", String(errStop.text || "").indexOf("API Key
 W.set.agent = { base: "https://api.example.com/v1", model: "m1", key: "sk-test", mode: "key" };
 W.chatMsgs = [];
 W.chatBusy = true;
+W.__netRetryMax = 0;                /* 桩只回第一条请求，这里关掉自动重试 */
 const pKey = W.chatSendText("key模式测试", true);
 await new Promise((r) => setTimeout(r, 30));
 W.onChatApi(W.chatLastId, 0, "");
 await pKey;
+delete W.__netRetryMax;
 const errKey = W.chatMsgs.find((m) => m.role === "error") || {};
 ok("Key 模式连不上时不提示切换（本来就在 Key）",
    String(errKey.text || "").indexOf("API Key 通道") < 0, String(errKey.text || ""));
@@ -2149,6 +2151,10 @@ ok("工具调用格式坏掉自动重试",
    /badToolRetry < 2/.test(html) && /已让模型重试一次/.test(html));
 ok("回答被截断自动续写", /while \(contLeft > 0/.test(html)
    && /自动续写/.test(html) && /从刚才断掉的地方接着写/.test(html));
+ok("网络恢复后自动续跑", /function chatRequestNet/.test(html)
+   && /function chatNetError/.test(html) && /chatWaitNet/.test(html)
+   && /网络中断，等待恢复后自动续跑/.test(html)
+   && /data = await chatRequestNet\(cfg, body/.test(html));
 ok("带附件识别那一轮单独放宽轮次与输出",
    /var rounds = fileRun \? CHAT_FILE_ROUNDS : CHAT_ROUNDS;/.test(html) &&
    /max_tokens: fileRun \? CHAT_FILE_MAX_TOKENS : CHAT_MAX_TOKENS/.test(html), "带附件那轮没走独立额度");
