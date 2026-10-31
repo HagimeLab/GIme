@@ -1,5 +1,6 @@
 package com.fan.shuatiku;
 
+import android.content.SharedPreferences;
 import android.security.keystore.KeyGenParameterSpec;
 import android.security.keystore.KeyProperties;
 import android.util.Base64;
@@ -62,6 +63,23 @@ public final class SecurePrefs {
             Log.w(TAG, "decrypt failed: " + t.getMessage());
             return "";
         }
+    }
+
+    /** 启动时把历史明文一次性升级成密文；已经带前缀的跳过。 */
+    public static boolean migrate(SharedPreferences p, String[] keys) {
+        if (p == null || keys == null) return false;
+        SharedPreferences.Editor e = null;
+        for (String k : keys) {
+            String raw = p.getString(k, "");
+            if (raw == null || raw.isEmpty() || raw.startsWith(PREFIX)) continue;
+            String enc = enc(raw);
+            if (enc.startsWith(PREFIX)) {
+                if (e == null) e = p.edit();
+                e.putString(k, enc);
+            }
+        }
+        if (e != null) { e.apply(); return true; }
+        return false;
     }
 
     private static SecretKey key() throws Exception {

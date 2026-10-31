@@ -127,6 +127,9 @@ public class MainActivity extends Activity {
         File memDir = new File(getFilesDir(), "memory");
         if (!memDir.isDirectory()) memDir.mkdirs();
         memoryStore = new com.fan.shuatiku.agent.MemoryStore(memDir);
+        /* T6/A-5：历史明文凭据在启动时就地升级成 AES-GCM 密文，不再等下一次登录。 */
+        SecurePrefs.migrate(getSharedPreferences("ds", MODE_PRIVATE),
+                new String[]{"token", "mobile", "cookie", "device_id"});
         /* Agent trace 同时进 logcat（GImeAgent）与私有环形缓冲；导出入口在「我的」。 */
         com.fan.shuatiku.agent.RunTrace.setSink(new com.fan.shuatiku.agent.RunTrace.Sink() {
             @Override public void log(String line) {

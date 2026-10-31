@@ -2100,7 +2100,7 @@ ok("方案进度作为独立 system 消息追加，固定段不掺方案",
 
 /* ③ 省 token：窗口、轮次、schema、输出、工具结果 */
 ok("历史窗口缩到 8 条", /chatMsgs\.slice\(-8\)/.test(html));
-ok("工具轮次上限 8 轮", /var CHAT_ROUNDS = 8;/.test(html) && /var CHAT_TOKEN_BUDGET = 24000;/.test(html));
+ok("工具轮次上限 8 轮", /var CHAT_ROUNDS = 8;/.test(html) && /var CHAT_TOKEN_BUDGET = 120000;/.test(html));
 ok("带附件识别那一轮单独放宽轮次与输出",
    /var rounds = fileRun \? CHAT_FILE_ROUNDS : CHAT_ROUNDS;/.test(html) &&
    /max_tokens: fileRun \? CHAT_FILE_MAX_TOKENS : CHAT_MAX_TOKENS/.test(html), "带附件那轮没走独立额度");
@@ -2127,6 +2127,10 @@ ok("每个响应都收 Cookie", (webSrc.match(/harvest\(c\)/g) || []).length >= 
 ok("Cookie 变化有回调", /interface CookieSink/.test(webSrc) && /CookieSink sink/.test(webSrc));
 ok("桥接层把轮换后的 Cookie 加密落盘",
    /onCookies\(String cookie\)[\s\S]{0,600}?putString\(PREF_COOKIE, SecurePrefs\.enc\(cookie\)\)/.test(bridgeSrc));
+const secureSrc = fs.readFileSync(path.join(ROOT, "app/src/main/java/com/fan/shuatiku/SecurePrefs.java"), "utf8");
+ok("启动时把历史明文凭据迁移加密",
+   /SecurePrefs\.migrate\(getSharedPreferences\("ds"/.test(mainSrc) &&
+   /AndroidKeyStore/.test(secureSrc) && /enc1:/.test(secureSrc));
 
 /* ⑦ 更像浏览器：Client Hints / Sec-Fetch / 不缓存 */
 ok("带 Client Hints", /sec-ch-ua/.test(webSrc) && /sec-ch-ua-platform/.test(webSrc));

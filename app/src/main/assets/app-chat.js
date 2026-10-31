@@ -1914,7 +1914,7 @@ async function chatRun(cfg, attachMeta) {
 }
 var CHAT_ROUNDS = 8;
 var CHAT_MAX_TOKENS = 4096;      /* 普通聊天/工具轮的单轮输出上限，工具调用 JSON 别被截断 */
-var CHAT_TOKEN_BUDGET = 24000;   /* 可被 window.__agentTokenBudget 覆盖 */
+var CHAT_TOKEN_BUDGET = 120000;   /* 可被 window.__agentTokenBudget 覆盖 */
 function chatSysBase() {
   return "你是一只乐于助人的蓝色大肥鱼，用中文回答：先给结论，再讲依据；" +
          "简洁但把关键步骤说清，不要编造题库里没有的内容。" +
