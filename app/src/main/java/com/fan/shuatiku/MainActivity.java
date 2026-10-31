@@ -83,6 +83,9 @@ public class MainActivity extends Activity {
     /** 流式增量的合并出口；一次性回调不走它，仍然直接 js()。 */
     private ChatEmitter chatEmit;
 
+    /** 方案库。提醒、MCP 计划工具、页面方案页读的都是这一份。 */
+    private com.fan.shuatiku.agent.PlanStore planStore;
+
     private static final class McpWait {
         final java.util.concurrent.CountDownLatch latch = new java.util.concurrent.CountDownLatch(1);
         volatile String response;
@@ -109,6 +112,11 @@ public class MainActivity extends Activity {
         if (!bankDir.isDirectory()) bankDir.mkdirs();
         BankStore.cleanup(bankDir);      // 清掉上次被打断留下的 .tmp/.bak
 
+        /* 方案库跟题库一样是纯文件，桌面单测能直接跑。放在 onCreate 最前面：
+           提醒广播可能在 Activity 还没起来时就到（闹钟唤醒），那时也要读得到。 */
+        File planDir = new File(getFilesDir(), "plans");
+        if (!planDir.isDirectory()) planDir.mkdirs();
+        planStore = new com.fan.shuatiku.agent.PlanStore(planDir);
         web = new WebView(this);
         // 只在 debug 构建里开调试口。Release 开着它等于把整个 WebView 连同
         // localStorage 里的题库交出去——用 adb 连上就能读写。
@@ -826,6 +834,75 @@ public class MainActivity extends Activity {
         @JavascriptInterface
         public void ouiAction(String action, String payloadJson) {
             android.util.Log.i("GImeOui", "onOuiAction action=" + action + " payload=" + payloadJson);
+        }
+
+        /* ============ 方案库（P1） ============
+           页面与 MCP 计划工具走同一份 plans.json。四个方法都是「同步返回 JSON 字符串」，
+           不抛异常也不回 null —— 页面侧拿到的一定是能 JSON.parse 的串，
+           错误也包成 {"error":"..."}，省得页面到处 try。 */
+
+        /** 读全部方案：{rev, plans:[...]}。 */
+        @JavascriptInterface
+        public String planSnapshot() {
+            try {
+                return planStore == null ? "{\"rev\":0,\"plans\":[]}" : planStore.snapshot();
+            } catch (Throwable t) {
+                return "{\"rev\":0,\"plans\":[],\"error\":" + quote(String.valueOf(t.getMessage())) + "}";
+            }
+        }
+
+        /** 新建方案。返回 {rev, plan} 或 {error}；rev 冲突时 rev = -1。 */
+        @JavascriptInterface
+        public String planCreate(String goal, int days, String title, String daysJson, int clientRev) {
+            if (planStore == null) return "{\"error\":\"方案库还没准备好\"}";
+            try {
+                org.json.JSONArray dayList = null;
+                if (daysJson != null && daysJson.length() > 0) dayList = new org.json.JSONArray(daysJson);
+                com.fan.shuatiku.agent.PlanStore.Out out =
+                        planStore.create(goal, days, title, dayList, clientRev);
+                return planOutJson(out);
+            } catch (Throwable t) {
+                return "{\"error\":" + quote(String.valueOf(t.getMessage())) + "}";
+            }
+        }
+
+        /** 改方案。action 见 PlanStore.ACTIONS；argsJson 是给该 action 的参数。 */
+        @JavascriptInterface
+        public String planUpdate(String id, String action, String argsJson, int clientRev) {
+            if (planStore == null) return "{\"error\":\"方案库还没准备好\"}";
+            try {
+                org.json.JSONObject args = null;
+                if (argsJson != null && argsJson.length() > 0) args = new org.json.JSONObject(argsJson);
+                com.fan.shuatiku.agent.PlanStore.Out out =
+                        planStore.update(id, action, args, clientRev);
+                return planOutJson(out);
+            } catch (Throwable t) {
+                return "{\"error\":" + quote(String.valueOf(t.getMessage())) + "}";
+            }
+        }
+
+        /** 删方案。 */
+        @JavascriptInterface
+        public String planDelete(String id, int clientRev) {
+            if (planStore == null) return "{\"error\":\"方案库还没准备好\"}";
+            try {
+                return planOutJson(planStore.delete(id, clientRev));
+            } catch (Throwable t) {
+                return "{\"error\":" + quote(String.valueOf(t.getMessage())) + "}";
+            }
+        }
+
+        private String planOutJson(com.fan.shuatiku.agent.PlanStore.Out out) {
+            if (out == null) return "{\"error\":\"方案库没有返回\"}";
+            try {
+                org.json.JSONObject o = new org.json.JSONObject();
+                o.put("rev", out.rev);
+                if (out.plan != null) o.put("plan", out.plan);
+                if (!out.ok()) o.put("error", "rev 冲突：方案已被别处改过，请刷新后再试");
+                return o.toString();
+            } catch (Throwable t) {
+                return "{\"rev\":-1,\"error\":" + quote(String.valueOf(t.getMessage())) + "}";
+            }
         }
 
         /** 当前版本号，页面拿来显示，也拿来和 Release 的 tag 比对。 */

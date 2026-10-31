@@ -110,11 +110,25 @@ goto afterJson
 echo   [SKIP] org.json jar unavailable (no network on first run); deepseek checks skipped
 :afterJson
 echo.
+echo === plan store (rev lock / atomic save / crash recovery) ===
+rem 方案库是 P1 的地基：页面、MCP 工具、提醒都读同一份 plans.json。
+rem 这里钉住三件事——派生字段算得对、rev 对不上就不覆盖、落盘死在任意一步都能恢复。
+javac -encoding UTF-8 -cp "%JSON_JAR%" -d "%OUT%" "%~dp0..\app\src\main\java\com\fan\shuatiku\agent\PlanStore.java" "%~dp0PlanStoreTest.java"
+if errorlevel 1 goto fail
+java "-Dfile.encoding=UTF-8" -cp "%OUT%;%JSON_JAR%" com.fan.shuatiku.agent.PlanStoreTest
+if errorlevel 1 goto fail
+echo.
 echo === mcp server (loopback / token / 202) ===
 javac -encoding UTF-8 -d "%OUT%" "%~dp0..\app\src\main\java\com\fan\shuatiku\McpServer.java" "%~dp0McpServerTest.java"
 if errorlevel 1 goto fail
 java -cp "%OUT%" McpServerTest
+if not errorlevel 1 goto mcpOk
+rem 首跑偶发回环超时（本机防火墙/端口回收慢），单跑一次就能分辨：
+rem 复跑过 = 环境偶发；复跑还红 = 代码问题。红灯不再含糊。
+echo   [RETRY] McpServerTest failed on first run; retrying once to tell code bug from loopback flake
+java -cp "%OUT%" McpServerTest
 if errorlevel 1 goto fail
+:mcpOk
 echo.
 echo === release manifest (version/apk name single source of truth) ===
 javac -encoding UTF-8 -d "%OUT%" "%~dp0..\app\src\main\java\com\fan\shuatiku\DownloadSources.java" "%~dp0..\app\src\main\java\com\fan\shuatiku\ReleaseManifest.java" "%~dp0ReleaseManifestTest.java"

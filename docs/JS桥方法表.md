@@ -4,7 +4,7 @@
 
 这张表是 **P0 的导出面**：把现在暴露出去的东西一次列清楚，标明每个方法的入参形状与信任级别，供 P2 设计 AgentLoop 的工具注册时对照，也供后续安全收口时判断「哪些口子必须先收紧」。
 
-- 生成依据：`app/src/main/java/com/fan/shuatiku/MainActivity.java` 里全部 `@JavascriptInterface` 注解方法（当前 **27 个**）。
+- 生成依据：`app/src/main/java/com/fan/shuatiku/MainActivity.java` 里全部 `@JavascriptInterface` 注解方法（当前 **31 个**）。
 - P0 已加闸的方法在「P0 校验」一列写明；标 `—` 的表示本次未改动（见文末「P0 没做什么」）。
 - 校验规则集中在 `BridgeGuard.java`（纯逻辑、零 Android 依赖），回归用例在 `tools/BridgeTest.java`，由 `tools/check.cmd` 的 `js bridge guard` 段执行。
 
@@ -51,30 +51,40 @@
 | 16 | `dsLogout()` | — | `void` | L2 | — | 清登录态 |
 | 17 | `dsCancel(id)` | `id` | `void` | L2 | **id 形状** | 掐断还在跑的请求；先 `chatEmit.drop(id)` 再 `cancel`，避免残留半句 |
 
+### 方案库（P1）
+
+| # | 方法 | 入参 | 返回 | 级别 | P0 校验 | 说明 |
+| --- | --- | --- | --- | --- | --- | --- |
+| 18 | `planSnapshot()` | — | `String`(JSON) | L0 | — | 读全部方案：`{rev, plans:[...]}`；`plans` 只带派生字段与当天排期，不带整份 `days` |
+| 19 | `planCreate(goal, days, title, daysJson, clientRev)` | `goal`、`days`、`title`、`daysJson`、`clientRev` | `String`(JSON) | L1 | — | 新建方案，回 `{rev, plan}` 或 `{error}`；`daysJson` 为空时用内置模板拆解 |
+| 20 | `planUpdate(id, action, argsJson, clientRev)` | `id`、`action`、`argsJson`、`clientRev` | `String`(JSON) | L1 | — | 改方案；`action` 只认 `PlanStore.ACTIONS` 那九个，其余抛错 |
+| 21 | `planDelete(id, clientRev)` | `id`、`clientRev` | `String`(JSON) | L1 | — | 删方案 |
+
+四个方法都由 `PlanStore` 兜底：**rev 对不上就返回 `rev: -1` 且不落盘**，不抛异常也不回 `null`——页面侧拿到的一定是能 `JSON.parse` 的串，错误也包成 `{"error":"…"}`。方案库落在 `filesDir/plans/plans.json`，与 `banks/` 平级。
 ### MCP 服务
 
 | # | 方法 | 入参 | 返回 | 级别 | P0 校验 | 说明 |
 | --- | --- | --- | --- | --- | --- | --- |
-| 18 | `mcpReply(id, json)` | `id`、`json` | `void` | L2 | **id 形状 + 回包长度 + 未知 id 打日志** | 页面把工具执行结果交回 HTTP 线程；`id` 形如 `mcp3` |
+| 22 | `mcpReply(id, json)` | `id`、`json` | `void` | L2 | **id 形状 + 回包长度 + 未知 id 打日志** | 页面把工具执行结果交回 HTTP 线程；`id` 形如 `mcp3` |
 
 ### 文件与题库
 
 | # | 方法 | 入参 | 返回 | 级别 | P0 校验 | 说明 |
 | --- | --- | --- | --- | --- | --- | --- |
-| 19 | `pickFile()` | — | `void`（回调带结果） | L2 | — | 拉起系统文件选择器（导入题库） |
-| 20 | `pickChatFile()` | — | `void` | L2 | — | 拉起文件选择器（大肥鱼附件） |
-| 21 | `loadBanks()` | — | `String`(JSON 数组) | L0 | — | 启动时一次性读回全部已导入题库 |
-| 22 | `saveBank(id, json)` | `id`、`json` | `boolean` | L1 | — | 写题库文件；落盘前经 `BankStore.save` |
-| 23 | `deleteBank(id)` | `id` | `boolean` | L1 | — | 删题库文件；`BankStore.safe(id)` 兜底路径 |
-| 24 | `importSample()` | — | `String` | L0 | — | 读内置示例题库原文 |
-| 25 | `saveImportSample()` | — | `String` | L1 | — | 把示例题库写到外部下载目录（Q+ 走 MediaStore） |
+| 23 | `pickFile()` | — | `void`（回调带结果） | L2 | — | 拉起系统文件选择器（导入题库） |
+| 24 | `pickChatFile()` | — | `void` | L2 | — | 拉起文件选择器（大肥鱼附件） |
+| 25 | `loadBanks()` | — | `String`(JSON 数组) | L0 | — | 启动时一次性读回全部已导入题库 |
+| 26 | `saveBank(id, json)` | `id`、`json` | `boolean` | L1 | — | 写题库文件；落盘前经 `BankStore.save` |
+| 27 | `deleteBank(id)` | `id` | `boolean` | L1 | — | 删题库文件；`BankStore.safe(id)` 兜底路径 |
+| 28 | `importSample()` | — | `String` | L0 | — | 读内置示例题库原文 |
+| 29 | `saveImportSample()` | — | `String` | L1 | — | 把示例题库写到外部下载目录（Q+ 走 MediaStore） |
 
 ### 界面与剪贴板
 
 | # | 方法 | 入参 | 返回 | 级别 | P0 校验 | 说明 |
 | --- | --- | --- | --- | --- | --- | --- |
-| 26 | `copyText(text)` | `text` | `boolean` | L1 | — | 写系统剪贴板（设置页复制地址/口令） |
-| 27 | `ouiAction(action, payloadJson)` | `action`、`payloadJson` | `void` | L1 | — | OpenUI 卡片按钮点击；P0 只打一行 `GImeOui` 日志留痕，动作路由留到 P1 |
+| 30 | `copyText(text)` | `text` | `boolean` | L1 | — | 写系统剪贴板（设置页复制地址/口令） |
+| 31 | `ouiAction(action, payloadJson)` | `action`、`payloadJson` | `void` | L1 | — | OpenUI 卡片按钮点击；P0 只打一行 `GImeOui` 日志留痕，动作路由留到 P1 |
 
 ## P0 加的闸门（`BridgeGuard`）
 

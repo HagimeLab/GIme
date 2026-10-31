@@ -3347,6 +3347,33 @@ section("[29k] 答题卡：题号按题型归纳");
   Object.keys(W.byId).forEach((k) => { if (k.indexOf("gt-") === 0) delete W.byId[k]; });
 }
 
+section("[32] 方案库：纯逻辑、原子落盘、rev 乐观锁");
+
+/* 方案库是 P1 的地基，页面、MCP 工具、提醒都读同一份 plans.json。
+   行为穷举在 tools/PlanStoreTest.java（由 check.cmd 单独跑），这里只钉三条
+   结构性约束——它们一破，单测再怎么绿也没意义：
+   ① 不依赖 Android（否则桌面编不过，整套单测就废了）；
+   ② 落盘必须走 tmp/bak 原子替换（直接覆盖写会在断电时留下半截 JSON）；
+   ③ rev 对不上要返回 -1 而不是硬写。 */
+const planStoreSrc = fs.readFileSync(path.join(ROOT, "app/src/main/java/com/fan/shuatiku/agent/PlanStore.java"), "utf8");
+ok("PlanStore 存在且不依赖 Android",
+   planStoreSrc.indexOf("import android") < 0 && /public final class PlanStore/.test(planStoreSrc));
+ok("rev 冲突用常量 -1 表达，不硬写",
+   /public static final int REV_CONFLICT = -1;/.test(planStoreSrc) &&
+   /if \(clientRev != rev\) return new Out\(REV_CONFLICT, null\);/.test(planStoreSrc));
+ok("落盘先写 .tmp 再替换，旧文件挪 .bak 而不是先删",
+   /new File\(dir, FILE \+ "\.tmp"\)/.test(planStoreSrc) &&
+   /file\.renameTo\(bak\)/.test(planStoreSrc) &&
+   /tmp\.renameTo\(file\)/.test(planStoreSrc) &&
+   /os\.getFD\(\)\.sync\(\)/.test(planStoreSrc));
+ok("启动时按落盘现场恢复（.bak 能救回、.tmp 一律清）",
+   /parse\(bak\)/.test(planStoreSrc) && /bak\.renameTo\(file\)/.test(planStoreSrc) &&
+   /tmp\.exists\(\)\) tmp\.delete\(\)/.test(planStoreSrc));
+ok("update 的 action 枚举只有这一份，别处不许另立",
+   /public static final String\[\] ACTIONS = \{[\s\S]{0,220}"set_days"/.test(planStoreSrc) &&
+   /"未知 action：" \+ act/.test(planStoreSrc));
+ok("today 只在真有当天排期时才出现",
+   /JSONObject td = dayOf\(p, today\);[\s\S]{0,80}if \(td != null\) o\.put\("today"/.test(planStoreSrc));
 /* ---------- 结果 ---------- */
 console.log("\n" + "=".repeat(46));
 if (fails.length) {
