@@ -118,6 +118,13 @@ if errorlevel 1 goto fail
 java "-Dfile.encoding=UTF-8" -cp "%OUT%;%JSON_JAR%" com.fan.shuatiku.agent.PlanStoreTest
 if errorlevel 1 goto fail
 echo.
+echo === tool registry (10 schemas / fixed order / annotations) ===
+rem MCP tools/list 与 AgentLoop 的 tools 参数都读这一份；这里钉一红，两边都不会漂。
+javac -encoding UTF-8 -cp "%JSON_JAR%" -d "%OUT%" "%~dp0..\app\src\main\java\com\fan\shuatiku\agent\PlanStore.java" "%~dp0..\app\src\main\java\com\fan\shuatiku\agent\ToolRegistry.java" "%~dp0ToolRegistryTest.java"
+if errorlevel 1 goto fail
+java "-Dfile.encoding=UTF-8" -cp "%OUT%;%JSON_JAR%" ToolRegistryTest
+if errorlevel 1 goto fail
+echo.
 echo === mcp server (loopback / token / 202) ===
 javac -encoding UTF-8 -d "%OUT%" "%~dp0..\app\src\main\java\com\fan\shuatiku\McpServer.java" "%~dp0McpServerTest.java"
 if errorlevel 1 goto fail

@@ -1435,48 +1435,22 @@ function renameBank(sid, name) {
    导入沿用 parseBankText，题库落盘走 Android.saveBank，改解析复用同一份题库对象。
    这样 agent 看到的题和 App 里刷的是同一份，不会出现两套解析口径。 */
 var MCP_PROTO = "2025-03-26";
-var MCP_TOOLS = [
-  { name: "list_banks",
-    description: "列出本机当前题库：id、显示名、题量。",
-    inputSchema: { type: "object", properties: {}, additionalProperties: false } },
-  { name: "import_bank",
-    description: "把一段题库文本按 App 的导入格式解析成新题库并保存。text 必填；dryRun=true 只解析不保存。",
-    inputSchema: { type: "object", properties: {
-      name: { type: "string", description: "题库显示名，缺省「MCP 导入」" },
-      text: { type: "string", description: "题库正文，格式与 App 内导入一致" },
-      dryRun: { type: "boolean", description: "只返回识别统计与前三题预览，不保存" }
-    }, required: ["text"], additionalProperties: false } },
-  { name: "list_questions",
-    description: "提取一个题库里的题目与选项。ids 指定单题或多题；不给 ids 时按 offset/limit 分页。",
-    inputSchema: { type: "object", properties: {
-      bank: { type: "string", description: "题库 id 或显示名" },
-      ids: { type: "array", items: { type: "string" }, description: "题目 id 列表" },
-      offset: { type: "integer", minimum: 0 },
-      limit: { type: "integer", minimum: 1, maximum: 100 },
-      type: { type: "string", description: "single / multi / judge / fill / short" },
-      query: { type: "string", description: "题干包含的文字" }
-    }, required: ["bank"], additionalProperties: false } },
-  { name: "write_explanations",
-    description: "修改或撰写题目解析（explain）与主观题参考答案（ref）。items 可只给一条；mode=replace 覆盖，append 追加。只在用户明确要求改解析/参考答案时调用。",
-    inputSchema: { type: "object", properties: {
-      bank: { type: "string", description: "题库 id 或显示名" },
-      items: { type: "array", items: { type: "object", properties: {
-        id: { type: "string" }, explain: { type: "string" }, ref: { type: "string" }
-      }, required: ["id"], additionalProperties: false } },
-      mode: { type: "string", enum: ["replace", "append"] }
-    }, required: ["bank", "items"], additionalProperties: false } },
-  { name: "write_answers",
-    description: "修改客观题（单选题/多选题/判断题）的正确答案。items 每项给题目 id 和 answer 选项字母数组。" +
-      "只在用户明确要求改正确答案时调用；用户没要求就不要改动答案。主观题请用 write_explanations 改参考答案。",
-    inputSchema: { type: "object", properties: {
-      bank: { type: "string", description: "题库 id 或显示名" },
-      items: { type: "array", items: { type: "object", properties: {
-        id: { type: "string" },
-        answer: { type: "array", items: { type: "string" }, description: "如 [\"A\"] 或 [\"A\",\"C\"]" }
-      }, required: ["id", "answer"], additionalProperties: false } }
-    }, required: ["bank", "items"], additionalProperties: false } }
-];
-function mcpBankArg(v) {
+/* 10 个工具的 schema 在 Java ToolRegistry（唯一真源），页面只做缓存与读取。
+   执行仍留在下面这些函数里：题库解析、落盘、渲染复用同一套逻辑。 */
+var MCP_TOOL_CACHE = null;
+function mcpRegistryTools() {
+  if (MCP_TOOL_CACHE) return MCP_TOOL_CACHE;
+  try {
+    if (window.Android && Android.toolSchemas) {
+      var o = JSON.parse(Android.toolSchemas());
+      if (o && Array.isArray(o.tools) && o.tools.length) {
+        MCP_TOOL_CACHE = o.tools;
+        return MCP_TOOL_CACHE;
+      }
+    }
+  } catch (e) { }
+  return [];
+}function mcpBankArg(v) {
   var want = String(v == null ? "" : v).trim();
   if (!want) throw new Error("bank 不能为空");
   var i;
@@ -1671,12 +1645,7 @@ function mcpDispatch(req) {
     });
   }
   if (m === "ping") return mcpOk(id, {});
-  if (m === "tools/list") {
-    /* 方案工具的 schema 在 app-plan.js：action 枚举直接引用 PLAN_ACTIONS，
-       与 PlanStore.ACTIONS 是同一份，不在这里再抄一遍。 */
-    var planTools = typeof mcpPlanTools === "function" ? mcpPlanTools() : [];
-    return mcpOk(id, { tools: MCP_TOOLS.concat(planTools) });
-  }
+  if (m === "tools/list") return mcpOk(id, { tools: mcpRegistryTools() });
   if (m === "tools/call") {
     var p = req.params || {}, args = p.arguments || {}, data;
     try {

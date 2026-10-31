@@ -1048,6 +1048,26 @@ delete W.Android;
    原生层只做 HTTP 与口令；这里直接调页面里的 mcpDispatch，
    把 initialize / tools/list / 四个工具 / 错误路径都走真实现。 */
 section("[14] v1.0.6：MCP 工具层");
+/* T1：schema 的真源在 Java ToolRegistry；桌面没有 Android 桥，
+   用一份 10 工具的最小 fixture 喂给页面缓存，验的是分发与顺序，不是 schema 内容。 */
+const registryFixture = { tools: [
+  "list_banks", "import_bank", "list_questions", "write_explanations", "write_answers",
+  "create_plan", "update_plan", "delete_plan", "list_plans", "notify_phone"
+].map((name) => ({
+  name,
+  description: name === "write_answers" || name === "write_explanations"
+    ? "只在用户明确要求时调用" : "测试工具",
+  inputSchema: name === "update_plan"
+    ? { type: "object", properties: { planId: { type: "string" },
+        action: { type: "string", enum: W.PLAN_ACTIONS } }, required: ["planId", "action"],
+        additionalProperties: false }
+    : { type: "object", properties: {}, additionalProperties: false }
+})) };
+W.Android = { toolSchemas: () => JSON.stringify(registryFixture) };
+W.mcpRegistryTools();   /* 缓存住：后面测试把 W.Android 换成 saveBank 的桩也不影响 */
+ok("schema 字面量已撤：页面从 toolSchemas() 取",
+   html.indexOf("var MCP_TOOLS") < 0 && html.indexOf("function mcpPlanTools") < 0 &&
+   html.indexOf("Android.toolSchemas") >= 0);
 const mcp = (id, method, params) => W.mcpDispatch({ jsonrpc: "2.0", id, method, params });
 const mcpInit = mcp(1, "initialize", { protocolVersion: "2025-03-26" });
 ok("initialize 声明 tools 能力", !!(mcpInit.result && mcpInit.result.capabilities
@@ -1060,6 +1080,9 @@ const toolNames = mcpList.result.tools.map((t) => t.name);
 ok("题库五个工具仍在（与方案工具合计 10 个）",
    ["list_banks", "import_bank", "list_questions", "write_explanations", "write_answers"]
      .every((n) => toolNames.indexOf(n) >= 0) && toolNames.length === 10,
+   toolNames.join(","));
+ok("tools/list 顺序 = Registry 固定顺序",
+   toolNames.join(",") === registryFixture.tools.map((t) => t.name).join(","),
    toolNames.join(","));
 ok("每个工具都有 object 类 inputSchema",
    mcpList.result.tools.every((t) => t.inputSchema && t.inputSchema.type === "object"));

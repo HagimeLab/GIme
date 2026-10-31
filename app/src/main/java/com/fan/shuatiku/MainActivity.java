@@ -918,6 +918,12 @@ public class MainActivity extends Activity {
             }
         }
 
+        /** 10 个工具的 schema（Java ToolRegistry 唯一真源）；MCP 与 AgentLoop 共用。 */
+        @JavascriptInterface
+        public String toolSchemas() {
+            return com.fan.shuatiku.agent.ToolRegistry.schemasJson();
+        }
+
         /** MCP notify_phone / 建方案后的即时通知。返回 false 表示没发出去。 */
         @JavascriptInterface
         public boolean notifyPhone(String title, String body) {
