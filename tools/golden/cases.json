@@ -1,0 +1,18 @@
+[
+  { "id": "g01", "kind": "read", "prompt": "列出我有哪些题库", "expect": ["list_banks"] },
+  { "id": "g02", "kind": "write", "approval": false, "prompt": "把这段文本导入成一个新题库", "expect": ["import_bank"] },
+  { "id": "g03", "kind": "read", "prompt": "看看这个题库前 5 道题", "expect": ["list_questions"] },
+  { "id": "g04", "kind": "write", "approval": true, "prompt": "把第 2 题的解析改成：先列公式再代入", "expect": ["write_explanations"] },
+  { "id": "g05", "kind": "write", "approval": true, "prompt": "把第 1 题的答案改成 B", "expect": ["write_answers"] },
+  { "id": "g06", "kind": "write", "approval": false, "prompt": "帮我建一个 7 天复习计划", "expect": ["create_plan"] },
+  { "id": "g07", "kind": "write", "approval": false, "prompt": "把当前方案暂停一下", "expect": ["update_plan"] },
+  { "id": "g08", "kind": "write", "approval": true, "prompt": "删掉那个没用的方案", "expect": ["delete_plan"] },
+  { "id": "g09", "kind": "read", "prompt": "我有哪些进行中的方案", "expect": ["list_plans"] },
+  { "id": "g10", "kind": "write", "approval": false, "prompt": "晚上九点提醒我刷题", "expect": ["notify_phone"] },
+  { "id": "g11", "kind": "none", "prompt": "今天天气怎么样", "expect": [] },
+  { "id": "g12", "kind": "none", "prompt": "讲个笑话", "expect": [] },
+  { "id": "g13", "kind": "read", "prompt": "解释一下我现在这道题", "expect": ["get_current_question"] },
+  { "id": "g14", "kind": "read", "prompt": "先别改任何东西，告诉我有哪些方案", "expect": ["list_plans"] },
+  { "id": "g15", "kind": "multi", "approval": false, "prompt": "把这批错题编进未来 7 天计划每天 20 题并设提醒",
+    "expect": ["list_questions", "create_plan", "update_plan", "notify_phone"] }
+]

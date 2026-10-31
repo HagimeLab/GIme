@@ -11,6 +11,10 @@ echo === page logic / bank structure ===
 node "%~dp0check.mjs"
 if errorlevel 1 goto fail
 echo.
+echo === golden cases + dialect canary ===
+node "%~dp0golden-check.mjs"
+if errorlevel 1 goto fail
+echo.
 echo === version compare ===
 if not exist "%OUT%" mkdir "%OUT%"
 javac -encoding UTF-8 -d "%OUT%" "%~dp0..\app\src\main\java\com\fan\shuatiku\Ver.java" "%~dp0VerTest.java"

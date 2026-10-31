@@ -1,0 +1,2 @@
+先建一个方案。
+<tool_call>{"name":"list_questions","arguments":{"bank":"b1","limit":3}}</tool_call>
