@@ -2595,6 +2595,14 @@ ok("面板关着时点历史卡片也能把对话打开", (() => {
       && src.indexOf('contains("on")') >= 0
       && src.indexOf("openChatTab()") >= 0;
 })());
+ok("首页对话用悬浮层，答题页仍走底部上滑", (() => {
+  return /\.sheet\.chat\.float/.test(html)
+      && /ch\.classList\.add\("float"\)/.test(html)
+      && /ch\.classList\.remove\("float"\)/.test(html);
+})());
+ok("悬浮层打开后多段补滚到底", /function chatScrollBottomSoon/.test(html)
+   && /chatScrollBottomSoon\(\)/.test(html));
+ok("OpenUI 卡挂载后跟随到底", /root\.scrollTop = root\.scrollHeight/.test(html));
 ok("回传原生桥之后还要在页面里走一遍", (() => {
   /* 两条都不能少：桥是给原生打日志的，路由才是让对话继续的 */
   const src = String(W.chatOuiAction);

@@ -1029,7 +1029,10 @@ function chatOuiMount(root) {
           chatOuiPickSheet(title, options, current, done);
         }
       });
+      /* 卡片是挂载后才撑高的；用户原本在底部时跟着它走，别让最后一张卡被截掉半截 */
+      var near = root.scrollHeight - root.scrollTop - root.clientHeight < 160;
       if (card) slot.appendChild(card);
+      if (card && near) root.scrollTop = root.scrollHeight;
     } catch (e) { /* 画不出来就当没有这张卡：正文那段 Markdown 还在 */ }
   }
 }
@@ -1325,28 +1328,50 @@ function chatRender() {
   list.scrollTop = list.scrollHeight;
   syncAskDot();
 }
+/* 悬浮层的高度在打开动画里才定下来，单次 scrollTop 会滚在错误的布局上；
+   分几段补滚，最后一段等过渡结束。 */
+function chatScrollBottomSoon() {
+  /* 旧消息里的 OpenUI 卡是挂载后才撑高的，浏览器又会做滚动锚定；
+     打开后短时跟着内容继续贴底，用户一摸列表就停手。 */
+  var l = document.getElementById("chatList");
+  if (!l) return;
+  var stop = false;
+  function halt() { stop = true; }
+  function pin() { if (!stop) l.scrollTop = l.scrollHeight; }
+  l.addEventListener("touchstart", halt, { once: true, passive: true });
+  l.addEventListener("wheel", halt, { once: true, passive: true });
+  pin();
+  var ticks = 0, mo = null;
+  var timer = setInterval(function () {
+    pin();
+    if (++ticks > 20) {
+      clearInterval(timer);
+      if (mo) mo.disconnect();
+    }
+  }, 120);
+  if (window.MutationObserver) {
+    mo = new MutationObserver(pin);
+    mo.observe(l, { childList: true, subtree: true });
+  }
+}
 function openChat() {
   if (!S) { toast("先进一道题再问"); return; }
   chatUnread = false;
   var ch = document.getElementById("chat");
+  ch.classList.remove("float");   /* 答题页仍走底部上滑 */
   chatRender();
   openLayer(ch);
-  setTimeout(function () {
-    var l = document.getElementById("chatList");
-    if (l) l.scrollTop = l.scrollHeight;
-  }, 280);
+  chatScrollBottomSoon();
 }
 /* 底部导航中间那颗大肥鱼：不要求「先进一道题」，随时能开。
    没有当前题目时上下文是 null，大肥鱼仍然能聊（只是读不到题目）。 */
 function openChatTab() {
   chatUnread = false;
   var ch = document.getElementById("chat");
+  ch.classList.add("float");      /* 首页入口：悬浮在首页上，不再从底边滑上来 */
   chatRender();
   openLayer(ch);
-  setTimeout(function () {
-    var l = document.getElementById("chatList");
-    if (l) l.scrollTop = l.scrollHeight;
-  }, 280);
+  chatScrollBottomSoon();
 }
 /* ================= 大肥鱼的附件 =================
    文件在原生层用 TextExtract 抽成文本（PDF / .docx / .md 与导入同一条路径），这里只留正文。

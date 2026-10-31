@@ -380,6 +380,23 @@ button.rec:active { opacity: .62; }
 /* 大肥鱼对话：从底部上滑，消息区自己滚，输入条常驻 */
 .sheet.chat { height: 74vh; max-height: 74vh; overflow: hidden; display: flex; flex-direction: column;
               padding: 0 18px calc(var(--sb) + 10px); z-index: 990; }
+/* 首页入口：对话悬浮在首页之上（不贴底、不滑上来）；答题页仍用上面的底部上滑 */
+.sheet.chat.float {
+  top: 84px; bottom: calc(var(--sb) + 92px);
+  left: 14px; right: 14px;
+  height: auto; max-height: none;
+  padding-bottom: 10px;
+  border-radius: var(--r-card);
+  box-shadow: var(--sh);
+  visibility: hidden; pointer-events: none;
+  opacity: 0; transform: scale(.96);
+  transition: transform .22s var(--ease), opacity .18s ease, visibility 0s .22s;
+}
+.sheet.chat.float.on {
+  visibility: visible; pointer-events: auto;
+  opacity: 1; transform: scale(1);
+  transition: transform .22s var(--ease), opacity .18s ease;
+}
 .chat-head { display: flex; align-items: center; gap: 10px; padding: 4px 0 10px; }
 .chat-head .ava { width: 34px; height: 34px; flex-basis: 34px;
                   background: transparent; box-shadow: none; }
