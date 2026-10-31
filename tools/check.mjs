@@ -10,6 +10,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import vm from "node:vm";
+import crypto from "node:crypto";
 import { fileURLToPath } from "node:url";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -1626,6 +1627,46 @@ ok("等太久给的是「可以停止」提示",
    W.document.getElementById("chatHint").textContent.indexOf("停止") >= 0,
    W.document.getElementById("chatHint").textContent);
 W.chatBusy = false;
+
+/* F2 降级链路：登录通道「连不上」时，错误条尾带一条「可换 API Key 通道」的出路；
+   Key 模式报同样错不提示（本来就是 Key），「已停止」也不提示（不是网络问题） */
+section("[18b] 登录通道降级提示");
+const convsSnap = JSON.parse(JSON.stringify(W.chatConvs || []));
+const curIdSnap = W.chatCurId;
+W.set.agent = { base: "builtin://deepseek", model: "deepseek-web", key: "", mode: "login" };
+W.Android.chatApi = () => {};      // 原生侧收下请求但不回包，由测试手动回
+W.chatMsgs = [];
+W.chatBusy = true;
+const pNet = W.chatSendText("降级测试", true);
+await new Promise((r) => setTimeout(r, 30));
+W.onChatApi(W.chatLastId, 0, "Cleartext HTTP traffic to 127.0.0.1 not permitted");
+await pNet;
+const errNet = W.chatMsgs.find((m) => m.role === "error") || {};
+ok("登录通道连不上时提示可换 API Key 通道",
+   String(errNet.text || "").indexOf("API Key 通道") >= 0, String(errNet.text || ""));
+ok("降级提示只挂在网络类失败后", String(errNet.text || "").indexOf("连不上") >= 0);
+
+W.chatMsgs = [];
+W.chatBusy = true;
+const pStop = W.chatSendText("停止测试", true);
+await new Promise((r) => setTimeout(r, 30));
+W.chatStop();                       // 走真实停止路径：reject「已停止」
+await pStop;
+const errStop = W.chatMsgs.find((m) => m.role === "error") || {};
+ok("已停止时不诱导切通道", String(errStop.text || "").indexOf("API Key 通道") < 0,
+   String(errStop.text || ""));
+
+W.set.agent = { base: "https://api.example.com/v1", model: "m1", key: "sk-test", mode: "key" };
+W.chatMsgs = [];
+W.chatBusy = true;
+const pKey = W.chatSendText("key模式测试", true);
+await new Promise((r) => setTimeout(r, 30));
+W.onChatApi(W.chatLastId, 0, "");
+await pKey;
+const errKey = W.chatMsgs.find((m) => m.role === "error") || {};
+ok("Key 模式连不上时不提示切换（本来就在 Key）",
+   String(errKey.text || "").indexOf("API Key 通道") < 0, String(errKey.text || ""));
+W.chatConvs = convsSnap; W.chatCurId = curIdSnap; W.chatBusy = false; W.chatMsgs = [];
 
 /* ---------- 19. 大肥鱼接入方式：手机号 / API Key 二选一 ---------- */
 section("[19] 接入方式二选一");
@@ -3981,6 +4022,39 @@ ok("新版 list 工具结果带 ttlMs/cacheScope",
 W.BANK.subjects = W.BANK.subjects.filter((x) => x.id !== "mrtr_a" && x.id !== "mrtr_b");
 W.BANK.questions = W.BANK.questions.filter((q) => q.subject !== "mrtr_a" && q.subject !== "mrtr_b");
 delete W.byId["mrtr_a-0"]; delete W.byId["mrtr_b-0"];
+
+/* ---------- 19b. OpenUI bundle 指纹一致性（不钉死哈希，只查「重打后没更新依赖清单」） ---------- */
+/* openui-core.js 是可重打的产物，哈希会随合法重打变化，所以这里不把它当不可变常量。
+   判据是「依赖清单里登记的指纹 == 当前文件的实际指纹」：
+   不一致只说明有人重打了 bundle 却没同步 develop/依赖清单.md，此时必须更新清单。 */
+section("[19b] OpenUI bundle 指纹一致性");
+{
+  const depList = path.join(ROOT, "develop/依赖清单.md");
+  const coreFile = path.join(ASSETS, "ui/openui-core.js");
+  let actual = "";
+  try {
+    actual = crypto.createHash("sha256").update(fs.readFileSync(coreFile)).digest("hex");
+  } catch (e) {
+    actual = "";
+  }
+  let recorded = "";
+  try {
+    const text = fs.readFileSync(depList, "utf8");
+    const line = text.split(/\r?\n/).find((l) => l.indexOf("openui-core.js") >= 0 &&
+        /[0-9a-f]{64}/.test(l));
+    if (line) {
+      const m = line.match(/([0-9a-f]{64})/);
+      if (m) recorded = m[1];
+    }
+  } catch (e) { recorded = ""; }
+  ok("依赖清单里登记了 openui-core.js 的指纹", recorded.length === 64,
+     "recorded=" + recorded);
+  ok("openui-core.js 实际指纹与依赖清单一致（重打后须更新依赖清单）",
+     recorded.length === 64 && recorded === actual,
+     "recorded=" + recorded + " actual=" + actual);
+  const lock = path.join(ROOT, "tools/openui-bundle/package-lock.json");
+  ok("openui-bundle 有锁文件（版本可复算）", fs.existsSync(lock), lock);
+}
 
 /* ---------- 结果 ---------- */
 console.log("\n" + "=".repeat(46));

@@ -1645,6 +1645,15 @@ function chatAsk(text) {
   }
   return chatSendText(t);
 }
+/* F2 降级链路：手机号登录通道网络失败时，给出还能走 API Key 的出路。
+   只在「连不上」这类网络失败时提示——4xx 是配置/额度问题（面板自己会说清），
+   「已停止」是用户主动收手，都不该往切换通道上引。 */
+function chatFallbackHint(em) {
+  if (agentMode() !== "login") return "";
+  if (String(em || "").indexOf("连不上") < 0) return "";
+  return "。如果手机号通道一直不通，可以在「我的 → 大肥鱼」里换成 API Key 通道。";
+}
+
 async function chatSendText(text, silent) {
   var cfg = agentCfg();
   if (!cfg) { toast(agentMode() === "login" ? "先登录 DeepSeek" : "先填 API Key"); openAgentCfg(); return; }
@@ -1698,7 +1707,7 @@ async function chatSendText(text, silent) {
     var em = e && e.message ? e.message : String(e);
     /* 重试提示是临时灰字，报错时留着只会让对话更乱；一并清掉。 */
     chatMsgs = chatMsgs.filter(function (m) { return m.role !== "note"; });
-    chatPush({ role: "error", text: em === "已停止" ? "已停止这次回答。" : "大肥鱼没答上来：" + em });
+    chatPush({ role: "error", text: em === "已停止" ? "已停止这次回答。" : "大肥鱼没答上来：" + em + chatFallbackHint(em) });
     if (chatPending) chatPending.parsing = false;   /* 停了也别把已收到的困在卡里 */
   }
   chatBusy = false;
@@ -2022,18 +2031,37 @@ async function chatRun(cfg, attachMeta) {
   var stopWhy = budgetStop
     ? (budgetStop === "BUDGET_TOKENS" ? "token 预算用完" : "轮次预算用完")
     : ("工具步骤用完（" + rounds + " 步）");
+  var stopUncounted = !!budgetStop;   /* 触顶收口的那次全量请求不经过 tick，护栏少算一轮 */
   messages.push({ role: "system", content: "Agent 已停止（" + stopWhy + "）。只用上面已经拿到的信息直接回答用户，" +
     "还差什么就直说，不要再调用工具。" });
-  chatPush({ role: "step", hidden: true, text: "Agent 停止：" + stopWhy + "，先按已经拿到的信息作答" }, true);
+  /* 这一次收口请求是全量上下文重发且不经过 tick（tick 只在主循环里调）：
+     护栏统计会比实付少一轮 prompt。不改计数（触顶后再 tick 会二次触发、行为变了），
+     在诊断摘要里如实标 uncounted，让数字不骗人。 */
+  var stopNote = budgetStop
+    ? "（收口请求为全量上下文重发，未计入护栏统计 uncounted）"
+    : "";
+  chatPush({ role: "step", hidden: true, text: "Agent 停止：" + stopWhy + "，先按已经拿到的信息作答" + stopNote }, true);
   chatWorkTitle("正在整理答案（" + stopWhy + "）");
   var fin = liveBubble();
   var d2;
   try {
+    /* 收口这次全量重发不走 tick（二次触发会改变护栏行为），但要把真实花费
+       报给 RunTrace.uncounted，诊断包才不会系统性少算一整轮 prompt。 */
+    var uncPt = Math.round(JSON.stringify(messages).length / 2);
+    agentCall("uncounted", { promptTokens: uncPt });
     d2 = await chatRequest(cfg, { model: cfg.model, messages: messages, temperature: 0.3,
                                   max_tokens: fileRun ? CHAT_FILE_MAX_TOKENS : CHAT_MAX_TOKENS }, fin.onDelta);
   } catch (e) { chatDrop(fin); throw e; }
   var m2 = d2 && d2.choices && d2.choices[0] && d2.choices[0].message;
   var a2 = String((m2 && m2.content) || "").trim();
+  /* g08 次缺陷：收口那轮没带工具定义，模型仍可能把调用写进正文。
+     这里必须再剥一遍——半截/坏块只剥标记留正文，完整调用重试一次也来不及了，
+     宁可把调用块整段拿掉也不把 <tool_call> 亮给用户。 */
+  if (a2.indexOf(TOOL_BLOCK_OPEN) >= 0) {
+    var sp2 = splitToolBlocks(a2);
+    a2 = (sp2.calls.length ? sp2.text : stripToolMarkup(a2)).trim();
+  }
+  a2 = splitDsmlBlocks(a2).text.trim();
   if (a2) fin.text = a2;
   if (!fin.text) {
     chatDrop(fin);
@@ -2043,6 +2071,7 @@ async function chatRun(cfg, attachMeta) {
     return;
   }
   if (dig.length) fin.tools = capDigest(dig);
+  if (stopUncounted) fin.uncountedFinal = true;   /* 诊断包可见：护栏统计未含这次收口请求 */
   if (!fin.reasoning) fin.reasoning = String((m2 && m2.reasoning_content) || "");
   chatSave();
   pokeLive(fin, function () { fin.live = false; chatRender(); });
