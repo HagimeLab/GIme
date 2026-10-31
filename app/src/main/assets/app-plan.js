@@ -642,6 +642,30 @@ function mcpPlanTool(name, a) {
   throw new Error("未知工具：" + name);
 }
 
+/* S5：把「进行中方案 top1 + 今日完成度」作为一段独立 system 消息注入。
+   固定段 chatSysBase() 不掺任何方案内容，前缀缓存照旧命中。 */
+function chatPlanMsg() {
+  planLoad();
+  var active = [], i;
+  for (i = 0; i < PLAN.list.length; i++) if (PLAN.list[i].enabled) active.push(PLAN.list[i]);
+  if (!active.length) return "";
+  var top = null, td = 0, tt = 0;
+  for (i = 0; i < active.length; i++) {
+    var p = active[i], t = Array.isArray(p.today) ? p.today : [], k, un = 0;
+    for (k = 0; k < t.length; k++) {
+      tt++;
+      if (t[k].done) td++; else un++;
+    }
+    if (un > 0 && !top) top = active[i];
+  }
+  if (!top) top = active[0];
+  var s = "进行中方案（仅作背景，不要主动改动）：最该推进的是「" + top.title + "」，整体 " +
+          (top.pct || 0) + "%（" + (top.done || 0) + "/" + (top.total || 0) + " 项）";
+  if (tt) s += "；今天所有方案共 " + td + "/" + tt + " 项完成";
+  if (active.length > 1) s += "；另有 " + (active.length - 1) + " 个进行中方案";
+  return s + "。";
+}
+
 function planAdjustSheet(id) {
   var p = planFull(id);
   if (!p) return;

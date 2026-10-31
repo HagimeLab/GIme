@@ -1602,6 +1602,9 @@ async function chatRun(cfg, attachMeta) {
      用户一换题整段前缀就分叉，固定那部分永远命不中。 */
   var messages = [{ role: "system", content: chatSysBase() }];
   if (ctx) messages.push({ role: "system", content: chatCtxMsg(ctx) });
+  /* 方案进度是第二段可变上下文：固定段仍逐字不变，前缀缓存不破。 */
+  var planMsg = typeof chatPlanMsg === "function" ? chatPlanMsg() : "";
+  if (planMsg) messages.push({ role: "system", content: planMsg });
   /* 附件元信息排在题目之后：它随附件走，不参与那条稳定的前缀。 */
   if (attachMeta) messages.push({ role: "system", content: attachMeta });
   /* 历史只带最近 8 条：API Key 模式每轮都要重发，12 条纯属多花钱；

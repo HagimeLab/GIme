@@ -2034,7 +2034,10 @@ ok("固定段两次调用逐字相同", W.chatSysBase() === W.chatSysBase());
 ok("题目段以标记开头", W.chatCtxMsg({ id: "x" }).indexOf("当前题目上下文（JSON）：") === 0);
 ok("聊天请求里题目单独一条 system 消息",
    /messages = \[\{ role: "system", content: chatSysBase\(\) \}\][\s\S]{0,120}?chatCtxMsg\(ctx\)/.test(html));
-
+ok("方案进度作为独立 system 消息追加，固定段不掺方案",
+   /var planMsg = typeof chatPlanMsg === "function" \? chatPlanMsg\(\) : "";/.test(html) &&
+   /messages\.push\(\{ role: "system", content: planMsg \}\)/.test(html) &&
+   W.chatSysBase().indexOf("方案") < 0);
 
 /* ③ 省 token：窗口、轮次、schema、输出、工具结果 */
 ok("历史窗口缩到 8 条", /chatMsgs\.slice\(-8\)/.test(html));
@@ -3578,7 +3581,9 @@ W.goTab("home");
 const heroHtml = W.document.getElementById("planHero").innerHTML;
 ok("Hero 显示今日待办与进行中方案", /开始今日/.test(heroHtml) && heroHtml.indexOf("错题冲刺") >= 0,
    heroHtml.slice(0, 200));
-
+const planMsg = W.chatPlanMsg();
+ok("S5：注入段带进行中方案 top1 与今日完成度",
+   planMsg.indexOf("错题冲刺") >= 0 && planMsg.indexOf("今天") >= 0, planMsg);
 
 W.openPlans();
 ok("方案库列出方案与状态", W.planView.mode === "list" &&
@@ -3733,6 +3738,7 @@ ok("notify_phone 空正文拒绝", emptyNotify.isError === true);
 const delPlan = W.mcpDispatch({ jsonrpc: "2.0", id: 208, method: "tools/call",
   params: { name: "delete_plan", arguments: { planId: mcpPid } } }).result.structuredContent;
 ok("delete_plan 删除且列表清空", fake.plans.length === 0 && delPlan.deleted.id === mcpPid);
+ok("S5：没有方案时不注入空上下文", W.chatPlanMsg() === "");
 
 delete W.Android;
 
