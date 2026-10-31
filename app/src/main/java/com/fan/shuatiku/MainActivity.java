@@ -46,6 +46,8 @@ public class MainActivity extends Activity {
     private static final int PICK = 4711;
     /** 大肥鱼的附件：同一个选择器、同一条抽取路径，只是结果交给对话而不是直接入库。 */
     private static final int PICK_CHAT = 4712;
+    /** 通知权限（Android 13+ 运行时申请）。 */
+    private static final int REQ_NOTIFY = 4713;
     /** 导入格式举例：assets 里那一份是唯一来源，页面看的和下载的都是它。 */
     private static final String SAMPLE_ASSET = "import-sample.md";
     private static final String SAMPLE_NAME = "GIme导入格式举例.md";
@@ -65,6 +67,8 @@ public class MainActivity extends Activity {
     private final ArrayDeque<PendingFile> pendingImports = new ArrayDeque<PendingFile>();
     private volatile boolean pageReady;
     private boolean importing;
+    /** 用户刚去系统里改过通知权限，回来时通知页面刷新一次状态。 */
+    private boolean remindCheckPending;
 
     private static final String PREFS = "ui";
     private static final String PREF_LIGHT = "light";
@@ -117,6 +121,10 @@ public class MainActivity extends Activity {
         File planDir = new File(getFilesDir(), "plans");
         if (!planDir.isDirectory()) planDir.mkdirs();
         planStore = new com.fan.shuatiku.agent.PlanStore(planDir);
+        /* 每次启动重挂一遍闹钟：用户可能在系统设置里清过、或者被 ROM 省电策略杀了，
+           这里补上比依赖「上次挂的那次还在」可靠。重复挂是幂等的。 */
+        com.fan.shuatiku.agent.Reminder.arm(this);
+
         web = new WebView(this);
         // 只在 debug 构建里开调试口。Release 开着它等于把整个 WebView 连同
         // localStorage 里的题库交出去——用 adb 连上就能读写。
@@ -552,6 +560,24 @@ public class MainActivity extends Activity {
     }
 
     @Override
+    protected void onResume() {
+        super.onResume();
+        if (remindCheckPending && pageReady) {
+            remindCheckPending = false;
+            js("window.onRemindPerm&&window.onRemindPerm();");
+        }
+    }
+
+    @Override
+    public void onRequestPermissionsResult(int req, String[] perms, int[] res) {
+        super.onRequestPermissionsResult(req, perms, res);
+        if (req == REQ_NOTIFY) {
+            remindCheckPending = false;
+            if (pageReady) js("window.onRemindPerm&&window.onRemindPerm();");
+        }
+    }
+
+    @Override
     protected void onDestroy() {
         synchronized (this) {
             if (mcp != null) { mcp.stop(); mcp = null; }
@@ -902,6 +928,92 @@ public class MainActivity extends Activity {
                 return o.toString();
             } catch (Throwable t) {
                 return "{\"rev\":-1,\"error\":" + quote(String.valueOf(t.getMessage())) + "}";
+            }
+        }
+
+        /* ---- 提醒的系统门槛 ----
+           提醒不是代码挂了就一定响：Android 13+ 要运行时通知权限，
+           国产 ROM 的省电策略还会把重复闹钟压掉。页面「我的」里给两个入口，
+           这里只负责读现状与把用户送到该去的地方。 */
+
+        /** {granted, battery, sdk}：通知是否放行、是否已豁免省电、系统版本。 */
+        @JavascriptInterface
+        public String planRemindState() {
+            boolean granted = true, battery = false;
+            try {
+                android.app.NotificationManager nm = (android.app.NotificationManager)
+                        getSystemService(NOTIFICATION_SERVICE);
+                granted = nm != null && nm.areNotificationsEnabled();
+                android.os.PowerManager pm = (android.os.PowerManager) getSystemService(POWER_SERVICE);
+                battery = pm != null && pm.isIgnoringBatteryOptimizations(getPackageName());
+            } catch (Throwable ignored) {
+            }
+            return "{\"granted\":" + granted + ",\"battery\":" + battery
+                    + ",\"sdk\":" + Build.VERSION.SDK_INT + "}";
+        }
+
+        /** 申请通知权限；系统里已经关掉（或拒绝过）就送去设置页。 */
+        @JavascriptInterface
+        public void planRemindAsk() {
+            remindCheckPending = true;
+            if (Build.VERSION.SDK_INT >= 33
+                    && checkSelfPermission("android.permission.POST_NOTIFICATIONS")
+                    != android.content.pm.PackageManager.PERMISSION_GRANTED) {
+                requestPermissions(new String[]{"android.permission.POST_NOTIFICATIONS"}, REQ_NOTIFY);
+                return;
+            }
+            try {
+                Intent i = new Intent(android.provider.Settings.ACTION_APP_NOTIFICATION_SETTINGS);
+                i.putExtra(android.provider.Settings.EXTRA_APP_PACKAGE, getPackageName());
+                startActivity(i);
+            } catch (Throwable t) {
+                try {
+                    startActivity(new Intent(android.provider.Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+                            android.net.Uri.parse("package:" + getPackageName())));
+                } catch (Throwable ignored) {
+                    remindCheckPending = false;
+                }
+            }
+        }
+
+        /**
+         * 仅 debug：在进程内投递一次提醒，用来验收「receiver → PlanStore → 通知」
+         * 这条链。闹钟本身是否挂上由 dumpsys alarm 另验——非导出的 receiver
+         * 收不到 adb 的广播，没有 root 又改不了系统时间，只能走这一口。
+         *
+         * <p>slot：1/2 投递早/晚提醒；0 模拟开机广播；-1 只取消闹钟（给测试做对照）。
+         */
+        @JavascriptInterface
+        public void planRemindTest(int slot) {
+            if (!BuildConfig.DEBUG) return;
+            com.fan.shuatiku.agent.ReminderReceiver r =
+                    new com.fan.shuatiku.agent.ReminderReceiver();
+            if (slot < 0) {
+                com.fan.shuatiku.agent.Reminder.disarm(MainActivity.this);
+                return;
+            }
+            Intent i = slot == 0
+                    ? new Intent(com.fan.shuatiku.agent.ReminderReceiver.ACTION_BOOT)
+                    : new Intent();
+            if (slot > 0) {
+                i.putExtra(com.fan.shuatiku.agent.ReminderReceiver.EXTRA_SLOT, slot);
+            }
+            r.onReceive(MainActivity.this, i);
+        }
+
+        /** 把用户送到系统的省电豁免列表；不是每台 ROM 都有这一页，找不到就退到应用详情。 */
+        @JavascriptInterface
+        public void planBatteryAsk() {
+            remindCheckPending = true;
+            try {
+                startActivity(new Intent(android.provider.Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS));
+            } catch (Throwable t) {
+                try {
+                    startActivity(new Intent(android.provider.Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+                            android.net.Uri.parse("package:" + getPackageName())));
+                } catch (Throwable ignored) {
+                    remindCheckPending = false;
+                }
             }
         }
 

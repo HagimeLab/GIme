@@ -1648,8 +1648,29 @@ function flyTo(el, target) {
   ], { duration: 520, easing: "cubic-bezier(.5,.05,.45,.95)", fill: "forwards" });
 }
 
+/* 提醒的系统门槛：通知权限与省电豁免。桌面回归没有原生桥，
+   这时返回 null，界面显示「当前环境不支持」而不是让测试去点系统设置。 */
+var remindInfo = null;
+function remindInfoGet() {
+  try {
+    if (window.Android && Android.planRemindState) return JSON.parse(Android.planRemindState());
+  } catch (e) { }
+  return null;
+}
+function askRemindPerm() {
+  try { if (window.Android && Android.planRemindAsk) Android.planRemindAsk(); } catch (e) { }
+}
+function askBatteryOpt() {
+  try { if (window.Android && Android.planBatteryAsk) Android.planBatteryAsk(); } catch (e) { }
+}
+window.onRemindPerm = function () {
+  remindInfo = remindInfoGet();
+  if (curTab === "me") renderAll();
+};
+
 function renderMe() {
   var a = stats("all");
+  remindInfo = remindInfoGet();
   /* 题库为空时覆盖率的分母是 0，直接除会得到 NaN 显示在界面上 */
   var cover = a.total ? Math.round(a.seen / a.total * 100) + "%" : "—";
   document.getElementById("meStat").innerHTML =
@@ -1671,6 +1692,12 @@ function renderMe() {
     row("autoExp", "答完展开解析", "关闭后判分只给答案，解析自己点开", true, set.autoExp) +
     row("import", "导入题库", "PDF / Word / txt / md，带解析一起导", false) +
     row("agent", "大肥鱼", agentSub(), false) +
+    row("notify", "通知权限", remindInfo
+      ? (remindInfo.granted ? "已允许 · 提醒可以弹出" : "未允许 · 点这里开启")
+      : "当前环境不支持", false) +
+    row("battery", "省电豁免", remindInfo
+      ? (remindInfo.battery ? "已豁免 · 提醒更准时" : "未设置 · 系统可能压掉提醒")
+      : "当前环境不支持", false) +
     row("font", "字号", "当前 " + set.fscale + "%，点击循环切换", false) +
     row("update", "检查更新", "当前 v" + APP_VER + " 版本", false, false, upd.hasNew) +
     row("clear", "清空进度", "做题记录、错题、收藏全部删除", false);
@@ -1684,6 +1711,8 @@ function row(k, title, sub, sw, on, mark) {
          : k === "font" ? "cycleFont()"
          : k === "import" ? "openImport()"
          : k === "agent" ? "openAgentCfg()"
+         : k === "notify" ? "askRemindPerm()"
+         : k === "battery" ? "askBatteryOpt()"
          : k === "update" ? "checkUpdate(true)" : "askClear()";
   return '<div class="row" data-k="' + k + '" onclick="' + fn + '"><span>' + title +
          (mark ? '<i class="dot"></i>' : "") +

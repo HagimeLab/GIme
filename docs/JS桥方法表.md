@@ -4,7 +4,7 @@
 
 这张表是 **P0 的导出面**：把现在暴露出去的东西一次列清楚，标明每个方法的入参形状与信任级别，供 P2 设计 AgentLoop 的工具注册时对照，也供后续安全收口时判断「哪些口子必须先收紧」。
 
-- 生成依据：`app/src/main/java/com/fan/shuatiku/MainActivity.java` 里全部 `@JavascriptInterface` 注解方法（当前 **31 个**）。
+- 生成依据：`app/src/main/java/com/fan/shuatiku/MainActivity.java` 里全部 `@JavascriptInterface` 注解方法（当前 **35 个**）。
 - P0 已加闸的方法在「P0 校验」一列写明；标 `—` 的表示本次未改动（见文末「P0 没做什么」）。
 - 校验规则集中在 `BridgeGuard.java`（纯逻辑、零 Android 依赖），回归用例在 `tools/BridgeTest.java`，由 `tools/check.cmd` 的 `js bridge guard` 段执行。
 
@@ -85,6 +85,15 @@
 | --- | --- | --- | --- | --- | --- | --- |
 | 30 | `copyText(text)` | `text` | `boolean` | L1 | — | 写系统剪贴板（设置页复制地址/口令） |
 | 31 | `ouiAction(action, payloadJson)` | `action`、`payloadJson` | `void` | L1 | — | OpenUI 卡片按钮点击；P0 只打一行 `GImeOui` 日志留痕，动作路由留到 P1 |
+
+### 提醒与系统权限（P1）
+
+| # | 方法 | 入参 | 返回 | 级别 | P0 校验 | 说明 |
+| --- | --- | --- | --- | --- | --- | --- |
+| 32 | `planRemindState()` | — | `String`(JSON) | L0 | — | `{granted, battery, sdk}`：通知是否放行、是否已豁免省电、系统版本 |
+| 33 | `planRemindAsk()` | — | `void` | L1 | — | Android 13+ 申请 `POST_NOTIFICATIONS`；已拒绝/系统关闭则跳应用通知设置 |
+| 34 | `planBatteryAsk()` | — | `void` | L1 | — | 跳系统省电豁免列表；找不到该页时退到应用详情 |
+| 35 | `planRemindTest(slot)` | `slot` | `void` | L1 | **仅 debug** | 进程内投递一次提醒：1/2 早/晚提醒、0 模拟开机广播、-1 只取消闹钟；发布包直接 return |
 
 ## P0 加的闸门（`BridgeGuard`）
 

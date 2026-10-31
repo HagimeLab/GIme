@@ -7,6 +7,10 @@
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
+    <!-- 每日提醒：8:30 / 21:00 两个时段的本地通知 -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <!-- 闹钟在重启后会被系统清空，开机时得重新挂一遍 -->
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
 
     <application
         android:allowBackup="true"
@@ -49,6 +53,17 @@
                 <data android:mimeType="*/*" />
             </intent-filter>
         </activity>
+
+        <!-- 每日提醒：闹钟到点、以及开机后重挂。exported=false 是因为
+             BOOT_COMPLETED 是系统广播，系统能送到非 exported 的静态 receiver；
+             写 true 反而让别的 App 能伪造 slot 触发通知。 -->
+        <receiver
+            android:name=".agent.ReminderReceiver"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+            </intent-filter>
+        </receiver>
 
         <!-- 大肥鱼的 DeepSeek 手机号登录：真浏览器登录一次，之后 App 自己当反代。
              人机验证（数美/hCaptcha）只能由真人在真实浏览器里完成，所以这步不可自动化。 -->

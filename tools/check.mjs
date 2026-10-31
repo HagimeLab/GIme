@@ -3374,6 +3374,106 @@ ok("update 的 action 枚举只有这一份，别处不许另立",
    /"未知 action：" \+ act/.test(planStoreSrc));
 ok("today 只在真有当天排期时才出现",
    /JSONObject td = dayOf\(p, today\);[\s\S]{0,80}if \(td != null\) o\.put\("today"/.test(planStoreSrc));
+/* ---------- 33. 每日提醒：闹钟、开机重挂、通知渠道 ---------- */
+section("[33] 每日提醒：闹钟 / 开机重挂 / 通知渠道");
+
+/* 提醒链路横跨四个文件，任何一环断了都表现为「到点没响」——
+   而那是最难复现的故障（要等一天、要重启手机）。这里把结构钉住。 */
+const reminderSrc = fs.readFileSync(path.join(ROOT, "app/src/main/java/com/fan/shuatiku/agent/Reminder.java"), "utf8");
+const receiverSrc = fs.readFileSync(path.join(ROOT, "app/src/main/java/com/fan/shuatiku/agent/ReminderReceiver.java"), "utf8");
+const notifySrc = fs.readFileSync(path.join(ROOT, "app/src/main/java/com/fan/shuatiku/agent/Notify.java"), "utf8");
+const manifestSrc = fs.readFileSync(path.join(ROOT, "app/src/main/AndroidManifest.xml"), "utf8");
+
+ok("两个时段写死在 Reminder 里：8:30 与 21:00",
+   /public static final int MORNING = 1;/.test(reminderSrc) &&
+   /public static final int EVENING = 2;/.test(reminderSrc) &&
+   /armAt\(am, c, 8, 30, MORNING\)/.test(reminderSrc) &&
+   /armAt\(am, c, 21, 0, EVENING\)/.test(reminderSrc));
+
+/* 用精确闹钟要额外申请 SCHEDULE_EXACT_ALARM，用户得去系统设置点一次；
+   一个刷题提醒不值这个代价，所以必须是不精确的那一版。
+   判代码不判注释：Reminder 的说明里就写着「而不是 setExactAndAllowWhileIdle」，
+   直接 indexOf 会把那句解释当成违规。 */
+const reminderCode = reminderSrc.replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/[^\n]*/g, "");
+ok("用 setInexactRepeating，不申请精确闹钟权限",
+   /setInexactRepeating\(AlarmManager\.RTC_WAKEUP/.test(reminderCode) &&
+   /AlarmManager\.INTERVAL_DAY/.test(reminderCode) &&
+   reminderCode.indexOf("setExact") < 0 &&
+   reminderCode.indexOf("SCHEDULE_EXACT_ALARM") < 0 &&
+   manifestSrc.indexOf("SCHEDULE_EXACT_ALARM") < 0);
+
+ok("PendingIntent 带 FLAG_IMMUTABLE（Android 12+ 必须）",
+   /FLAG_IMMUTABLE/.test(reminderSrc) && /FLAG_IMMUTABLE/.test(notifySrc));
+
+/* 今天这个点已经过了就排明天，否则 setRepeating 会立刻补一次，
+   用户会在装完包的下一秒收到一条「今天有 N 项任务」。 */
+ok("错过今天的时间点就排到明天，不会立刻补响",
+   /if \(next\.getTimeInMillis\(\) <= System\.currentTimeMillis\(\)\)/.test(reminderSrc) &&
+   /next\.add\(Calendar\.DAY_OF_YEAR, 1\)/.test(reminderSrc));
+
+/* 方案要求修的 agent 原版坑①：原版没有 BootReceiver，
+   重启手机后系统把闹钟清空，从此再也不响。 */
+ok("开机广播重新挂闹钟（agent 原版漏的那一坑）",
+   /ACTION_BOOT = "android\.intent\.action\.BOOT_COMPLETED"/.test(receiverSrc) &&
+   /if \(ACTION_BOOT\.equals\(act\)\) \{[\s\S]{0,60}Reminder\.arm\(c\);[\s\S]{0,20}return;/.test(receiverSrc));
+
+ok("Manifest 声明了开机广播与通知两条权限",
+   manifestSrc.indexOf("android.permission.RECEIVE_BOOT_COMPLETED") >= 0 &&
+   manifestSrc.indexOf("android.permission.POST_NOTIFICATIONS") >= 0);
+
+/* exported=false：BOOT_COMPLETED 是系统广播，系统照样送得到；
+   写成 true 反而让任意 App 能伪造 slot 触发通知。 */
+ok("receiver 声明为 exported=false 且挂了 BOOT_COMPLETED",
+   /<receiver[\s\S]{0,120}android:name="\.agent\.ReminderReceiver"[\s\S]{0,120}android:exported="false"/.test(manifestSrc) &&
+   /<action android:name="android\.intent\.action\.BOOT_COMPLETED" \/>/.test(manifestSrc));
+
+/* 提醒内容不写死：到点现去 PlanStore 数，计划改了不用重挂闹钟。 */
+ok("提醒正文到点现算：数 PlanStore 当天未完成项",
+   /new PlanStore\(new File\(c\.getFilesDir\(\), "plans"\)\)/.test(receiverSrc) &&
+   /if \(undone == 0\) return;/.test(receiverSrc) &&
+   /"今天有 " \+ undone \+ " 项任务"/.test(receiverSrc) &&
+   /"还有 " \+ undone \+ " 项没完成"/.test(receiverSrc));
+
+/* 只提醒开着的、且自己开了提醒的方案；remind 默认 false 是关键——
+   建完方案就天天响，用户第一反应是卸掉 App。 */
+ok("只提醒 enabled 且 remind 的方案，remind 默认关",
+   /if \(!p\.optBoolean\("enabled", true\)\) continue;/.test(receiverSrc) &&
+   /if \(!p\.optBoolean\("remind", false\)\) continue;/.test(receiverSrc) &&
+   /p\.put\("remind", false\)/.test(planStoreSrc));
+
+/* 渠道 id 换了等于换新渠道，用户之前的静音设置失效，所以必须是稳定的字面量。 */
+ok("通知渠道 id 固定为 gime-plan（不与 agent 串）",
+   /static final String CHANNEL = "gime-plan";/.test(notifySrc) &&
+   /new NotificationChannel\(CHANNEL, "方案与提醒"/.test(notifySrc));
+
+ok("MainActivity 启动时挂闹钟并建好方案库",
+   /planStore = new com\.fan\.shuatiku\.agent\.PlanStore\(planDir\)/.test(mainSrc) &&
+   /com\.fan\.shuatiku\.agent\.Reminder\.arm\(this\)/.test(mainSrc));
+
+/* 提醒要响，还得过系统两道门：Android 13+ 的运行时通知权限，
+   以及国产 ROM 的省电限制。代码里必须给出申请与跳转，而不是只写文档。 */
+ok("通知权限走运行时申请，拒绝过就跳设置页",
+   /checkSelfPermission\("android\.permission\.POST_NOTIFICATIONS"\)/.test(mainSrc) &&
+   /requestPermissions\(new String\[\]\{"android\.permission\.POST_NOTIFICATIONS"\}, REQ_NOTIFY\)/.test(mainSrc) &&
+   /ACTION_APP_NOTIFICATION_SETTINGS/.test(mainSrc));
+ok("省电豁免有跳转入口，找不到就退应用详情",
+   /ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS/.test(mainSrc) &&
+   /ACTION_APPLICATION_DETAILS_SETTINGS/.test(mainSrc));
+ok("改完权限回来会刷新页面状态",
+   /onRequestPermissionsResult[\s\S]{0,400}onRemindPerm/.test(mainSrc) &&
+   /onResume[\s\S]{0,400}onRemindPerm/.test(mainSrc));
+ok("我的页画出权限现状与两个入口",
+   html.indexOf('row("notify", "通知权限"') >= 0 &&
+   html.indexOf('row("battery", "省电豁免"') >= 0 &&
+   html.indexOf('k === "notify" ? "askRemindPerm()"') >= 0 &&
+   html.indexOf('k === "battery" ? "askBatteryOpt()"') >= 0);
+/* 非导出的 receiver 收不到 adb 广播、本机又没有 root 改时间；
+   真机验收只能靠进程内投递，所以这个口必须只在 debug 里生效。 */
+ok("提醒投递口只在 debug 生效，且能模拟开机/取消",
+   /planRemindTest\(int slot\) \{[\s\S]{0,120}if \(!BuildConfig\.DEBUG\) return;/.test(mainSrc) &&
+   /slot == 0[\s\S]{0,120}ACTION_BOOT/.test(mainSrc) &&
+   /slot < 0[\s\S]{0,80}Reminder\.disarm/.test(mainSrc));
+
 /* ---------- 结果 ---------- */
 console.log("\n" + "=".repeat(46));
 if (fails.length) {
