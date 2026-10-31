@@ -1936,6 +1936,7 @@ async function chatRun(cfg, attachMeta) {
         else if (typeof fn.arguments === "string") {
           try { args = JSON.parse(fn.arguments); } catch (e) { args = {}; }
         }
+        args = unwrapToolArgs(args);
         var gate = agentGate(fn.name, args, seenCall);
         if (gate && gate.action === "stop") {
           budgetStop = gate.reason || "BUDGET";
@@ -2232,6 +2233,20 @@ function bareToolCall(text) {
     return { id: "bare_" + (++toolBlockSeq), type: "function",
              function: { name: name, arguments: JSON.stringify(args) } };
   } catch (e) { return null; }
+}
+/* 上游偶尔把工具参数再包一层 {"arguments":{...}}，直接执行会报“字段为空”，
+   模型只好重试并浪费一整轮。只在它是唯一键且值是对象时拆开。 */
+function unwrapToolArgs(args) {
+  if (!args || typeof args !== "object" || Array.isArray(args)) return args;
+  var keys = Object.keys(args);
+  if (keys.length === 1 && keys[0] === "arguments") {
+    var inner = args.arguments;
+    if (typeof inner === "string") {
+      try { inner = JSON.parse(inner); } catch (e) { return args; }
+    }
+    if (inner && typeof inner === "object" && !Array.isArray(inner)) return inner;
+  }
+  return args;
 }
 /* 解析不出来的调用块也要剥掉：源码/半截 JSON 绝不能亮给用户。 */
 function stripToolMarkup(s) {

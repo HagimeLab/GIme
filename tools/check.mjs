@@ -2474,6 +2474,15 @@ ok("裸 JSON 工具调用能被识别",
    (function () { var c = W.bareToolCall('{"name":"list_plans","arguments":{}}'); return !!(c && c.function.name === "list_plans"); })());
 ok("普通 JSON 回答不会被当调用", W.bareToolCall('{"name":"张三","age":20}') === null);
 ok("未知工具名的裸 JSON 不执行", W.bareToolCall('{"name":"rm_rf","arguments":{}}') === null);
+ok("工具参数多包一层 arguments 会被拆开", (() => {
+  const a = W.unwrapToolArgs({ arguments: { planId: "p1", action: "pause" } });
+  return a.planId === "p1" && a.action === "pause";
+})());
+ok("正常参数对象不被改写", (() => {
+  const a = W.unwrapToolArgs({ planId: "p1" });
+  return a.planId === "p1" && !a.arguments;
+})());
+ok("多键对象不拆（避免误伤真参数）", W.unwrapToolArgs({ arguments: {}, planId: "p1" }).planId === "p1");
 ok("compact 列表步骤显示 id 数",
    W.toolStepText("list_questions", { bank: { name: "甲" }, ids: ["a", "b"] }, "").indexOf("2 个 id") >= 0);
 ok("方案工具步骤用中文标签",
