@@ -2036,7 +2036,7 @@ async function chatRun(cfg, attachMeta) {
     if (!calls.length && badToolBlock) {
       /* 模型偶发把调用写成半截 JSON 或别的标记。以前这里直接结束整轮，
          用户只看到一条报错；现在先在同一轮里让它按合法格式重发一次。 */
-      if (!String(msg.content || "").trim() && badToolRetry < 1) {
+      if (!String(msg.content || "").trim() && badToolRetry < 2) {
         badToolRetry++;
         chatDrop(live);
         messages.push({ role: "system", content: "刚才那次工具调用不是合法 JSON，已丢弃。" +
@@ -2134,11 +2134,46 @@ async function chatRun(cfg, attachMeta) {
     /* 流式已经把正文填进去了；工具调用轮次之后正文可能没流全，用最终值兜底。
        只在真的拿到正文时才覆盖 —— 否则上游「只调工具不回答」时会把已流出的字擦掉。 */
     if (answer) live.text = answer;
-    else if (!live.text) live.text = fr === "length"
-      ? "（这一轮只写了思考过程，就被长度上限掐断了。再问一次试试。）" : "（大肥鱼没有返回文字）";
-    /* 正文被 max_tokens 截断时，界面看着像「答完了」——不说的话用户以为这就是全文 */
-    if (fr === "length" && answer) {
-      chatPush({ role: "step", text: "这一回答太长按上限截断了，说「继续」我接着讲" }, true);
+    /* 输出被单轮 4096 token 截断、或模型空返回：自动续写，别让用户手点「继续」。
+       续写仍写进同一个气泡，最多两次；续完还是截断才如实提示。 */
+    var contLeft = 2;
+    while (contLeft > 0 && (fr === "length" || (!answer && !String(live.text || "").trim()))) {
+      contLeft--;
+      var beforeText = String(live.text || "");
+      messages.push({ role: "assistant", content: beforeText });
+      messages.push({ role: "user", content: "继续。从刚才断掉的地方接着写，不要重复已经给出的内容；只输出续写部分。" });
+      var cbody = { model: cfg.model, messages: messages, temperature: 0.3,
+                    max_tokens: fileRun ? CHAT_FILE_MAX_TOKENS : CHAT_MAX_TOKENS };
+      if (isBuiltin && chatCurId) cbody.user = chatCurId;
+      if (isBuiltin) cbody.search = webSearchOn();
+      chatPush({ role: "step", hidden: true, text: "输出中断，自动续写中…" }, true);
+      var cdata, cm, cfr = "";
+      try {
+        cdata = await chatRequest(cfg, cbody, live.onDelta);
+        cm = cdata && cdata.choices && cdata.choices[0] && cdata.choices[0].message;
+        cfr = (cdata && cdata.choices && cdata.choices[0] && cdata.choices[0].finish_reason) || "";
+      } catch (e) {
+        chatPush({ role: "step", hidden: true, text: "自动续写失败，保留已写内容" }, true);
+        break;
+      }
+      var cpart = String((cm && cm.content) || "");
+      if (String(live.text || "") === beforeText && cpart) live.text = beforeText + cpart;
+      answer = String(live.text || "").trim();
+      fr = cfr || fr;
+      var cu = (cdata && cdata.usage) || {};
+      var ct2 = agentCall("tick", {
+        promptTokens: cu.prompt_tokens || Math.round(JSON.stringify(messages).length / 2),
+        completionTokens: cu.completion_tokens || Math.round(cpart.length / 2),
+      });
+      if (ct2 && ct2.stopped) break;
+    }
+    if (!answer && !String(live.text || "").trim()) {
+      live.text = fr === "length"
+        ? "（这一轮只写了思考过程，已被长度上限截断；自动续写也没能接上。）"
+        : "（大肥鱼没有返回文字）";
+    }
+    if (fr === "length") {
+      chatPush({ role: "step", text: "回答过长，已自动续写 2 次仍被截断" }, true);
     }
     if (dig.length) live.tools = capDigest(dig);
     if (!live.reasoning) live.reasoning = String(msg.reasoning_content || "");
@@ -2207,7 +2242,9 @@ async function chatRun(cfg, attachMeta) {
   chatSave();
   pokeLive(fin, function () { fin.live = false; chatRender(); });
 }
-var CHAT_ROUNDS = 8;
+/* 工具轮次上限：8 轮在多工具长任务里会在收尾前被截停（g15 实测），放到 10 轮；
+   token 预算仍是硬闸，不会无限跑。 */
+var CHAT_ROUNDS = 10;
 var CHAT_MAX_TOKENS = 4096;      /* 普通聊天/工具轮的单轮输出上限，工具调用 JSON 别被截断 */
 /* 真机实测：4 次工具调用的计划任务 5 轮就用掉 142k（每轮都重发全部上下文），
    120k 会在写日程前提前收口；放到 300k 仍由 8 轮硬上限兜底。 */

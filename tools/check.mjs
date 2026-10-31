@@ -2144,9 +2144,11 @@ ok("方案进度作为独立 system 消息追加，固定段不掺方案",
 
 /* ③ 省 token：窗口、轮次、schema、输出、工具结果 */
 ok("历史窗口缩到 8 条", /chatMsgs\.slice\(-8\)/.test(html));
-ok("工具轮次上限 8 轮", /var CHAT_ROUNDS = 8;/.test(html) && /var CHAT_TOKEN_BUDGET = 300000;/.test(html));
-ok("工具调用格式坏掉先让模型重试一次",
-   /badToolRetry < 1/.test(html) && /已让模型重试一次/.test(html));
+ok("工具轮次上限 10 轮", /var CHAT_ROUNDS = 10;/.test(html) && /var CHAT_TOKEN_BUDGET = 300000;/.test(html));
+ok("工具调用格式坏掉自动重试",
+   /badToolRetry < 2/.test(html) && /已让模型重试一次/.test(html));
+ok("回答被截断自动续写", /while \(contLeft > 0/.test(html)
+   && /自动续写/.test(html) && /从刚才断掉的地方接着写/.test(html));
 ok("带附件识别那一轮单独放宽轮次与输出",
    /var rounds = fileRun \? CHAT_FILE_ROUNDS : CHAT_ROUNDS;/.test(html) &&
    /max_tokens: fileRun \? CHAT_FILE_MAX_TOKENS : CHAT_MAX_TOKENS/.test(html), "带附件那轮没走独立额度");
@@ -3161,15 +3163,16 @@ W.chatMsgs = []; loopReqs = [];
 W.chatPush({ role: "user", text: "讲讲这库" });
 loopReplies = [finalText("这是一段被上游长度上限掐断在中间的回答", "length")];
 await W.chatRun(W.agentCfg());
-ok("正文被长度上限截断时会说出来",
-   stepTexts().some((t) => t.indexOf("截断") >= 0 && t.indexOf("继续") >= 0), JSON.stringify(stepTexts()));
+ok("正文被长度上限截断时会自动续写",
+   stepTexts().some((t) => t.indexOf("自动续写") >= 0) &&
+   stepTexts().some((t) => t.indexOf("截断") >= 0), JSON.stringify(stepTexts()));
 W.chatMsgs = []; loopReqs = [];
 W.chatPush({ role: "user", text: "再来一次" });
-loopReplies = [finalText("", "length")];
+loopReplies = [finalText("", "length"), finalText("", "length"), finalText("", "length")];
 await W.chatRun(W.agentCfg());
+const lastAsst = W.chatMsgs.filter((m) => m.role === "assistant").slice(-1)[0] || {};
 ok("只有思考链就被掐断时，不再显示成「没有返回文字」",
-   W.chatMsgs[W.chatMsgs.length - 1].text.indexOf("掐断") >= 0,
-   W.chatMsgs[W.chatMsgs.length - 1].text);
+   String(lastAsst.text || "").indexOf("截断") >= 0, String(lastAsst.text || ""));
 
 /* ⑤ 上游把调用写成了正文（API Key 通道真机抓到过）：摘出来执行，别把标记甩给用户 */
 W.chatMsgs = []; loopReqs = [];
