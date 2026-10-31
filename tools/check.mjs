@@ -1320,10 +1320,14 @@ W.chatMsgs = [];
 W.chatPush({ role: "user", text: "你好" });
 await W.chatRun(W.agentCfg());
 ok("答题页关着时请求里没有题目段",
-   noCtxReq && noCtxReq.messages.filter((m) => m.role === "system").length === 2 &&
-   noCtxReq.messages[0].content.indexOf("当前题目上下文") < 0 &&
-   noCtxReq.messages[1].content.indexOf("Agent 执行规则") === 0 &&
-   JSON.stringify(noCtxReq.messages).indexOf("当前题目上下文") < 0,
+   (() => {
+     if (!noCtxReq) return false;
+     const sys = noCtxReq.messages.filter((m) => m.role === "system");
+     return sys.length >= 2 && sys.length <= 4 &&
+       sys[0].content.indexOf("当前题目上下文") < 0 &&
+       sys.some((m) => m.content.indexOf("Agent 执行规则") === 0) &&
+       JSON.stringify(noCtxReq.messages).indexOf("当前题目上下文") < 0;
+   })(),
    JSON.stringify(noCtxReq && noCtxReq.messages.map((m) => m.role)));
 W.document.getElementById("quiz").classList.add("on");
 
@@ -3825,6 +3829,49 @@ ok("delete_plan 删除且列表清空", fake.plans.length === 0 && delPlan.delet
 ok("S5：没有方案时不注入空上下文", W.chatPlanMsg() === "");
 
 delete W.Android;
+
+/* ---------- 36. T3 记忆：画像 / 滚动摘要 / 记忆页 ---------- */
+section("[36] T3 记忆：画像 / 滚动摘要 / 记忆页");
+W.MEM.profile = { days: { [W.planTodayKey()]: { n: 10, w: 3 } } };
+W.MEM.session = {};
+const memSingles = W.BANK.questions.filter((q) => q.type === "single").slice(0, 2);
+memSingles.forEach((q) => { W.prog[q.id] = { n: 5, w: 2, last: 0, t: Date.now() }; });
+W.PLAN.list = [{ id: "mem-plan", title: "记忆里的方案", enabled: true, pct: 40,
+  today: [{ text: "a", done: true }, { text: "b", done: false }] }];
+const prof = W.memoryProfile();
+ok("画像选出最弱题型并算正确率",
+   prof.weakest && prof.weakest.type === "single" && prof.weakest.acc === 60,
+   JSON.stringify(prof.weakest));
+ok("近 7 天正确率取当日汇总", prof.trend7.n === 10 && prof.trend7.rate === 70,
+   JSON.stringify(prof.trend7));
+ok("画像带进行中方案与今日完成度",
+   prof.plan && prof.plan.title === "记忆里的方案" && prof.plan.todayDone === 1 &&
+   prof.plan.todayTotal === 2, JSON.stringify(prof.plan));
+W.chatMsgs = [];
+for (let mi = 0; mi < 40; mi++) {
+  W.chatMsgs.push({ id: "mem" + mi, role: mi % 2 ? "assistant" : "user",
+    text: (mi % 2 ? "答：" : "问：") + "第 " + mi + " 条记忆测试" });
+}
+W.memoryRoll();
+ok("超过 30 条后生成滚动摘要", !!W.MEM.session.summary &&
+   W.MEM.session.covered >= 30 && W.MEM.session.summary.indexOf("问：") >= 0,
+   JSON.stringify(W.MEM.session).slice(0, 200));
+const memMsg = W.chatMemoryMsg();
+ok("上下文注入带画像、方案与摘要",
+   memMsg.indexOf("最弱题型") >= 0 && memMsg.indexOf("记忆里的方案") >= 0 &&
+   memMsg.indexOf("会话摘要") >= 0, memMsg.slice(0, 200));
+W.openMemory();
+ok("记忆页展示画像与清除入口",
+   W.document.getElementById("sheet3").innerHTML.indexOf("最弱题型") >= 0 &&
+   W.document.getElementById("sheet3").innerHTML.indexOf("清除记忆") >= 0);
+W.memoryClear();
+ok("清除后画像/摘要为空", Object.keys(W.MEM.profile).length === 0 &&
+   Object.keys(W.MEM.session).length === 0);
+W.PLAN.list = [];
+const savedProg = W.prog;
+W.prog = {};   /* 清记忆不动做题进度；这里临时清空才是「完全没有学习数据」 */
+ok("没有学习数据时不注入空记忆", W.chatMemoryMsg() === "");
+W.prog = savedProg;
 
 /* ---------- 结果 ---------- */
 console.log("\n" + "=".repeat(46));

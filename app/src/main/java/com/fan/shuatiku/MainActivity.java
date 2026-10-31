@@ -90,6 +90,9 @@ public class MainActivity extends Activity {
     /** 方案库。提醒、MCP 计划工具、页面方案页读的都是这一份。 */
     private com.fan.shuatiku.agent.PlanStore planStore;
 
+    /** 记忆库：长期画像 + 会话摘要。 */
+    private com.fan.shuatiku.agent.MemoryStore memoryStore;
+
     private static final class McpWait {
         final java.util.concurrent.CountDownLatch latch = new java.util.concurrent.CountDownLatch(1);
         volatile String response;
@@ -121,6 +124,9 @@ public class MainActivity extends Activity {
         File planDir = new File(getFilesDir(), "plans");
         if (!planDir.isDirectory()) planDir.mkdirs();
         planStore = new com.fan.shuatiku.agent.PlanStore(planDir);
+        File memDir = new File(getFilesDir(), "memory");
+        if (!memDir.isDirectory()) memDir.mkdirs();
+        memoryStore = new com.fan.shuatiku.agent.MemoryStore(memDir);
         /* Agent trace 同时进 logcat（GImeAgent）与私有环形缓冲；导出入口在「我的」。 */
         com.fan.shuatiku.agent.RunTrace.setSink(new com.fan.shuatiku.agent.RunTrace.Sink() {
             @Override public void log(String line) {
@@ -928,6 +934,24 @@ public class MainActivity extends Activity {
         @JavascriptInterface
         public String toolSchemas() {
             return com.fan.shuatiku.agent.ToolRegistry.schemasJson();
+        }
+
+        /** 记忆库：snapshot / save / clear。画像与会话摘要都由页面生成，这里只存取。 */
+        @JavascriptInterface
+        public String memoryCall(String op, String json) {
+            if (memoryStore == null) return "{\"error\":\"记忆库还没准备好\"}";
+            try {
+                if ("snapshot".equals(op)) return memoryStore.snapshot();
+                if ("clear".equals(op)) { memoryStore.clear(); return memoryStore.snapshot(); }
+                if ("save".equals(op)) {
+                    org.json.JSONObject o = new org.json.JSONObject(json == null ? "{}" : json);
+                    boolean ok = memoryStore.save(o.optJSONObject("profile"), o.optJSONObject("session"));
+                    return ok ? memoryStore.snapshot() : "{\"error\":\"记忆写盘失败\"}";
+                }
+                return "{\"error\":\"未知 op\"}";
+            } catch (Throwable t) {
+                return "{\"error\":" + quote(String.valueOf(t.getMessage())) + "}";
+            }
         }
 
         /** Agent 护栏：begin / tick / check / toolResult / approve / deny / finish / trace。 */

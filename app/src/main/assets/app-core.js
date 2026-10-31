@@ -28,6 +28,141 @@ function asBool(v, dft) {
 }
 set.haptics = asBool(set.haptics, true);
 set.autoExp = asBool(set.autoExp, true);
+/* ================= T3 记忆：长期画像 + 会话摘要 =================
+   画像按题库/进度现算，摘要由 chatSave 在历史超过 30 条时本地滚动压缩；
+   两者都落 filesDir/memory/memory.json（Java MemoryStore），页面不另存一份。 */
+var MEM = { profile: {}, session: {} };
+var memSaveTimer = 0;
+var LS_MEM = "stk.memory.v1";
+
+function memoryCall(op, payload) {
+  try {
+    if (window.Android && Android.memoryCall) {
+      return JSON.parse(Android.memoryCall(String(op || ""), JSON.stringify(payload || {})));
+    }
+  } catch (e) { }
+  return null;
+}
+function memoryLoad() {
+  var s = memoryCall("snapshot", {});
+  if (s && !s.error) {
+    MEM.profile = s.profile || {};
+    MEM.session = s.session || {};
+    return;
+  }
+  var local = store.read(LS_MEM, null);
+  if (local && typeof local === "object") {
+    MEM.profile = local.profile || {};
+    MEM.session = local.session || {};
+  }
+}
+function memorySaveSoon() {
+  clearTimeout(memSaveTimer);
+  memSaveTimer = setTimeout(function () { memorySaveNow(); }, 800);
+}
+function memorySaveNow() {
+  MEM.profile = memoryProfile();
+  var out = memoryCall("save", { profile: MEM.profile, session: MEM.session });
+  if (!out || out.error) store.write(LS_MEM, { profile: MEM.profile, session: MEM.session });
+}
+function memDays() {
+  var d = MEM.profile && MEM.profile.days;
+  return d && typeof d === "object" ? d : {};
+}
+function memDayKey() {
+  var d = new Date(), p2 = function (n) { return n < 10 ? "0" + n : "" + n; };
+  return d.getFullYear() + "-" + p2(d.getMonth() + 1) + "-" + p2(d.getDate());
+}
+/* 每答一题记一次；只留最近 30 天，避免无限长 */
+function memDay(ok) {
+  var days = memDays(), k = memDayKey();
+  var x = days[k] || { n: 0, w: 0 };
+  x.n++;
+  if (!ok) x.w++;
+  days[k] = x;
+  var keys = Object.keys(days).sort();
+  while (keys.length > 30) { delete days[keys.shift()]; }
+  MEM.profile.days = days;
+  memorySaveSoon();
+}
+function memoryProfile() {
+  var by = {}, weak = null, i;
+  BANK.questions.forEach(function (q) {
+    var p = prog[q.id] || { n: 0, w: 0 };
+    var t = by[q.type] || (by[q.type] = { n: 0, w: 0 });
+    t.n += p.n || 0;
+    t.w += p.w || 0;
+  });
+  Object.keys(by).forEach(function (t) {
+    var x = by[t];
+    if (!x.w) return;
+    var acc = x.n ? Math.round((x.n - x.w) * 100 / x.n) : 0;
+    if (!weak || acc < weak.acc || (acc === weak.acc && x.w > weak.w)) {
+      weak = { type: t, name: typeName(t), n: x.n, w: x.w, acc: acc };
+    }
+  });
+  var days = memDays(), keys = Object.keys(days).sort(), trend = { n: 0, w: 0, rate: null };
+  for (i = Math.max(0, keys.length - 7); i < keys.length; i++) {
+    var d = days[keys[i]] || {};
+    trend.n += d.n || 0;
+    trend.w += d.w || 0;
+  }
+  if (trend.n) trend.rate = Math.round((trend.n - trend.w) * 100 / trend.n);
+  var plan = null;
+  if (typeof PLAN !== "undefined" && PLAN.list) {
+    for (i = 0; i < PLAN.list.length; i++) {
+      var p = PLAN.list[i];
+      if (!p.enabled) continue;
+      var td = p.today || [], done = 0;
+      for (var j = 0; j < td.length; j++) if (td[j].done) done++;
+      plan = { id: p.id, title: p.title, pct: p.pct || 0,
+               todayDone: done, todayTotal: td.length };
+      break;
+    }
+  }
+  return { weakest: weak, trend7: trend, plan: plan,
+           prefs: { theme: set.theme === "dark" ? "dark" : "light", fscale: set.fscale || 100,
+                    autoExp: set.autoExp !== false, haptics: set.haptics !== false },
+           days: days, updatedAt: Date.now() };
+}
+function memorySummary() {
+  return MEM.session && MEM.session.summary ? String(MEM.session.summary) : "";
+}
+function memoryClear() {
+  memoryCall("clear", {});
+  MEM = { profile: {}, session: {} };
+  try { store.write(LS_MEM, MEM); } catch (e) { }
+  closeTop();
+  toast("记忆已清除");
+  renderAll();
+}
+function memoryClearAsk() {
+  glass({ title: "清除记忆", desc: "画像与会话摘要会被删掉；题库、进度、方案不受影响。",
+    no: ["取消", null], ok: ["清除", function () { memoryClear(); }] });
+}
+function openMemory() {
+  if (typeof planLoad === "function") planLoad();
+  var p = memoryProfile();
+  var weak = p.weakest ? esc(p.weakest.name) + "（正确率 " + p.weakest.acc + "%）" : "暂无";
+  var trend = p.trend7 && p.trend7.n ? p.trend7.rate + "%（" + p.trend7.n + " 次）" : "暂无";
+  var plan = p.plan ? esc(p.plan.title) + " · " + p.plan.pct + "% · 今天 " +
+    p.plan.todayDone + "/" + p.plan.todayTotal : "无";
+  var summary = memorySummary();
+  var sh = document.getElementById("sheet3");
+  sh.innerHTML = '<div class="handle"></div><h2>记忆</h2>' +
+    '<div class="card pad" style="font-size:.8125rem;line-height:1.9">' +
+      "<div>最弱题型：" + weak + "</div>" +
+      "<div>近 7 天正确率：" + trend + "</div>" +
+      "<div>进行中方案：" + plan + "</div>" +
+      "<div>偏好：主题 " + (p.prefs.theme === "dark" ? "深色" : "浅色") + " · 字号 " + p.prefs.fscale + "%</div>" +
+    "</div>" +
+    '<div class="sec-title"><b>会话摘要</b><span>超过 30 条后自动压缩</span></div>' +
+    '<div class="card pad" style="font-size:.8125rem;line-height:1.8">' +
+      (summary ? esc(summary) : "还没有摘要") + "</div>" +
+    '<button class="sheet-act" onclick="memoryClearAsk()">清除记忆</button>';
+  openLayer(sh);
+}
+
 /* 旧版本可以「隐藏内置题库」，那套数据已经没有对应题库了。
    这里只做兼容清理：不再读它，但也不动它，免得降级回旧版时用户发现隐藏状态被重置 */
 if (set.hidden && typeof set.hidden !== "object") set.hidden = {};
@@ -827,6 +962,7 @@ function grade(picks) {
   var p = P(cur.id);
   p.n++; p.last = ok; p.t = Date.now();
   if (!ok) { p.w++; p.in = 1; }
+  memDay(ok);
   vibrate(ok ? [25, 30, 25] : [70, 60, 70, 60, 160]);
   render();
   toast(ok ? "✓ 回答正确" : "✕ 回答错误，正确答案 " + cur.answer.join(""));
@@ -858,10 +994,12 @@ function submitSub() {
       if (ref && got) {
         if (normAns(got) === normAns(ref)) {
           p.last = 1;
+          memDay(1);
         } else {
           p.last = 0;
           p.w++;
           p.in = 1;          /* 填空答错自动进错题本 */
+          memDay(0);
           toast("答错了，已加入错题本");
         }
       }
@@ -938,6 +1076,7 @@ function submitExam() {
     var ok = same(S.picks[id] || [], cur.answer) ? 1 : 0;
     S.graded[id] = ok; scored++;
     var p = P(id); p.n++; p.last = ok; p.t = Date.now();
+    memDay(ok);
     if (ok) right++; else { p.w++; p.in = 1; }
   });
   var subjN = S.order.filter(function (id) {
@@ -1717,6 +1856,7 @@ function renderMe() {
       ? (remindInfo.battery ? "已豁免 · 提醒更准时" : "未设置 · 系统可能压掉提醒")
       : "当前环境不支持", false) +
     row("font", "字号", "当前 " + set.fscale + "%，点击循环切换", false) +
+    row("memory", "记忆", "查看画像与摘要，可清除", false) +
     row("trace", "导出诊断包", "最近 20 次 Agent 运行（脱敏）", false) +
     row("update", "检查更新", "当前 v" + APP_VER + " 版本", false, false, upd.hasNew) +
     row("clear", "清空进度", "做题记录、错题、收藏全部删除", false);
@@ -1733,6 +1873,7 @@ function row(k, title, sub, sw, on, mark) {
          : k === "remind" ? "openPlans()"
          : k === "notify" ? "askRemindPerm()"
          : k === "battery" ? "askBatteryOpt()"
+         : k === "memory" ? "openMemory()"
          : k === "trace" ? "exportTrace()"
          : k === "update" ? "checkUpdate(true)" : "askClear()";
   return '<div class="row" data-k="' + k + '" onclick="' + fn + '"><span>' + title +

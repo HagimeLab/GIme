@@ -125,6 +125,12 @@ if errorlevel 1 goto fail
 java "-Dfile.encoding=UTF-8" -cp "%OUT%;%JSON_JAR%" ToolRegistryTest
 if errorlevel 1 goto fail
 echo.
+echo === memory store (profile / session / clear) ===
+javac -encoding UTF-8 -cp "%JSON_JAR%" -d "%OUT%" "%~dp0..\app\src\main\java\com\fan\shuatiku\agent\MemoryStore.java" "%~dp0MemoryStoreTest.java"
+if errorlevel 1 goto fail
+java "-Dfile.encoding=UTF-8" -cp "%OUT%;%JSON_JAR%" MemoryStoreTest
+if errorlevel 1 goto fail
+echo.
 echo === agent loop (budget / repeat / hitl) ===
 rem 引擎只管闸门，不碰网络与工具；四类剧本都在 AgentLoopTest 里穷举。
 javac -encoding UTF-8 -cp "%JSON_JAR%" -d "%OUT%" "%~dp0..\app\src\main\java\com\fan\shuatiku\agent\RunTrace.java" "%~dp0..\app\src\main\java\com\fan\shuatiku\agent\AgentLoop.java" "%~dp0AgentLoopTest.java"

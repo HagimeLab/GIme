@@ -139,6 +139,7 @@ function chatLoadConv(id) {
   chatUseUpstream(chatCurId);
   chatSave();
   chatConvSave();
+  if (typeof MEM !== "undefined") { MEM.session = {}; if (typeof memorySaveSoon === "function") memorySaveSoon(); }
   chatRender();
 }
 function chatNewConv(force, quiet) {
@@ -267,6 +268,24 @@ function chatSave() {
   store.write(LS.c, { messages: chatMsgs.slice(-200) });
   chatSyncConv();
   chatConvSave();
+  if (typeof memoryRoll === "function") memoryRoll();
+}
+/* T3：历史超过 30 条时，把最后 8 条之前的对话压成一段摘要。
+   本地抽取式压缩，不额外调模型；摘要进 system 段，35 轮后不再全量重发。 */
+function memoryRoll() {
+  if (typeof MEM === "undefined" || !chatMsgs || chatMsgs.length <= 30) return;
+  var older = chatMsgs.slice(0, chatMsgs.length - 8), lines = [];
+  older.forEach(function (m) {
+    if (!m || m.hidden) return;
+    var t = String(m.text || "").replace(/\s+/g, " ").trim();
+    if (!t) return;
+    if (m.role === "user") lines.push("问：" + t.slice(0, 60));
+    else if (m.role === "assistant") lines.push("答：" + t.slice(0, 80));
+  });
+  if (!lines.length) return;
+  MEM.session = { summary: lines.slice(-16).join("；").slice(0, 1200),
+                  covered: older.length, at: Date.now() };
+  if (typeof memorySaveSoon === "function") memorySaveSoon();
 }
 /* 内置通道：不用 API Key，走 App 里存的 DeepSeek 手机号登录态。
    地址填 builtin://deepseek 即可，原生侧会把它分流到 DeepSeekBridge。 */
@@ -1652,6 +1671,8 @@ async function chatRun(cfg, attachMeta) {
   /* 方案进度是第二段可变上下文：固定段仍逐字不变，前缀缓存不破。 */
   var planMsg = typeof chatPlanMsg === "function" ? chatPlanMsg() : "";
   if (planMsg) messages.push({ role: "system", content: planMsg });
+  var memMsg = typeof chatMemoryMsg === "function" ? chatMemoryMsg() : "";
+  if (memMsg) messages.push({ role: "system", content: memMsg });
   messages.push({ role: "system", content: chatAgentRules() });
   /* 附件元信息排在题目之后：它随附件走，不参与那条稳定的前缀。 */
   if (attachMeta) messages.push({ role: "system", content: attachMeta });
@@ -1903,6 +1924,20 @@ function chatSysBase() {
 function chatCtxMsg(ctx) { return "当前题目上下文（JSON）：" + JSON.stringify(ctx); }
 /* Agent 执行规则：单独一段，固定段仍逐字可缓存。
    只写「顺序与前置条件」，不写具体工具参数；改数据仍要用户批准。 */
+/* T3：长期画像 + 会话摘要；没有学习数据时不注入，避免空话占 token。 */
+function chatMemoryMsg() {
+  var p = typeof memoryProfile === "function" ? memoryProfile() : null;
+  if (!p) return "";
+  var parts = [];
+  if (p.weakest) parts.push("最弱题型：" + p.weakest.name + "（正确率 " + p.weakest.acc + "%）");
+  if (p.trend7 && p.trend7.n) parts.push("近 7 天正确率 " + p.trend7.rate + "%");
+  if (p.plan) parts.push("进行中方案：「" + p.plan.title + "」" + p.plan.pct + "%，今天 " +
+    p.plan.todayDone + "/" + p.plan.todayTotal);
+  var sm = typeof memorySummary === "function" ? memorySummary() : "";
+  if (sm) parts.push("会话摘要：" + sm.slice(0, 600));
+  if (!parts.length) return "";
+  return "记忆（仅作背景，不要主动改动）：" + parts.join("；") + "。";
+}
 function chatAgentRules() {
   return "Agent 执行规则：需要题库数据时先读（建计划只要 id 时用 compact:true）；" +
          "建计划先 create_plan，拿到返回的 plan.id 后再用 update_plan 填日程；" +
@@ -2410,6 +2445,7 @@ window.onChatApi = function (id, status, text) {
 })();
 applyTheme();
 bootImportedBanks();
+if (typeof memoryLoad === "function") memoryLoad();
 /* 先把落盘的更新状态换算成小红点，再画界面：否则「我的」第一次渲染时
    标记还是空的，要等用户点进来重画才出现 */
 updSyncMark();
