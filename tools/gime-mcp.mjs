@@ -12,6 +12,8 @@
  * 环境变量：
  *   GIME_TOKEN  必填，App 里显示的 MCP 口令
  *   GIME_URL    可选，默认 http://127.0.0.1:8765/mcp
+ *   GIME_PROTOCOL 可选；设为 2026-07-28 时按新版无状态协议发（_meta + Mcp-Method/Name），
+ *                不设则保持 2025 版式，老客户端行为不变
  *   ADB         可选；给了就先执行 adb forward tcp:8765 tcp:8765
  *
  * 客户端跑 stdio，App 侧是 Streamable HTTP；这里只做转发，工具定义与执行都在 App 内，
@@ -22,6 +24,7 @@ import { execFileSync } from "node:child_process";
 const ENDPOINT = process.env.GIME_URL || "http://127.0.0.1:8765/mcp";
 const TOKEN = process.env.GIME_TOKEN || "";
 const ADB = process.env.ADB || "";
+const PROTOCOL = process.env.GIME_PROTOCOL || "";
 
 if (!TOKEN) {
   process.stderr.write("GIme MCP：缺少 GIME_TOKEN（App 里「我的 → MCP 接口」复制口令）\n");
@@ -55,10 +58,25 @@ async function handle(line) {
   try { req = JSON.parse(line); } catch { return; }
   const hasId = req && req.id !== undefined && req.id !== null;
   try {
+    const headers = { "Content-Type": "application/json", "Authorization": "Bearer " + TOKEN };
+    let payload = line;
+    if (PROTOCOL) {
+      const obj = JSON.parse(line);
+      obj._meta = Object.assign({}, obj._meta || {}, {
+        protocolVersion: PROTOCOL,
+        clientInfo: { name: "gime-mcp", version: "1.0" },
+        clientCapabilities: {},
+      });
+      payload = JSON.stringify(obj);
+      headers["Mcp-Method"] = obj.method || "";
+      if (obj.method === "tools/call" && obj.params && obj.params.name) {
+        headers["Mcp-Name"] = obj.params.name;
+      }
+    }
     const res = await fetch(ENDPOINT, {
       method: "POST",
-      headers: { "Content-Type": "application/json", "Authorization": "Bearer " + TOKEN },
-      body: line,
+      headers: headers,
+      body: payload,
       signal: AbortSignal.timeout(25000),
     });
     if (res.status === 202) return;

@@ -96,3 +96,25 @@ curl -s http://127.0.0.1:8765/mcp \
 - 工具能改题库文件（导入、写解析），但没有删除题库的工具；删除题库仍在 App 界面里做。
 - 方案可以 `delete_plan`（方案要求如此），但它只删 `plans.json` 里的那一份，
   碰不到题库、进度或错题本。
+
+## P3 · 双版本：2025 版式 + 2026-07-28 无状态
+
+服务端按**每个请求**是否带 `_meta.protocolVersion` 分流，老客户端不需要改：
+
+| 请求形状 | 走的版式 |
+|---|---|
+| 无 `_meta` | 2025（`initialize` / `ping` / 有状态会话兼容） |
+| `_meta.protocolVersion = "2026-07-28"` | 新版无状态；版本不匹配返回 `-32022` 与 `supported` |
+
+新版要求：
+
+- 不再握手：不接受 `initialize` / `ping`；先调 `server/discover` 拿版本、能力与身份。
+- POST 必须带 `Mcp-Method`；`tools/call` 还必须带 `Mcp-Name`（缺/不符回 HTTP 400）。
+- 所有成功结果带 `resultType`（`complete` 或 `input_required`）；list 类还带 `ttlMs` / `cacheScope`。
+- 需要补充信息时返回 `resultType:"input_required"` + `inputRequests` + `requestState`；
+  客户端带 `inputResponses` 与同一 `requestState` 重试原请求（题库重名选 id 已走这条路）。
+- 日志级别由每请求 `_meta.logLevel` 表达，不再有 `logging/setLevel`。
+
+过渡口径：新版与老版并存 **12 个月**（自 2026-10-31 起）；老 `tools/gime-mcp.mjs` 默认仍走 2025。
+要让 stdio 桥走新版，在 mcpServers.env 里加 `"GIME_PROTOCOL": "2026-07-28"`；
+桥会自动补 `_meta`、`Mcp-Method` 与 `Mcp-Name`。

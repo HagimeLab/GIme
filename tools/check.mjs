@@ -3873,6 +3873,54 @@ W.prog = {};   /* 清记忆不动做题进度；这里临时清空才是「完�
 ok("没有学习数据时不注入空记忆", W.chatMemoryMsg() === "");
 W.prog = savedProg;
 
+/* ---------- 37. P3 MCP 2026-07-28 无状态 / 双版本 / MRTR ---------- */
+section("[37] P3 MCP 无状态协议：discover / resultType / MRTR / 版本校验");
+const NEWMETA = { protocolVersion: "2026-07-28" };
+const newReq = (id, method, params) => ({ jsonrpc: "2.0", id: id, method: method,
+  params: Object.assign({ _meta: NEWMETA }, params || {}) });
+const discover = W.mcpDispatch(newReq(301, "server/discover", {}));
+ok("server/discover 广告协议与身份", discover.result.protocolVersion === "2026-07-28" &&
+   discover.result.supportedVersions.indexOf("2026-07-28") >= 0 &&
+   discover.result.serverInfo.name === "gime" && discover.result.resultType === "complete",
+   JSON.stringify(discover).slice(0, 200));
+ok("新版不再接受 initialize", W.mcpDispatch(newReq(302, "initialize", {})).error.code === -32601);
+ok("新版不再接受 ping", W.mcpDispatch(newReq(303, "ping", {})).error.code === -32601);
+const badPv = W.mcpDispatch({ jsonrpc: "2.0", id: 304, method: "tools/list",
+  params: { _meta: { protocolVersion: "1999-01-01" } } });
+ok("未知协议版本回 -32022 并给支持列表", badPv.error.code === -32022 &&
+   badPv.error.data.supported.indexOf("2026-07-28") >= 0, JSON.stringify(badPv));
+const newList = W.mcpDispatch(newReq(305, "tools/list", {}));
+ok("新版 tools/list 带 resultType/ttlMs/cacheScope", newList.result.resultType === "complete" &&
+   newList.result.ttlMs === 300000 && newList.result.cacheScope === "public",
+   JSON.stringify(newList.result).slice(0, 160));
+const oldList = W.mcpDispatch({ jsonrpc: "2.0", id: 306, method: "tools/list" });
+ok("老版式形状不变（无 resultType）", oldList.result.resultType === undefined);
+
+const dupA = { id: "mrtr_a", name: "MRTR重名库", file: "a.md", count: 1, custom: true };
+const dupB = { id: "mrtr_b", name: "MRTR重名库", file: "b.md", count: 1, custom: true };
+W.BANK.subjects.push(dupA, dupB);
+[dupA, dupB].forEach((sub, i) => {
+  const q = { id: sub.id + "-0", subject: sub.id, num: 1, pnum: 1, type: "single",
+    stem: "MRTR 题 " + i, options: [["A", "甲"], ["B", "乙"]], answer: ["A"], explain: "" };
+  W.BANK.questions.push(q); W.byId[q.id] = q;
+});
+const mrtr = W.mcpDispatch(newReq(307, "tools/call", { name: "list_questions",
+  arguments: { bank: "MRTR重名库" } }));
+ok("题库重名升级成 input_required", mrtr.result.resultType === "input_required" &&
+   mrtr.result.inputRequests[0].id === "bank" && mrtr.result.inputRequests[0].options.length === 2 &&
+   !!mrtr.result.requestState, JSON.stringify(mrtr.result).slice(0, 240));
+const retry = W.mcpDispatch(newReq(308, "tools/call", { name: "list_questions",
+  arguments: { bank: "MRTR重名库" }, requestState: mrtr.result.requestState,
+  inputResponses: { bank: "mrtr_a" } }));
+ok("带 inputResponses 重试后完成", retry.result.resultType === "complete" &&
+   retry.result.structuredContent.bank.id === "mrtr_a", JSON.stringify(retry.result).slice(0, 200));
+const listCall = W.mcpDispatch(newReq(309, "tools/call", { name: "list_banks", arguments: {} }));
+ok("新版 list 工具结果带 ttlMs/cacheScope",
+   listCall.result.ttlMs === 300000 && listCall.result.cacheScope === "public");
+W.BANK.subjects = W.BANK.subjects.filter((x) => x.id !== "mrtr_a" && x.id !== "mrtr_b");
+W.BANK.questions = W.BANK.questions.filter((q) => q.subject !== "mrtr_a" && q.subject !== "mrtr_b");
+delete W.byId["mrtr_a-0"]; delete W.byId["mrtr_b-0"];
+
 /* ---------- 结果 ---------- */
 console.log("\n" + "=".repeat(46));
 if (fails.length) {

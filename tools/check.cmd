@@ -149,14 +149,14 @@ java "-Dfile.encoding=UTF-8" -cp "%OUT%;%JSON_JAR%" RunTraceTest
 if errorlevel 1 goto fail
 echo.
 echo === mcp server (loopback / token / 202) ===
-javac -encoding UTF-8 -d "%OUT%" "%~dp0..\app\src\main\java\com\fan\shuatiku\McpServer.java" "%~dp0McpServerTest.java"
+javac -encoding UTF-8 -cp "%JSON_JAR%" -d "%OUT%" "%~dp0..\app\src\main\java\com\fan\shuatiku\McpServer.java" "%~dp0McpServerTest.java"
 if errorlevel 1 goto fail
-java -cp "%OUT%" McpServerTest
+java "-Dfile.encoding=UTF-8" -cp "%OUT%;%JSON_JAR%" McpServerTest
 if not errorlevel 1 goto mcpOk
 rem 首跑偶发回环超时（本机防火墙/端口回收慢），单跑一次就能分辨：
 rem 复跑过 = 环境偶发；复跑还红 = 代码问题。红灯不再含糊。
 echo   [RETRY] McpServerTest failed on first run; retrying once to tell code bug from loopback flake
-java -cp "%OUT%" McpServerTest
+java "-Dfile.encoding=UTF-8" -cp "%OUT%;%JSON_JAR%" McpServerTest
 if errorlevel 1 goto fail
 :mcpOk
 echo.

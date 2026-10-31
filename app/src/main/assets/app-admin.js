@@ -1459,7 +1459,10 @@ function mcpRegistryTools() {
   if (!hits.length) hits = BANK.subjects.filter(function (s) { return s.name.toLowerCase() === want.toLowerCase(); });
   if (hits.length === 1) return hits[0];
   if (!hits.length) throw new Error("找不到题库：" + want);
-  throw new Error("题库名不唯一，请改用 id：" + hits.map(function (s) { return s.id; }).join(", "));
+  var dup = new Error("题库名不唯一，请改用 id：" + hits.map(function (s) { return s.id; }).join(", "));
+  /* 新版协议把它变成正式 MRTR：input_required + 选项，客户端选完重试原请求。 */
+  dup.needInput = { field: "bank", options: hits.map(function (s) { return { id: s.id, label: s.name }; }) };
+  throw dup;
 }
 function mcpQ(q) {
   return { id: q.id, num: q.num, type: q.type, stem: q.stem,
@@ -1626,27 +1629,46 @@ function mcpWriteAnswers(args) {
   toast("agent 改了 " + changes.length + " 题答案");
   return { updated: changes.length, missing: missing };
 }
-function mcpErr(id, code, msg) {
-  return { jsonrpc: "2.0", id: id === undefined ? null : id,
-           error: { code: code, message: String(msg) } };
+function mcpErr(id, code, msg, data) {
+  var e = { code: code, message: String(msg) };
+  if (data) e.data = data;
+  return { jsonrpc: "2.0", id: id === undefined ? null : id, error: e };
 }
 function mcpOk(id, result) {
   return { jsonrpc: "2.0", id: id === undefined ? null : id, result: result };
 }
-function mcpToolResult(data) {
-  return { content: [{ type: "text", text: JSON.stringify(data) }], structuredContent: data };
+function mcpToolResult(data, isNew, isList) {
+  var r = { content: [{ type: "text", text: JSON.stringify(data) }], structuredContent: data };
+  if (isNew && isList) { r.ttlMs = 300000; r.cacheScope = "public"; }
+  if (isNew) r.resultType = "complete";
+  return r;
 }
 function mcpToolError(msg) {
   return { content: [{ type: "text", text: String(msg) }], isError: true };
 }
+/* MRTR：需要补充信息时先存下原工具与参数，客户端带 inputResponses 重试。 */
+var MCP_INPUT_STATES = {}, mcpInputSeq = 0;
 /* 同步的纯分发：原生 HTTP 线程把请求塞进来，回包由 __mcpHandle 交回；
    check.mjs 直接调它测工具，不经过网络。 */
 function mcpDispatch(req) {
   if (!req || typeof req !== "object") return mcpErr(null, -32700, "Parse error");
   var id = req.id === undefined ? null : req.id;
   if (req.jsonrpc !== "2.0" || typeof req.method !== "string") return mcpErr(id, -32600, "Invalid Request");
+  var meta = req._meta || (req.params && req.params._meta) || null;
+  var isNew = !!meta;
+  if (isNew && meta.protocolVersion !== "2026-07-28") {
+    return mcpErr(id, -32022, "Unsupported protocolVersion", { supported: ["2026-07-28"] });
+  }
   var m = req.method;
   if (m.indexOf("notifications/") === 0) return null;
+  if (isNew && (m === "initialize" || m === "ping")) {
+    return mcpErr(id, -32601, m + " removed in 2026-07-28; use server/discover");
+  }
+  if (m === "server/discover") {
+    return mcpOk(id, { protocolVersion: "2026-07-28", supportedVersions: ["2026-07-28"],
+      capabilities: { tools: { listChanged: false } },
+      serverInfo: { name: "gime", version: APP_VER }, resultType: "complete" });
+  }
   if (m === "initialize") {
     var known = { "2024-11-05": 1, "2025-03-26": 1, "2025-06-18": 1 };
     var pv = req.params && known[req.params.protocolVersion] ? req.params.protocolVersion : MCP_PROTO;
@@ -1661,9 +1683,21 @@ function mcpDispatch(req) {
     });
   }
   if (m === "ping") return mcpOk(id, {});
-  if (m === "tools/list") return mcpOk(id, { tools: mcpRegistryTools() });
+  if (m === "tools/list") {
+    var tl = { tools: mcpRegistryTools() };
+    if (isNew) { tl.ttlMs = 300000; tl.cacheScope = "public"; tl.resultType = "complete"; }
+    return mcpOk(id, tl);
+  }
   if (m === "tools/call") {
     var p = req.params || {}, args = p.arguments || {}, data;
+    /* MRTR 重试：把用户选的值并回原参数，再走同一条执行路径 */
+    if (isNew && p.requestState) {
+      var st = MCP_INPUT_STATES[p.requestState];
+      if (!st) return mcpErr(id, -32602, "unknown requestState");
+      if (p.inputResponses && p.inputResponses.bank) args.bank = p.inputResponses.bank;
+      delete MCP_INPUT_STATES[p.requestState];
+    }
+    var isList = p.name === "list_banks" || p.name === "list_questions" || p.name === "list_plans";
     try {
       if (p.name === "list_banks") {
         data = { banks: BANK.subjects.map(function (s) {
@@ -1677,10 +1711,24 @@ function mcpDispatch(req) {
         if (typeof mcpPlanTool !== "function") throw new Error("方案工具还没加载");
         data = mcpPlanTool(p.name, args);
       }
-      else return mcpOk(id, mcpToolError("未知工具：" + p.name));
-      return mcpOk(id, mcpToolResult(data));
+      else {
+        var unk = mcpToolError("未知工具：" + p.name);
+        if (isNew) unk.resultType = "complete";
+        return mcpOk(id, unk);
+      }
+      return mcpOk(id, mcpToolResult(data, isNew, isList));
     } catch (e) {
-      return mcpOk(id, mcpToolError(e && e.message ? e.message : String(e)));
+      if (isNew && e && e.needInput) {
+        var state = "in" + (++mcpInputSeq) + Date.now().toString(36);
+        MCP_INPUT_STATES[state] = { tool: p.name, args: args };
+        return mcpOk(id, { resultType: "input_required",
+          inputRequests: [{ id: e.needInput.field, prompt: "题库名不唯一，请选择一个",
+            options: e.needInput.options }],
+          requestState: state });
+      }
+      var terr = mcpToolError(e && e.message ? e.message : String(e));
+      if (isNew) terr.resultType = "complete";
+      return mcpOk(id, terr);
     }
   }
   return mcpErr(id, -32601, "Method not found: " + m);

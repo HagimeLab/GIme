@@ -60,6 +60,27 @@ public class McpServerTest {
         r = req(port, "POST", "/nope", "Bearer " + token, "{}", null);
         ok("别的路径回 404", r.code == 404, "HTTP " + r.code);
 
+        /* P3：带 _meta 走 2026-07-28；必须带 Mcp-Method（tools/call 还要 Mcp-Name）。 */
+        String newList = "{\"jsonrpc\":\"2.0\",\"id\":7,\"method\":\"tools/list\","
+                + "\"params\":{\"_meta\":{\"protocolVersion\":\"2026-07-28\"}}}";
+        r = req2(port, newList, new String[]{"Mcp-Method", "tools/list"});
+        ok("新版 _meta + Mcp-Method 可用，并补 resultType",
+                r.code == 200 && r.body.indexOf("\"resultType\":\"complete\"") >= 0,
+                "HTTP " + r.code + " " + r.body);
+        r = req2(port, newList, null);
+        ok("新版缺 Mcp-Method 回 400", r.code == 400, "HTTP " + r.code);
+        String newCall = "{\"jsonrpc\":\"2.0\",\"id\":8,\"method\":\"tools/call\","
+                + "\"params\":{\"name\":\"list_banks\",\"arguments\":{},"
+                + "\"_meta\":{\"protocolVersion\":\"2026-07-28\"}}}";
+        r = req2(port, newCall, new String[]{"Mcp-Method", "tools/call", "Mcp-Name", "list_banks"});
+        ok("新版 tools/call 带 Mcp-Name 可用", r.code == 200, "HTTP " + r.code);
+        r = req2(port, newCall, new String[]{"Mcp-Method", "tools/call"});
+        ok("新版 tools/call 缺 Mcp-Name 回 400", r.code == 400, "HTTP " + r.code);
+        String badPv = newList.replace("2026-07-28", "1999-01-01");
+        r = req2(port, badPv, new String[]{"Mcp-Method", "tools/list"});
+        ok("协议版本不匹配回 -32022",
+                r.code == 200 && r.body.indexOf("-32022") >= 0, "HTTP " + r.code + " " + r.body);
+
         s.stop();
         ok("停止后端口可以重新绑定", canBind(port), "port still busy");
 
@@ -98,6 +119,40 @@ public class McpServerTest {
             } finally {
                 in.close();
             }
+        }
+        r.body = new String(b.toByteArray(), StandardCharsets.UTF_8);
+        c.disconnect();
+        return r;
+    }
+
+    private static Resp req2(int port, String body, String[] headers) throws IOException {
+        HttpURLConnection c = (HttpURLConnection)
+                new URL("http://127.0.0.1:" + port + "/mcp").openConnection();
+        c.setRequestMethod("POST");
+        c.setConnectTimeout(5000);
+        c.setReadTimeout(5000);
+        c.setRequestProperty("Authorization", "Bearer test-token-123");
+        c.setRequestProperty("Content-Type", "application/json");
+        if (headers != null) {
+            for (int i = 0; i + 1 < headers.length; i += 2) c.setRequestProperty(headers[i], headers[i + 1]);
+        }
+        c.setDoOutput(true);
+        c.getOutputStream().write(body.getBytes(StandardCharsets.UTF_8));
+        Resp r = new Resp();
+        try {
+            r.code = c.getResponseCode();
+        } catch (IOException e) {
+            r.code = -1;
+            return r;
+        }
+        InputStream in = r.code >= 400 ? c.getErrorStream() : c.getInputStream();
+        ByteArrayOutputStream b = new ByteArrayOutputStream();
+        if (in != null) {
+            try {
+                byte[] buf = new byte[4096];
+                int n;
+                while ((n = in.read(buf)) > 0) b.write(buf, 0, n);
+            } finally { in.close(); }
         }
         r.body = new String(b.toByteArray(), StandardCharsets.UTF_8);
         c.disconnect();

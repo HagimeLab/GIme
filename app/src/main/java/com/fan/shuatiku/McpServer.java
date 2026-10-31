@@ -15,6 +15,9 @@ import java.util.HashMap;
 import java.util.Locale;
 import java.util.Map;
 
+import org.json.JSONException;
+import org.json.JSONObject;
+
 /**
  * 只绑 127.0.0.1 的 MCP Streamable HTTP 端点。
  *
@@ -30,13 +33,15 @@ public final class McpServer {
     }
 
     public static final int PORT = 8765;
+    /** 新版无状态协议；老请求不带 _meta 时回落 2025 版式。 */
+    public static final String PROTO_NEW = "2026-07-28";
+    public static final String PROTO_OLD = "2025-03-26";
     private static final int MAX_BODY = 8 * 1024 * 1024;
     private static final int MAX_HEAD = 16 * 1024;
     private static final int SOCKET_TIMEOUT_MS = 30000;
 
     private final int port;
     private final Handler handler;
-    private final String sessionId;
     private volatile String token;
     private volatile ServerSocket server;
     private volatile boolean running;
@@ -46,7 +51,6 @@ public final class McpServer {
         this.port = port;
         this.token = token == null ? "" : token;
         this.handler = handler;
-        this.sessionId = randomHex(12);
     }
 
     public synchronized boolean start() {
@@ -157,14 +161,66 @@ public final class McpServer {
             byte[] body = readN(in, len);
             if (body == null) { json(out, 400, errorJson("truncated body")); return; }
 
+            String bodyText = new String(body, StandardCharsets.UTF_8);
+            boolean newProto = false;
+            String idText = "null";
+            try {
+                JSONObject reqObj = new JSONObject(bodyText);
+                JSONObject meta = reqObj.optJSONObject("_meta");
+                if (meta == null) {
+                    JSONObject pp = reqObj.optJSONObject("params");
+                    if (pp != null) meta = pp.optJSONObject("_meta");
+                }
+                if (meta != null) {
+                    newProto = true;
+                    idText = jsonId(reqObj.opt("id"));
+                    String pv = meta.optString("protocolVersion", "");
+                    if (!PROTO_NEW.equals(pv)) {
+                        json(out, 200, "{\"jsonrpc\":\"2.0\",\"id\":" + idText
+                                + ",\"error\":{\"code\":-32022,\"message\":\"Unsupported protocolVersion\","
+                                + "\"data\":{\"supported\":[\"" + PROTO_NEW + "\"]}}}");
+                        return;
+                    }
+                    String rpcMethod = reqObj.optString("method", "");
+                    String hm = h.get("mcp-method");
+                    if (hm == null || !hm.equals(rpcMethod)) {
+                        json(out, 400, errorJsonId(idText, "Mcp-Method header required/mismatch"));
+                        return;
+                    }
+                    if ("tools/call".equals(rpcMethod)) {
+                        JSONObject pp = reqObj.optJSONObject("params");
+                        String name = pp == null ? "" : pp.optString("name", "");
+                        String hn = h.get("mcp-name");
+                        if (hn == null || !hn.equals(name)) {
+                            json(out, 400, errorJsonId(idText, "Mcp-Name header required/mismatch"));
+                            return;
+                        }
+                    }
+                }
+            } catch (JSONException ignored) {
+                /* 解析不了的请求交给 Handler，保持老版式的错误形状 */
+            }
+
             String resp;
             try {
-                resp = handler.handle(new String(body, StandardCharsets.UTF_8));
+                resp = handler.handle(bodyText);
             } catch (Exception e) {
                 resp = "{\"jsonrpc\":\"2.0\",\"id\":null,\"error\":{\"code\":-32603,\"message\":"
                         + quote("internal error: " + e.getMessage()) + "}}";
             }
             if (resp == null || resp.isEmpty()) { cors(out, 202, null, null); return; }
+            if (newProto) {
+                /* resultType 是 2026-07-28 的必填项；Handler 没写就补 complete，
+                   input_required 等由 Handler 自己给。 */
+                try {
+                    JSONObject o = new JSONObject(resp);
+                    JSONObject r = o.optJSONObject("result");
+                    if (r != null && !r.has("resultType")) {
+                        r.put("resultType", "complete");
+                        resp = o.toString();
+                    }
+                } catch (JSONException ignored) { }
+            }
             cors(out, 200, "application/json; charset=utf-8", resp);
         } catch (Exception ignored) {
             // 连接级的异常不往上抛：一个坏请求不该带走整个服务
@@ -225,9 +281,8 @@ public final class McpServer {
         StringBuilder h = new StringBuilder();
         h.append("HTTP/1.1 ").append(code).append(' ').append(reason(code)).append("\r\n");
         h.append("Access-Control-Allow-Origin: *\r\n");
-        h.append("Access-Control-Allow-Headers: Authorization, Content-Type, Mcp-Session-Id, X-GIme-Token\r\n");
+        h.append("Access-Control-Allow-Headers: Authorization, Content-Type, Mcp-Method, Mcp-Name, MCP-Protocol-Version, X-GIme-Token\r\n");
         h.append("Access-Control-Allow-Methods: POST, GET, OPTIONS\r\n");
-        h.append("Access-Control-Expose-Headers: Mcp-Session-Id\r\n");
         h.append("Connection: close\r\n");
         if (type != null) h.append("Content-Type: ").append(type).append("\r\n");
         h.append("Content-Length: ").append(b.length).append("\r\n\r\n");
@@ -252,8 +307,18 @@ public final class McpServer {
     }
 
     private static String errorJson(String msg) {
-        return "{\"jsonrpc\":\"2.0\",\"id\":null,\"error\":{\"code\":-32600,\"message\":"
+        return errorJsonId("null", msg);
+    }
+
+    private static String errorJsonId(String idText, String msg) {
+        return "{\"jsonrpc\":\"2.0\",\"id\":" + idText + ",\"error\":{\"code\":-32600,\"message\":"
                 + quote(msg) + "}}";
+    }
+
+    private static String jsonId(Object id) {
+        if (id == null || id == JSONObject.NULL) return "null";
+        if (id instanceof Number || id instanceof Boolean) return String.valueOf(id);
+        return quote(String.valueOf(id));
     }
 
     private static String quote(String s) {
