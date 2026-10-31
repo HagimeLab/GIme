@@ -1265,6 +1265,16 @@ function chatLayout() {
     }
   }
 }
+/* 模型有时只写「我可以调用 list_banks…」却不下发 tool_calls，
+   这段文字不是答案，应自动催它真正调用。窄匹配，避免误伤正常说明。 */
+function chatToolIntent(text) {
+  var s = String(text == null ? "" : text).trim();
+  if (!s || s.length > 600) return false;
+  if (/已(经)?(调用|查|执行)|调用(结果|完成)|结果如下/.test(s)) return false;
+  if (!/(调用|使用工具|查一下|查询|执行工具)/.test(s)) return false;
+  if (!/(我|让我|我来|我先|我需要|我可以|我应该|接下来|先|准备|将|会)/.test(s)) return false;
+  return /(list[_]?banks|list[_]?questions|list[_]?plans|create[_]?plan|update[_]?plan|delete[_]?plan|notify[_]?phone|write[_]?(answers|explanations)|import[_]?(bank|attachment)|get[_]?current[_]?question|工具)/i.test(s);
+}
 /* 回答里的工具执行摘要单独成块；只读展示，默认收起 */
 function chatToolsHtml(m) {
   var list = (m && Array.isArray(m.tools)) ? m.tools : [];
@@ -1935,6 +1945,7 @@ async function chatRun(cfg, attachMeta) {
   var seenCall = {};
   var budgetStop = "";
   var badToolRetry = 0;
+  var toolIntentNudges = 0;
   chatLastImported = 0;   /* 本轮真的新增了多少题：自动续轮靠它判断 */
   var dig = [];   /* 这一轮做过的工具动作，收口时挂到回答气泡上 */
   /* 一条流式气泡 + 它的增量回调。收口那一轮也要用，所以抽出来。 */
@@ -2061,6 +2072,19 @@ async function chatRun(cfg, attachMeta) {
         chatRender();
         return;
       }
+    }
+    /* 模型只说要调用工具、却没发 tool_calls：把这段“通知”收掉，自动催它执行。
+       最多催 3 次，避免把一句正常说明当成工具计划死循环。 */
+    if (!calls.length && round < rounds - 1 && toolIntentNudges < 3 &&
+        chatToolIntent(msg.content)) {
+      toolIntentNudges++;
+      chatDrop(live);
+      messages.push({ role: "assistant", content: String(msg.content || "") });
+      messages.push({ role: "system", content: "你刚才只描述了要调用工具，并没有真正发出调用。" +
+        "现在直接调用需要的工具；如果不需要工具，就直接给出完整答案。不要只说“我将调用/我可以调用”。" });
+      chatPush({ role: "step", hidden: true, text: "只说了工具计划，未真正调用；已自动催促执行" }, true);
+      chatRender();
+      continue;
     }
     if (calls.length) {
       /* 这一轮只是在调工具，不是给用户看的回答：把流式气泡收掉，别留一串工具 JSON。 */

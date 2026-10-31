@@ -3148,6 +3148,25 @@ ok("没有 questions 的结果改带头+尾，中间省略多少字写出来",
    prose.indexOf("中间省略") >= 0 && prose.slice(-2) === '"}' &&
    prose.length < 3100, prose.length + " / 结尾 " + prose.slice(-8));
 
+/* ④ 只说「我可以调用…」却不发 tool_calls：自动催它执行，不要求用户再说一次 */
+W.chatMsgs = []; loopReqs = [];
+W.chatPush({ role: "user", text: "查题库" });
+loopReplies = [
+  finalText("我可以调用 list_banks 来获取题库列表。"),
+  askTool("list_banks", {}, 99),
+  finalText("查到了 4 个题库。")
+];
+await W.chatRun(W.agentCfg());
+ok("只描述工具计划会自动催它真正调用",
+   loopReqs.length === 3 &&
+   loopReqs[1].body.messages.some((m) => m.role === "system" &&
+     String(m.content).indexOf("并没有真正发出调用") >= 0),
+   JSON.stringify({ n: loopReqs.length }));
+ok("催促后执行工具并给出最终回答",
+   W.chatMsgs.some((m) => m.role === "step" && String(m.text).indexOf("已自动催促执行") >= 0) &&
+   String(W.chatMsgs[W.chatMsgs.length - 1].text || "").indexOf("4 个题库") >= 0,
+   JSON.stringify(W.chatMsgs.map((m) => m.text).slice(-4)));
+
 /* ⑤ 同一 (工具, 参数) 第二次出现：不再重复执行，只把话挑明 */
 W.chatMsgs = []; loopReqs = [];
 W.chatPush({ role: "user", text: "再说一遍这库多少题" });
