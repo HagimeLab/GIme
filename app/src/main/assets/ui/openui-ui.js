@@ -10,7 +10,16 @@ const textOf = (v) => (v == null ? '' : String(v));
 
 // 按下即触发：收键盘会让布局在按下与抬起之间上移，走 click 会点空
 function bindTap(node, fn) {
+  let lastFire = 0;
   const fire = (e) => {
+    /* 真机同一次点击会先后送来 touchstart 和 mousedown；不去重的话
+       toggle: 会连切两次（看起来没反应）、send: 会重复发两条。 */
+    const now = Date.now();
+    if (now - lastFire < 450) {
+      if (e && e.cancelable) e.preventDefault();
+      return;
+    }
+    lastFire = now;
     if (e && e.cancelable) e.preventDefault();
     fn(e);
     // 动作自己把光标放进了输入框（再调整 / value:）就不要收回来

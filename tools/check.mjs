@@ -2436,6 +2436,7 @@ ok("OpenUI 组件签名来自 schema（参数顺序正确）", (() => {
 })());
 ok("OpenUI 新组件已接渲染器", ["List", "Steps", "Callout", "Chart"].every((n) =>
   new RegExp("case '" + n + "'").test(jsSources[1])));
+ok("OpenUI 按钮同一次点击只触发一次", /now - lastFire < 450/.test(jsSources[1]));
 
 /* 三条：正文与围栏分开、源码不进正文、流式期把没收尾的围栏藏起来 */
 const uiMsg = W.chatPush({
