@@ -1102,6 +1102,12 @@ html.swap, html.swap * { transition: none !important; }
   color: var(--text);
 }
 
+.oui-btn.done {
+  background: var(--surface-2);
+  color: var(--text);
+  box-shadow: inset 0 0 0 1px var(--line);
+}
+
 .oui-field {
   display: flex;
   flex-direction: column;

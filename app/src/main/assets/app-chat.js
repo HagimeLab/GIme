@@ -931,7 +931,18 @@ function chatOuiRoute(verb, arg, m, node, form) {
     return;
   }
   if (verb === "toggle") {
-    if (typeof planToggleByArg === "function") planToggleByArg(arg);
+    var done = typeof planToggleByArg === "function" ? planToggleByArg(arg) : null;
+    if (done === true || done === false) {
+      var bits = String(arg || "").split(":");
+      var idx = parseInt(bits[2], 10);
+      var tail = isNaN(idx) ? "" : "第 " + (idx + 1) + " 项";
+      if (node && node.textContent) {
+        node.textContent = done ? "取消完成" + tail : "完成" + tail;
+        node.classList.toggle("done", done);
+        node.setAttribute("aria-pressed", done ? "true" : "false");
+      }
+      toast(done ? "已标记完成" : "已取消完成");
+    }
     return;
   }
   if (verb === "insight") {

@@ -3893,6 +3893,14 @@ ok("nav:#/plan/<id> 打开方案详情", W.planView.mode === "detail" && W.planV
 const beforeToggle = fake.plans[0].days[0].items[2].done;
 W.chatOuiRoute("toggle", plId + ":" + todayKey + ":2", null, null, null);
 ok("toggle:<id>:<date>:<序号> 打卡", fake.plans[0].days[0].items[2].done !== beforeToggle);
+const toggleNode = W.document.createElement("button");
+toggleNode.textContent = "完成第 3 项";
+W.chatOuiRoute("toggle", plId + ":" + todayKey + ":2", null, toggleNode, null);
+const afterNode = fake.plans[0].days[0].items[2].done;
+ok("打卡按钮即时更新状态",
+   String(toggleNode.textContent) === (afterNode ? "取消完成第 3 项" : "完成第 3 项") &&
+   toggleNode.classList.contains("done") === afterNode,
+   JSON.stringify({ text: toggleNode.textContent, done: afterNode }));
 W.chatOuiRoute("approve", plId, null, null, null);
 ok("approve:<id> 启用暂停的方案", fake.plans[0].enabled === true);
 W.chatOuiRoute("adjust", plId, null, null, null);

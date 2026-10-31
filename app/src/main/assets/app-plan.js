@@ -405,8 +405,9 @@ function planToggle(id, date, text) {
   for (var i = 0; i < d.items.length; i++) if (d.items[i].text === text) { it = d.items[i]; break; }
   if (!it) { toast("找不到这一项"); return; }
   var out = planWrite(id, "toggle_item", { date: date, text: text, done: !it.done });
-  if (out.error) toast(out.error);
-  else vibrate(8);
+  if (out.error) { toast(out.error); return null; }
+  vibrate(8);
+  return !it.done;   /* 新状态，供卡片按钮即时更新 */
 }
 
 function planPowerToggle(id) {
@@ -719,8 +720,8 @@ function planToggleByArg(arg) {
     var it = d.items[Number(tail)];
     text = it ? it.text : "";
   }
-  if (!text) { toast("这一项不在方案里"); return; }
-  planToggle(pid, date, text);
+  if (!text) { toast("这一项不在方案里"); return null; }
+  return planToggle(pid, date, text);
 }
 
 function planApproveByArg(arg) {
