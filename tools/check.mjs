@@ -2607,6 +2607,9 @@ ok("全屏对话可下拉收回", /function chatPullInit/.test(html)
 ok("输入框可展开/收起", /function chatToggleInput/.test(html)
    && /chat-expanded/.test(html) && /function chatAutoGrow/.test(html)
    && /id="chatExpand"/.test(html) && /oninput="chatAutoGrow\(this\)"/.test(html));
+ok("展开控件在输入框内部", /<div class="chat-field">/.test(html)
+   && /\.chat-field\s*\{[^}]*position:\s*relative/.test(cssText)
+   && /\.chat-more\s*\{[^}]*position:\s*absolute/.test(cssText));
 ok("对话打开后多段补滚到底", /function chatScrollBottomSoon/.test(html)
    && /chatScrollBottomSoon\(\)/.test(html));
 ok("OpenUI 卡挂载后跟随到底", /root\.scrollTop = root\.scrollHeight/.test(html));

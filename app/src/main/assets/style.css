@@ -515,10 +515,15 @@ button.rec:active { opacity: .62; }
 .chat-att { flex: 0 0 40px; width: 40px; height: 44px; padding: 0; border-radius: 14px; border: none;
             background: transparent; color: var(--ink-3); display: flex; align-items: center; justify-content: center; }
 .chat-att:active { background: var(--raise); }
-.chat-more { flex: 0 0 36px; width: 36px; }
+.chat-field { position: relative; flex: 1; min-width: 0; display: flex; }
+.chat-field textarea { width: 100%; padding-right: 38px; }
+.chat-more { position: absolute; right: 6px; bottom: 7px; width: 26px; height: 26px; padding: 0;
+             border: none; border-radius: 50%; background: transparent; color: var(--ink-3);
+             display: flex; align-items: center; justify-content: center; }
+.chat-more:active { background: var(--raise); }
 .chat-more svg { transition: transform .18s var(--ease); }
 .chat.chat-expanded .chat-more svg { transform: rotate(180deg); }
-.chat.chat-expanded .chat-in textarea { max-height: 40vh; }
+.chat.chat-expanded .chat-field textarea { max-height: 40vh; }
 .chat.chat-expanded .chat-hint { display: none; }
 /* 待确认的附件导入：和 note 同样占一行，但带两个按钮 */
 .chat-confirm .cf-name { font-weight: 600; color: var(--ink); }
