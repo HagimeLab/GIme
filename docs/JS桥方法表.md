@@ -4,7 +4,7 @@
 
 这张表是 **P0 的导出面**：把现在暴露出去的东西一次列清楚，标明每个方法的入参形状与信任级别，供 P2 设计 AgentLoop 的工具注册时对照，也供后续安全收口时判断「哪些口子必须先收紧」。
 
-- 生成依据：`app/src/main/java/com/fan/shuatiku/MainActivity.java` 里全部 `@JavascriptInterface` 注解方法（当前 **41 个**）。
+- 生成依据：`app/src/main/java/com/fan/shuatiku/MainActivity.java` 里全部 `@JavascriptInterface` 注解方法（当前 **42 个**）。
 - P0 已加闸的方法在「P0 校验」一列写明；标 `—` 的表示本次未改动（见文末「P0 没做什么」）。
 - 校验规则集中在 `BridgeGuard.java`（纯逻辑、零 Android 依赖），回归用例在 `tools/BridgeTest.java`，由 `tools/check.cmd` 的 `js bridge guard` 段执行。
 
@@ -66,45 +66,46 @@
 | # | 方法 | 入参 | 返回 | 级别 | P0 校验 | 说明 |
 | --- | --- | --- | --- | --- | --- | --- |
 | 22 | `mcpReply(id, json)` | `id`、`json` | `void` | L2 | **id 形状 + 回包长度 + 未知 id 打日志** | 页面把工具执行结果交回 HTTP 线程；`id` 形如 `mcp3` |
+| 23 | `mcpResetToken()` | — | `String` | L1 | — | 换一把新口令并立即使旧口令失效；返回新口令（明文）供设置页复制。口令落盘经 SecurePrefs 加密，**不进 logcat** |
 
 ### 文件与题库
 
 | # | 方法 | 入参 | 返回 | 级别 | P0 校验 | 说明 |
 | --- | --- | --- | --- | --- | --- | --- |
-| 23 | `pickFile()` | — | `void`（回调带结果） | L2 | — | 拉起系统文件选择器（导入题库） |
-| 24 | `pickChatFile()` | — | `void` | L2 | — | 拉起文件选择器（大肥鱼附件） |
-| 25 | `loadBanks()` | — | `String`(JSON 数组) | L0 | — | 启动时一次性读回全部已导入题库 |
-| 26 | `saveBank(id, json)` | `id`、`json` | `boolean` | L1 | — | 写题库文件；落盘前经 `BankStore.save` |
-| 27 | `deleteBank(id)` | `id` | `boolean` | L1 | — | 删题库文件；`BankStore.safe(id)` 兜底路径 |
-| 28 | `importSample()` | — | `String` | L0 | — | 读内置示例题库原文 |
-| 29 | `saveImportSample()` | — | `String` | L1 | — | 把示例题库写到外部下载目录（Q+ 走 MediaStore） |
+| 24 | `pickFile()` | — | `void`（回调带结果） | L2 | — | 拉起系统文件选择器（导入题库） |
+| 25 | `pickChatFile()` | — | `void` | L2 | — | 拉起文件选择器（大肥鱼附件） |
+| 26 | `loadBanks()` | — | `String`(JSON 数组) | L0 | — | 启动时一次性读回全部已导入题库 |
+| 27 | `saveBank(id, json)` | `id`、`json` | `boolean` | L1 | — | 写题库文件；落盘前经 `BankStore.save` |
+| 28 | `deleteBank(id)` | `id` | `boolean` | L1 | — | 删题库文件；`BankStore.safe(id)` 兜底路径 |
+| 29 | `importSample()` | — | `String` | L0 | — | 读内置示例题库原文 |
+| 30 | `saveImportSample()` | — | `String` | L1 | — | 把示例题库写到外部下载目录（Q+ 走 MediaStore） |
 
 ### 界面与剪贴板
 
 | # | 方法 | 入参 | 返回 | 级别 | P0 校验 | 说明 |
 | --- | --- | --- | --- | --- | --- | --- |
-| 30 | `copyText(text)` | `text` | `boolean` | L1 | — | 写系统剪贴板（设置页复制地址/口令） |
-| 31 | `ouiAction(action, payloadJson)` | `action`、`payloadJson` | `void` | L1 | — | OpenUI 卡片按钮点击；P0 只打一行 `GImeOui` 日志留痕，动作路由留到 P1 |
+| 31 | `copyText(text)` | `text` | `boolean` | L1 | — | 写系统剪贴板（设置页复制地址/口令） |
+| 32 | `ouiAction(action, payloadJson)` | `action`、`payloadJson` | `void` | L1 | — | OpenUI 卡片按钮点击；P0 只打一行 `GImeOui` 日志留痕，动作路由留到 P1 |
 
 ### 提醒与系统权限（P1）
 
 | # | 方法 | 入参 | 返回 | 级别 | P0 校验 | 说明 |
 | --- | --- | --- | --- | --- | --- | --- |
-| 32 | `planRemindState()` | — | `String`(JSON) | L0 | — | `{granted, battery, sdk}`：通知是否放行、是否已豁免省电、系统版本 |
-| 33 | `planRemindAsk()` | — | `void` | L1 | — | Android 13+ 申请 `POST_NOTIFICATIONS`；已拒绝/系统关闭则跳应用通知设置 |
-| 34 | `planBatteryAsk()` | — | `void` | L1 | — | 跳系统省电豁免列表；找不到该页时退到应用详情 |
-| 35 | `planRemindTest(slot)` | `slot` | `void` | L1 | **仅 debug** | 进程内投递一次提醒：1/2 早/晚提醒、0 模拟开机广播、-1 只取消闹钟；发布包直接 return |
+| 33 | `planRemindState()` | — | `String`(JSON) | L0 | — | `{granted, battery, sdk}`：通知是否放行、是否已豁免省电、系统版本 |
+| 34 | `planRemindAsk()` | — | `void` | L1 | — | Android 13+ 申请 `POST_NOTIFICATIONS`；已拒绝/系统关闭则跳应用通知设置 |
+| 35 | `planBatteryAsk()` | — | `void` | L1 | — | 跳系统省电豁免列表；找不到该页时退到应用详情 |
+| 36 | `planRemindTest(slot)` | `slot` | `void` | L1 | **仅 debug** | 进程内投递一次提醒：1/2 早/晚提醒、0 模拟开机广播、-1 只取消闹钟；发布包直接 return |
 
 ### 方案详情（P1 / S3）
 
 | # | 方法 | 入参 | 返回 | 级别 | P0 校验 | 说明 |
 | --- | --- | --- | --- | --- | --- | --- |
-| 36 | `planGet(id)` | `id` | `String`(JSON) | L0 | — | 读一份完整方案：`{plan:{days,adjustments,…}}`；详情页逐日渲染用，摘要列表故意不带 `days` |
-| 37 | `notifyPhone(title, body)` | `title`、`body` | `boolean` | L1 | — | 立即弹一条方案通知（渠道 `gime-plan`）；body 为空或系统没放行时返回 false |
-| 38 | `toolSchemas()` | — | `String`(JSON) | L0 | — | 10 个工具的 schema 唯一真源（Java ToolRegistry）；MCP `tools/list` 与 AgentLoop 的 tools 参数都读这一份 |
-| 39 | `agentCall(op, json)` | `op`、`json` | `String`(JSON) | L1 | — | Agent 护栏：begin / tick / check / approve / deny / finish；预算、重复调用与写操作批准的状态在 Java 侧 |
-| 40 | `exportTrace()` | — | `String` | L1 | — | 把最近 20 次 Agent 运行的三级 trace + 指标（脱敏）写成 JSON 到系统「下载」目录 |
-| 41 | `memoryCall(op, json)` | `op`、`json` | `String`(JSON) | L1 | — | 记忆库：snapshot / save / clear；长期画像与会话摘要落在 filesDir/memory/memory.json |
+| 37 | `planGet(id)` | `id` | `String`(JSON) | L0 | — | 读一份完整方案：`{plan:{days,adjustments,…}}`；详情页逐日渲染用，摘要列表故意不带 `days` |
+| 38 | `notifyPhone(title, body)` | `title`、`body` | `boolean` | L1 | — | 立即弹一条方案通知（渠道 `gime-plan`）；body 为空或系统没放行时返回 false |
+| 39 | `toolSchemas()` | — | `String`(JSON) | L0 | — | 10 个工具的 schema 唯一真源（Java ToolRegistry）；MCP `tools/list` 与 AgentLoop 的 tools 参数都读这一份 |
+| 40 | `agentCall(op, json)` | `op`、`json` | `String`(JSON) | L1 | — | Agent 护栏：begin / tick / check / approve / deny / finish；预算、重复调用与写操作批准的状态在 Java 侧 |
+| 41 | `exportTrace()` | — | `String` | L1 | — | 把最近 20 次 Agent 运行的三级 trace + 指标（脱敏）写成 JSON 到系统「下载」目录 |
+| 42 | `memoryCall(op, json)` | `op`、`json` | `String`(JSON) | L1 | — | 记忆库：snapshot / save / clear；长期画像与会话摘要落在 filesDir/memory/memory.json |
 
 ## P0 加的闸门（`BridgeGuard`）
 

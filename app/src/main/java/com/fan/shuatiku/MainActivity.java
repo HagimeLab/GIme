@@ -130,6 +130,9 @@ public class MainActivity extends Activity {
         /* T6/A-5：历史明文凭据在启动时就地升级成 AES-GCM 密文，不再等下一次登录。 */
         SecurePrefs.migrate(getSharedPreferences("ds", MODE_PRIVATE),
                 new String[]{"token", "mobile", "cookie", "device_id"});
+        /* MCP 口令同样是凭据：历史明文一次性升级成密文。 */
+        SecurePrefs.migrate(getSharedPreferences(PREFS_MCP, MODE_PRIVATE),
+                new String[]{PREF_MCP_TOKEN});
         /* Agent trace 同时进 logcat（GImeAgent）与私有环形缓冲；导出入口在「我的」。 */
         com.fan.shuatiku.agent.RunTrace.setSink(new com.fan.shuatiku.agent.RunTrace.Sink() {
             @Override public void log(String line) {
@@ -516,10 +519,11 @@ public class MainActivity extends Activity {
         if (mcp != null && mcp.isRunning()) return;
         if (web == null || !pageReady) return;
         android.content.SharedPreferences p = getSharedPreferences(PREFS_MCP, MODE_PRIVATE);
-        String token = p.getString(PREF_MCP_TOKEN, "");
+        /* 口令落盘走 SecurePrefs（AES-256-GCM）；历史明文在 onCreate 里已就地升级。 */
+        String token = SecurePrefs.dec(p.getString(PREF_MCP_TOKEN, ""));
         if (token == null || token.isEmpty()) {
             token = McpServer.randomHex(24);
-            p.edit().putString(PREF_MCP_TOKEN, token).apply();
+            p.edit().putString(PREF_MCP_TOKEN, SecurePrefs.enc(token)).apply();
         }
         McpServer s = new McpServer(McpServer.PORT, token, new McpServer.Handler() {
             @Override public String handle(String requestJson) { return mcpHandle(requestJson); }
@@ -527,18 +531,36 @@ public class MainActivity extends Activity {
         if (s.start()) {
             mcp = s;
             mcpError = "";
-            /* 页面不再提供口令入口：要接电脑上的 agent，就从这行日志取。
-               adb logcat -s GImeMCP  （Android 上别的应用读不到别的应用的日志） */
-            android.util.Log.i("GImeMCP", "http://127.0.0.1:" + McpServer.PORT + "/mcp token=" + token);
+            /* 口令绝不能进 logcat：诊断包/日志会被导出、转发、贴到工单里。
+               这行只留地址；要口令请在「我的」页复制（外部 tools/gime-mcp.mjs 用）。 */
+            android.util.Log.i("GImeMCP", "http://127.0.0.1:" + McpServer.PORT
+                    + "/mcp 已就绪（口令不在日志里，请在设置页复制）");
         } else {
             mcp = null;
             mcpError = s.error();
         }
     }
 
+    /** 换一把新口令：旧的立即失效。设置页调用，返回新口令供复制。 */
+    public String mcpResetToken() {
+        try {
+            String fresh = McpServer.randomHex(24);
+            getSharedPreferences(PREFS_MCP, MODE_PRIVATE)
+                    .edit().putString(PREF_MCP_TOKEN, SecurePrefs.enc(fresh)).apply();
+            McpServer s = mcp;
+            if (s != null) s.setToken(fresh);
+            android.util.Log.i("GImeMCP", "口令已重置（旧口令立即失效）");
+            return fresh;
+        } catch (Throwable t) {
+            android.util.Log.w("GImeMCP", "口令重置失败：" + t.getClass().getSimpleName());
+            return "";
+        }
+    }
+
     private synchronized String mcpStatusJson() {
         mcpStart();
-        String token = getSharedPreferences(PREFS_MCP, MODE_PRIVATE).getString(PREF_MCP_TOKEN, "");
+        String token = SecurePrefs.dec(getSharedPreferences(PREFS_MCP, MODE_PRIVATE)
+                .getString(PREF_MCP_TOKEN, ""));
         boolean running = mcp != null && mcp.isRunning();
         try {
             return new JSONObject()
@@ -656,6 +678,12 @@ public class MainActivity extends Activity {
         @JavascriptInterface
         public String mcpStatus() {
             return mcpStatusJson();
+        }
+
+        /** 换一把新口令：旧的立即失效；返回新口令供设置页复制。 */
+        @JavascriptInterface
+        public String mcpResetToken() {
+            return MainActivity.this.mcpResetToken();
         }
 
         /** 页面把工具执行结果交回 HTTP 线程。 */

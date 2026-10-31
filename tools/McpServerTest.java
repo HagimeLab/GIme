@@ -81,6 +81,14 @@ public class McpServerTest {
         ok("协议版本不匹配回 -32022",
                 r.code == 200 && r.body.indexOf("-32022") >= 0, "HTTP " + r.code + " " + r.body);
 
+        /* B1：重置口令后旧口令必须立刻失效，新口令可用。 */
+        String fresh = "test-token-456";
+        s.setToken(fresh);
+        r = req(port, "POST", "/mcp", "Bearer " + token, "{\"method\":\"ping\"}", null);
+        ok("重置后旧口令回 401", r.code == 401, "HTTP " + r.code);
+        r = req(port, "POST", "/mcp", "Bearer " + fresh, "{\"method\":\"ping\"}", null);
+        ok("重置后新口令可用", r.code == 200, "HTTP " + r.code);
+
         s.stop();
         ok("停止后端口可以重新绑定", canBind(port), "port still busy");
 

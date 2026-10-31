@@ -787,6 +787,9 @@ W.goTab("me");
 const meSetHtml = String(W.document.getElementById("meSet").innerHTML);
 ok("「我的」页没有搜索题目行", meSetHtml.indexOf('data-k="search"') < 0);
 ok("「检查更新」行还在", meSetHtml.indexOf('data-k="update"') >= 0);
+ok("「我的」页有 MCP 连接行", meSetHtml.indexOf('data-k="mcp"') >= 0);
+ok("MCP 重置入口有二次确认", /askMcpReset/.test(html) && /确认重置/.test(html));
+ok("MCP 口令弹窗允许断词", /\.glass\.mcp p/.test(html) && /cls: "mcp"/.test(html));
 ok("首页头像已删除", html.indexOf('id="avatarImg"') < 0 && html.indexOf('class="avatar"') < 0);
 ok("首页不再引用 icon.png", html.indexOf('src="icon.png"') < 0);
 ok("主题按钮还在", html.indexOf('id="themeBtn"') >= 0);
@@ -1823,10 +1826,10 @@ W.applyChatFs();
 /* ---------- 21. MCP 常开 + 大肥鱼系统提示词 ---------- */
 section("[21] MCP 常开与大肥鱼提示词");
 
-/* MCP 不设开关也不设配置面板：应用在跑它就在跑，应用关掉才停 */
+/* MCP 不设开关：应用在跑它就在跑；B1 起「我的」里有一行只做复制口令/重置 */
 W.renderMe();
 const meSet2 = String(W.document.getElementById("meSet").innerHTML);
-ok("「我的」里没有 MCP 行", meSet2.indexOf('data-k="mcp"') < 0);
+ok("「我的」里有 MCP 连接行", meSet2.indexOf('data-k="mcp"') >= 0);
 ok("「我的」里大肥鱼行还在", meSet2.indexOf('data-k="agent"') >= 0);
 ok("MCP 配置面板已删除", typeof W.openMcp === "undefined" && typeof W.mcpToggle === "undefined"
    && typeof W.mcpRotate === "undefined" && typeof W.mcpCopy === "undefined");

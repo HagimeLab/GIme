@@ -1848,6 +1848,7 @@ function renderMe() {
     row("autoExp", "答完展开解析", "关闭后判分只给答案，解析自己点开", true, set.autoExp) +
     row("import", "导入题库", "PDF / Word / txt / md，带解析一起导", false) +
     row("agent", "大肥鱼", agentSub(), false) +
+    row("mcp", "MCP 连接", "127.0.0.1:8765 · 复制口令 / 重置", false) +
     row("remind", "每日提醒", "8:30 / 21:00 · 每个方案单独开关", false) +
     row("notify", "通知权限", remindInfo
       ? (remindInfo.granted ? "已允许 · 提醒可以弹出" : "未允许 · 点这里开启")
@@ -1870,6 +1871,7 @@ function row(k, title, sub, sw, on, mark) {
          : k === "font" ? "cycleFont()"
          : k === "import" ? "openImport()"
          : k === "agent" ? "openAgentCfg()"
+         : k === "mcp" ? "openMcpCfg()"
          : k === "remind" ? "openPlans()"
          : k === "notify" ? "askRemindPerm()"
          : k === "battery" ? "askBatteryOpt()"

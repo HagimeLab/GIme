@@ -565,6 +565,8 @@ button.rec:active { opacity: .62; }
 .glass .icon { font-size: 1.5rem; font-weight: 800; }
 .glass h2 { font-size: 1.125rem; font-weight: 700; margin: 10px 0 4px; }
 .glass p { font-size: .8125rem; color: var(--ink-2); margin-bottom: 22px; }
+/* MCP 口令是一整串无空格字符，默认会顶出弹窗；pre-line 同时让地址/口令分两行 */
+.glass.mcp p { white-space: pre-line; word-break: break-all; }
 .glass .btns { display: flex; width: 100%; }
 .glass .btns button { flex: 1; padding: 14px 0; font-size: .9375rem; font-weight: 700; }
 .glass .btns button.pri { background: var(--ink); color: var(--paper); border-radius: var(--r-in); }

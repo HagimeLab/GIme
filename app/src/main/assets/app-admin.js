@@ -553,7 +553,7 @@ function glass(o) {
   var g = document.getElementById("glass");
   /* no 显式传 null 就是纯提示，不该多一个语义重复的「取消」 */
   var one = o.no === null;
-  g.className = "glass";      /* 更新弹窗会给自己加 upd 类，这里必须清掉 */
+  g.className = "glass" + (o.cls ? " " + o.cls : "");   /* 更新弹窗会给自己加 upd 类，这里必须清掉 */
   g.innerHTML = (o.icon ? '<div class="icon">' + o.icon + "</div>" : "") +
     (o.big != null ? '<div class="big">' + o.big + "</div>" : "") +
     "<h2>" + esc(o.title) + "</h2><p>" + esc(o.desc || "") + "</p>" +
@@ -563,6 +563,40 @@ function glass(o) {
   openLayer(g);
   document.getElementById("gOk").onclick = function () { closeTop(); o.ok[1] && o.ok[1](); };
   if (!one) document.getElementById("gNo").onclick = function () { closeTop(); o.no && o.no[1] && o.no[1](); };
+}
+
+/* MCP 口令：只在本机设置页露出，可复制给电脑端；重置后旧口令立即失效。 */
+function openMcpCfg() {
+  if (!window.Android || !Android.mcpStatus) { toast("仅手机版可用"); return; }
+  var st = {};
+  try { st = JSON.parse(Android.mcpStatus() || "{}"); } catch (e) { st = {}; }
+  if (!st.running) {
+    glass({ title: "MCP 未运行", desc: st.error || "服务没有起来", ok: ["知道了"] });
+    return;
+  }
+  glass({
+    title: "MCP 连接",
+    cls: "mcp",
+    desc: "地址 127.0.0.1:" + (st.port || 8765) + "\n口令 " + (st.token || ""),
+    ok: ["复制口令", function () {
+      try { Android.copyText(String(st.token || "")); toast("口令已复制"); }
+      catch (e) { toast("复制失败"); }
+    }],
+    no: ["重置口令", function () { askMcpReset(); }]
+  });
+}
+function askMcpReset() {
+  glass({
+    title: "重置 MCP 口令？",
+    desc: "旧口令立即失效，已配置的电脑端要换成新口令。",
+    ok: ["确认重置", function () {
+      var t = "";
+      try { t = String(Android.mcpResetToken() || ""); } catch (e) { t = ""; }
+      if (!t) { toast("重置失败"); return; }
+      try { Android.copyText(t); } catch (e) {}
+      toast("已重置，新口令已复制");
+    }]
+  });
 }
 
 var toastTimer = null;
