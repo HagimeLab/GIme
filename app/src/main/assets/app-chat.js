@@ -1570,10 +1570,12 @@ async function chatSendText(text, silent) {
   if (!silent) chatWork = { title: "", steps: [], count: 0 };
   chatRender();
   var ranOk = false;
+  var runStatus = "ok";
   try {
     await chatRun(cfg, attachMeta);
     ranOk = true;
   } catch (e) {
+    runStatus = "error";
     var em = e && e.message ? e.message : String(e);
     /* 重试提示是临时灰字，报错时留着只会让对话更乱；一并清掉。 */
     chatMsgs = chatMsgs.filter(function (m) { return m.role !== "note"; });
@@ -1581,7 +1583,8 @@ async function chatSendText(text, silent) {
     if (chatPending) chatPending.parsing = false;   /* 停了也别把已收到的困在卡里 */
   }
   chatBusy = false;
-  chatLastRun = agentCall("finish", {});
+  if (chatHitlPaused) runStatus = "pending";
+  chatLastRun = runStatus === "ok" ? agentCall("finish", {}) : agentCall("finish", { status: runStatus });
   chatRender();
   /* HITL 的预览卡已经把这一轮收口；不要再自动续轮去追模型 */
   if (chatHitlPaused) { chatHitlPaused = false; return; }
@@ -1694,7 +1697,11 @@ async function chatRun(cfg, attachMeta) {
     /* 两条接入都走流式：内置通道是原生拆私有方言，API Key 是原生拆标准 SSE，
        页面这边一视同仁——先摆一个空气泡，边收边往里填。 */
     var live = liveBubble();
-    var onDelta = live.onDelta;
+    var roundStart = Date.now(), firstTokenMs = -1;
+    var onDelta = function (kind, chunk) {
+      if (firstTokenMs < 0) firstTokenMs = Date.now() - roundStart;
+      live.onDelta(kind, chunk);
+    };
     var data;
     var body = { model: cfg.model, messages: messages, temperature: 0.3,
                  max_tokens: fileRun ? CHAT_FILE_MAX_TOKENS : CHAT_MAX_TOKENS };
@@ -1711,11 +1718,27 @@ async function chatRun(cfg, attachMeta) {
     var msg = data && data.choices && data.choices[0] && data.choices[0].message;
     if (!msg) { chatDrop(live); throw new Error("API 返回里没有 choices[0].message"); }
     var fr = (data.choices[0] && data.choices[0].finish_reason) || "";
+    /* 内置通道的收口包可能比流式增量早，甚至正文全空：先看现有内容能不能解析，
+       解析不了就等流式增量「有内容且静默 300ms」，最多等 3 秒，再取更完整的那份。 */
+    var needSettle = String(msg.content || "").trim() === "" ||
+        (String(msg.content || "").indexOf(TOOL_BLOCK_OPEN) >= 0 &&
+         splitToolBlocks(msg.content).calls.length === 0);
+    if (needSettle) {
+      var prevText = "", stableTicks = 0;
+      for (var settle = 0; settle < 60; settle++) {
+        await new Promise(function (r) { setTimeout(r, 50); });
+        var nowText = String(live.text || "");
+        if (nowText !== prevText) { prevText = nowText; stableTicks = 0; continue; }
+        if (nowText.length > 0 && ++stableTicks >= 6) break;
+      }
+      if (prevText.length > String(msg.content || "").length) msg.content = prevText;
+    }
     /* 预算按上游 usage 记；没有 usage 就按消息与正文长度粗估，宁可早停不晚停 */
     var usage = (data && data.usage) || {};
     var pt = usage.prompt_tokens || Math.round(JSON.stringify(messages).length / 2);
     var ct = usage.completion_tokens || Math.round(String(msg.content || "").length / 2);
-    var tick = agentCall("tick", { promptTokens: pt, completionTokens: ct });
+    var tick = agentCall("tick", { promptTokens: pt, completionTokens: ct,
+                                   firstTokenMs: firstTokenMs > 0 ? firstTokenMs : 0 });
     if (tick && tick.stopped) {
       budgetStop = tick.stopReason || "BUDGET";
       chatDrop(live);
@@ -1726,6 +1749,9 @@ async function chatRun(cfg, attachMeta) {
        别把那坨标记甩给用户。摘不动的原样留着。 */
     if (!calls.length && String(msg.content || "").indexOf(TOOL_BLOCK_OPEN) >= 0) {
       var sp = splitToolBlocks(msg.content);
+      if (!sp.calls.length && String(live.text || "").length > String(msg.content || "").length) {
+        sp = splitToolBlocks(live.text);
+      }
       if (sp.calls.length) { calls = sp.calls; msg.content = sp.text; live.text = sp.text; }
     }
     /* DSML 是另一套标记：能解析就执行，解析不了也先把标记从正文里剥掉 */
@@ -1784,9 +1810,12 @@ async function chatRun(cfg, attachMeta) {
           chatRender();
           return;
         }
+        var toolT0 = Date.now();
         var out, errText = "";
         try { out = chatTool(fn.name, args); }
         catch (e) { errText = e && e.message ? e.message : String(e); out = { error: errText }; }
+        agentCall("toolResult", { tool: fn.name, signature: gate.signature,
+          ms: Date.now() - toolT0, ok: !errText, code: errText ? "ERROR" : "OK" });
         /* 工具结果会随后续每次请求重发。先按「少给几道题」缩，实在还超再硬截——
            直接切字符串会把 JSON 切坏，模型拿到半截括号更容易胡编。 */
         var payload = shrinkToolResult(out);
@@ -1918,7 +1947,14 @@ function splitToolBlocks(text) {
     var open = rest.indexOf(TOOL_BLOCK_OPEN, pos);
     if (open < 0) { out += rest.slice(pos); break; }
     var close = rest.indexOf(TOOL_BLOCK_CLOSE, open + TOOL_BLOCK_OPEN.length);
-    if (close < 0) { out += rest.slice(pos); break; }
+    var endLen = TOOL_BLOCK_CLOSE.length;
+    if (close < 0) {
+      /* 模型偶发把结束标签写成 </call_call>，或者干脆在末尾不闭合。
+         只有「内容能完整解析成调用」才认，残缺 JSON 仍原样留给用户。 */
+      var alt = rest.indexOf("</call_call>", open + TOOL_BLOCK_OPEN.length);
+      if (alt >= 0) { close = alt; endLen = "</call_call>".length; }
+      else { close = rest.length; endLen = 0; }
+    }
     out += rest.slice(pos, open);
     var inner = rest.slice(open + TOOL_BLOCK_OPEN.length, close)
       .replace(/^\s*```[a-zA-Z]*\s*/, "").replace(/\s*```\s*$/, "").trim();
@@ -1934,8 +1970,8 @@ function splitToolBlocks(text) {
       }
     } catch (e) { one = null; }
     if (one) calls.push(one);
-    else out += rest.slice(open, close + TOOL_BLOCK_CLOSE.length);   // 不像调用：原样给用户看
-    pos = close + TOOL_BLOCK_CLOSE.length;
+    else out += rest.slice(open, close + endLen);   // 不像调用：原样给用户看
+    pos = close + endLen;
   }
   return { text: out.trim(), calls: calls };
 }
@@ -2265,9 +2301,12 @@ function chatHitlAction(arg) {
   localApproved[p.signature] = 1;
   var runArgs = JSON.parse(JSON.stringify(p.args || {}));
   delete runArgs.dryRun;
+  var toolT0 = Date.now();
   var out, err = "";
   try { out = chatTool(p.name, runArgs); }
   catch (e) { err = e && e.message ? e.message : String(e); out = { error: err }; }
+  agentCall("toolResult", { tool: p.name, signature: p.signature,
+    ms: Date.now() - toolT0, ok: !err, code: err ? "ERROR" : "OK" });
   if (!err && out && typeof out === "object") out.receipt = "r" + Date.now().toString(36);
   chatPendingTool = null;
   chatHitlPaused = false;

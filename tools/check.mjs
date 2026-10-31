@@ -3298,6 +3298,16 @@ W.chatBusy = false; W.chatMsgs = []; W.chatFile = null; W.chatRender();
 
 W.chatRender();
 
+/* 文本 tool_call：结束标签写错（</call_call>）或末尾不闭合时，
+   只有内容能完整解析才认；残缺 JSON 原样留给用户。 */
+const toolAlt = W.splitToolBlocks('<tool_call>{"name":"list_questions","arguments":{"bank":"b1"}}</call_call>');
+ok("错结尾的 tool_call 也能识别",
+   toolAlt.calls.length === 1 && toolAlt.calls[0].function.name === "list_questions" && toolAlt.text === "",
+   JSON.stringify(toolAlt));
+const toolCut = W.splitToolBlocks('<tool_call>{"name": broken');
+ok("残缺调用不吞正文",
+   toolCut.calls.length === 0 && toolCut.text.indexOf("<tool_call>") >= 0, JSON.stringify(toolCut));
+
 /* DeepSeek 的 DSML 标记：能解析就执行，解析不了也不许亮给用户 */
 const dsmlOk = W.splitDsmlBlocks('<｜｜DSML｜｜tool_calls>\n<｜｜DSML｜｜invoke name="list_questions">\n<｜｜DSML｜｜parameter name="bank" string="true">"lp"</｜｜DSML｜｜parameter>\n<｜｜DSML｜｜parameter name="limit" string="false">5</｜｜DSML｜｜parameter>\n</｜｜DSML｜｜invoke>\n</｜｜DSML｜｜tool_calls>');
 ok("DSML 调用被解析成一次工具调用",

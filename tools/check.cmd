@@ -127,9 +127,15 @@ if errorlevel 1 goto fail
 echo.
 echo === agent loop (budget / repeat / hitl) ===
 rem 引擎只管闸门，不碰网络与工具；四类剧本都在 AgentLoopTest 里穷举。
-javac -encoding UTF-8 -cp "%JSON_JAR%" -d "%OUT%" "%~dp0..\app\src\main\java\com\fan\shuatiku\agent\AgentLoop.java" "%~dp0AgentLoopTest.java"
+javac -encoding UTF-8 -cp "%JSON_JAR%" -d "%OUT%" "%~dp0..\app\src\main\java\com\fan\shuatiku\agent\RunTrace.java" "%~dp0..\app\src\main\java\com\fan\shuatiku\agent\AgentLoop.java" "%~dp0AgentLoopTest.java"
 if errorlevel 1 goto fail
 java "-Dfile.encoding=UTF-8" -cp "%OUT%;%JSON_JAR%" AgentLoopTest
+if errorlevel 1 goto fail
+echo.
+echo === run trace (spans / metrics / redaction) ===
+javac -encoding UTF-8 -cp "%JSON_JAR%" -d "%OUT%" "%~dp0..\app\src\main\java\com\fan\shuatiku\agent\RunTrace.java" "%~dp0RunTraceTest.java"
+if errorlevel 1 goto fail
+java "-Dfile.encoding=UTF-8" -cp "%OUT%;%JSON_JAR%" RunTraceTest
 if errorlevel 1 goto fail
 echo.
 echo === mcp server (loopback / token / 202) ===

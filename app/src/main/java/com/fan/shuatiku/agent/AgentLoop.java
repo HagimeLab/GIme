@@ -74,6 +74,7 @@ public final class AgentLoop {
         maxRounds = roundsLimit > 0 ? roundsLimit : DEFAULT_MAX_ROUNDS;
         maxTokens = tokensLimit > 0 ? tokensLimit : DEFAULT_MAX_TOKENS;
         runId = "run" + (++seq);
+        RunTrace.start(runId);
         JSONObject o = new JSONObject();
         try {
             o.put("runId", runId);
@@ -113,17 +114,22 @@ public final class AgentLoop {
             o.put("tool", name);
             o.put("signature", sig);
             if (stopped) return action(o, "stop", stopReason);
-            if (denied.contains(sig)) return action(o, "deny", "DENIED");
+            if (denied.contains(sig)) {
+                RunTrace.tool(name, sig, "deny", 0, "DENIED");
+                return action(o, "deny", "DENIED");
+            }
             Integer n = seen.get(sig);
             if (n != null && n > 0) {
                 repeats++;
                 o.put("count", n + 1);
                 o.put("message", "同一个工具和参数已经执行过，结果不会变；请停止重试或换一个策略。");
+                RunTrace.tool(name, sig, "deny", 0, "REPEAT_CALL");
                 return action(o, "deny", "REPEAT_CALL");
             }
             if (WRITE.contains(name) && !approved.contains(sig)) {
                 previews++;
                 o.put("args", args == null ? new JSONObject() : args);
+                RunTrace.tool(name, sig, "preview", 0, "NEEDS_APPROVAL");
                 return action(o, "preview", "NEEDS_APPROVAL");
             }
             seen.put(sig, 1);
@@ -157,12 +163,28 @@ public final class AgentLoop {
             String o = op == null ? "" : op.trim();
             if ("begin".equals(o)) return begin(a.optInt("maxRounds", DEFAULT_MAX_ROUNDS),
                     a.optInt("maxTokens", DEFAULT_MAX_TOKENS));
-            if ("tick".equals(o)) return tick(a.optInt("promptTokens", 0), a.optInt("completionTokens", 0));
+            if ("tick".equals(o)) {
+                String t = tick(a.optInt("promptTokens", 0), a.optInt("completionTokens", 0));
+                RunTrace.round(rounds, a.optInt("promptTokens", 0), a.optInt("completionTokens", 0),
+                        a.optInt("firstTokenMs", 0));
+                return t;
+            }
             if ("check".equals(o)) return check(a.optString("tool", ""), a.optJSONObject("args"));
+            if ("toolResult".equals(o)) {
+                RunTrace.tool(a.optString("tool", ""), a.optString("signature", ""),
+                        a.optBoolean("ok", true) ? "allow" : "error",
+                        a.optLong("ms", 0), a.optString("code", ""));
+                return "{\"ok\":true}";
+            }
             if ("approve".equals(o)) return approve(a.optString("signature", ""));
             if ("deny".equals(o)) return deny(a.optString("signature", ""));
-            if ("finish".equals(o)) return finish();
-            if ("reset".equals(o)) { reset(); return "{\"ok\":true}"; }
+            if ("finish".equals(o)) {
+                String status = a.optString("status", stopped ? "stopped" : "ok");
+                RunTrace.finish(status);
+                return finish();
+            }
+            if ("trace".equals(o)) return RunTrace.exportJson();
+            if ("reset".equals(o)) { reset(); RunTrace.reset(); return "{\"ok\":true}"; }
             return "{\"error\":" + quote("未知 op：" + o) + "}";
         } catch (JSONException e) {
             return "{\"error\":\"bad json\"}";

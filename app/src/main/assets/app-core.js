@@ -1671,6 +1671,15 @@ function askRemindPerm() {
 function askBatteryOpt() {
   try { if (window.Android && Android.planBatteryAsk) Android.planBatteryAsk(); } catch (e) { }
 }
+/* T4：把最近 20 次 Agent 运行的三级 trace（脱敏）写到系统下载目录 */
+function exportTrace() {
+  try {
+    if (window.Android && Android.exportTrace) {
+      var r = Android.exportTrace();
+      toast(r ? "诊断包已保存：" + r : "导出失败");
+    } else toast("当前环境不能导出诊断包");
+  } catch (e) { toast("导出失败"); }
+}
 window.onRemindPerm = function () {
   remindInfo = remindInfoGet();
   if (curTab === "me") renderAll();
@@ -1708,6 +1717,7 @@ function renderMe() {
       ? (remindInfo.battery ? "已豁免 · 提醒更准时" : "未设置 · 系统可能压掉提醒")
       : "当前环境不支持", false) +
     row("font", "字号", "当前 " + set.fscale + "%，点击循环切换", false) +
+    row("trace", "导出诊断包", "最近 20 次 Agent 运行（脱敏）", false) +
     row("update", "检查更新", "当前 v" + APP_VER + " 版本", false, false, upd.hasNew) +
     row("clear", "清空进度", "做题记录、错题、收藏全部删除", false);
 }
@@ -1723,6 +1733,7 @@ function row(k, title, sub, sw, on, mark) {
          : k === "remind" ? "openPlans()"
          : k === "notify" ? "askRemindPerm()"
          : k === "battery" ? "askBatteryOpt()"
+         : k === "trace" ? "exportTrace()"
          : k === "update" ? "checkUpdate(true)" : "askClear()";
   return '<div class="row" data-k="' + k + '" onclick="' + fn + '"><span>' + title +
          (mark ? '<i class="dot"></i>' : "") +

@@ -121,6 +121,12 @@ public class MainActivity extends Activity {
         File planDir = new File(getFilesDir(), "plans");
         if (!planDir.isDirectory()) planDir.mkdirs();
         planStore = new com.fan.shuatiku.agent.PlanStore(planDir);
+        /* Agent trace 同时进 logcat（GImeAgent）与私有环形缓冲；导出入口在「我的」。 */
+        com.fan.shuatiku.agent.RunTrace.setSink(new com.fan.shuatiku.agent.RunTrace.Sink() {
+            @Override public void log(String line) {
+                android.util.Log.i("GImeAgent", line);
+            }
+        });
         /* 每次启动重挂一遍闹钟：用户可能在系统设置里清过、或者被 ROM 省电策略杀了，
            这里补上比依赖「上次挂的那次还在」可靠。重复挂是幂等的。 */
         com.fan.shuatiku.agent.Reminder.arm(this);
@@ -924,10 +930,47 @@ public class MainActivity extends Activity {
             return com.fan.shuatiku.agent.ToolRegistry.schemasJson();
         }
 
-        /** Agent 护栏：begin / tick / check / approve / deny / finish，一个口全分发。 */
+        /** Agent 护栏：begin / tick / check / toolResult / approve / deny / finish / trace。 */
         @JavascriptInterface
         public String agentCall(String op, String json) {
             return com.fan.shuatiku.agent.AgentLoop.handle(op, json);
+        }
+
+        /** 导出脱敏诊断包到系统「下载」目录；返回给用户看的文件名说明。 */
+        @JavascriptInterface
+        public String exportTrace() {
+            try {
+                byte[] data = com.fan.shuatiku.agent.RunTrace.exportJson().getBytes("UTF-8");
+                String name = "GIme诊断包-"
+                        + new java.text.SimpleDateFormat("yyyyMMdd-HHmmss", java.util.Locale.US)
+                        .format(new java.util.Date()) + ".json";
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                    ContentValues v = new ContentValues();
+                    v.put(MediaStore.Downloads.DISPLAY_NAME, name);
+                    v.put(MediaStore.Downloads.MIME_TYPE, "application/json");
+                    Uri uri = getContentResolver().insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, v);
+                    if (uri == null) return "";
+                    OutputStream os = getContentResolver().openOutputStream(uri);
+                    if (os == null) return "";
+                    try { os.write(data); } finally { os.close(); }
+                    String shown = name;
+                    Cursor c = getContentResolver().query(uri,
+                            new String[]{MediaStore.MediaColumns.DISPLAY_NAME}, null, null, null);
+                    if (c != null) {
+                        try { if (c.moveToFirst() && !c.isNull(0)) shown = c.getString(0); }
+                        finally { c.close(); }
+                    }
+                    return "系统「下载」目录里的 " + shown;
+                }
+                File dir = getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS);
+                if (dir == null || (!dir.isDirectory() && !dir.mkdirs())) return "";
+                File f = new File(dir, name);
+                FileOutputStream out = new FileOutputStream(f);
+                try { out.write(data); } finally { out.close(); }
+                return f.getAbsolutePath();
+            } catch (Throwable t) {
+                return "";
+            }
         }
 
         /** MCP notify_phone / 建方案后的即时通知。返回 false 表示没发出去。 */
