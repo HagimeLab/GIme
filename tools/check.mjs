@@ -2309,6 +2309,20 @@ ok("正文渲染不含界面源码", W.mdFor(uiMsg).indexOf("openui-lang") < 0
    && W.mdFor(uiMsg).indexOf("先说结论。") >= 0);
 ok("流式期把没收尾的围栏藏住", W.stripUIFence('abc\n```openui-lang\nroot = X') === "abc"
    && W.stripUIFence("没有围栏") === "没有围栏");
+
+/* T0 / N-1：模型漏语言标签时的裸 ``` 兜底。命中要窄，误判要零。 */
+const bareUi = W.ouiSplit({ id: "ui_bare_1", text: '先给结论。\n\n```\nroot = Stack([t])\nt = Title("卡片")\n```' });
+ok("裸围栏：root= 且调用了已知组件 → 按 openui 处理",
+   bareUi.src.indexOf("root =") === 0 && bareUi.src.indexOf("Title(") >= 0 && bareUi.text === "先给结论。",
+   JSON.stringify(bareUi));
+const bareCode = W.ouiSplit({ id: "ui_bare_2", text: '示例：\n\n```\nfunction f() { return 1; }\n```' });
+ok("裸围栏：普通代码块不误判", bareCode.src === "", JSON.stringify(bareCode));
+const labeledUi = W.ouiSplit({ id: "ui_bare_3", text: '```openui-lang\nroot = Title("x")\n```' });
+ok("带标签的围栏行为不变", labeledUi.src.indexOf('Title("x")') >= 0, JSON.stringify(labeledUi));
+const bareAmb = W.ouiSplit({ id: "ui_bare_4", text: '```\nroot = foo()\n```' });
+ok("裸围栏：root= 但没有组件调用仍按代码块", bareAmb.src === "", JSON.stringify(bareAmb));
+ok("流式期裸围栏也先藏起来",
+   W.stripUIFence('abc\n```\nroot = Stack([') === "abc" && W.stripUIFence('abc\n```js\nx') === 'abc\n```js\nx');
 ok("只有收尾后的回答才挂卡片占位", (() => {
   /* 占位只在「不是我的、不在流式」两条都成立时拼进去；
      innerHTML 落地后再由 chatOuiMount 挂真 DOM（字符串里塞不了节点）。

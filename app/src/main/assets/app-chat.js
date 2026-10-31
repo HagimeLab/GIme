@@ -662,6 +662,26 @@ function mdToHtml(src) {
    源码永远不进气泡 —— 解析不出来就整条按纯 Markdown 显示，也不留空框。
    缓存按「消息 id + 原文」失效，和 MD_CACHE 一个路子。 */
 var UI_FENCE = /```(?:openui-lang|openui)[^\n]*\n([\s\S]*?)```/i;
+/* N-1：模型偶尔漏掉语言标签，裸 ``` 里其实是 OpenUI DSL。
+   只有「首行 root =」+「确实调用了已知组件」两条都成立才认，宁可不画也不乱画；
+   普通代码块（root = foo() 但没有组件调用）仍按代码块显示。 */
+var UI_BARE_FENCE = /```[ \t]*\r?\n([\s\S]*?)```/g;
+var UI_COMPONENT_CALL = /\b(?:Card|Form|Table|Select|Progress|Row|Stack|Text|Button|Title|Badge|Divider|Metric|Input|Toggle)\s*\(/;
+function ouiBareFence(text) {
+  var re = new RegExp(UI_BARE_FENCE.source, "g"), m;
+  while ((m = re.exec(text))) {
+    var src = String(m[1] || "").trim();
+    if (!src) continue;
+    var lines = src.split(/\r?\n/), first = "";
+    for (var i = 0; i < lines.length; i++) {
+      if (lines[i].trim()) { first = lines[i]; break; }
+    }
+    if (!/^\s*root\s*=/.test(first)) continue;
+    if (!UI_COMPONENT_CALL.test(src)) continue;
+    return { src: src, raw: m[0] };
+  }
+  return null;
+}
 var OUI_CACHE = {};
 function ouiSplit(m) {
   var id = (m && m.id) || "";
@@ -673,6 +693,12 @@ function ouiSplit(m) {
   if (hit) {
     out.src = String(hit[1] || "").trim();
     out.text = text.replace(hit[0], "").replace(/\n{3,}/g, "\n\n").trim();
+  } else {
+    var loose = ouiBareFence(text);
+    if (loose) {
+      out.src = loose.src;
+      out.text = text.replace(loose.raw, "").replace(/\n{3,}/g, "\n\n").trim();
+    }
   }
   if (Object.keys(OUI_CACHE).length > 60) OUI_CACHE = {};
   OUI_CACHE[id] = out;
@@ -682,7 +708,10 @@ function ouiSplit(m) {
 function stripUIFence(s) {
   var raw = String(s == null ? "" : s);
   var i = raw.search(/```(?:openui-lang|openui)/i);
-  return i >= 0 ? raw.slice(0, i).trim() : raw;
+  if (i >= 0) return raw.slice(0, i).trim();
+  /* 裸围栏也先藏：只认「``` 后紧跟 root =」这一种形状，别把普通代码块吞掉 */
+  var j = raw.search(/```[ \t]*\r?\n\s*root\s*=/);
+  return j >= 0 ? raw.slice(0, j).trim() : raw;
 }
 /* 卡片按钮的通用回传口：动作原样交给原生桥（打一行日志，现场验收看得到）。
    WebView 的 console 进不了 logcat，所以只能借桥口。 */
