@@ -23,6 +23,9 @@
     <b>搜索题库 / 知识点</b>
   </button>
 
+  <!-- 今日待刷 + 进行中方案合成的一张任务 Hero（app-plan.js 渲染） -->
+  <div id="planHero"></div>
+
   <div class="sec-title cats-head">
     <b>题库分类</b>
     <button class="cats-toggle" id="catsToggle" onclick="toggleCats()" aria-expanded="true">
@@ -165,12 +168,15 @@
 <div class="glass" id="glass"></div>
 <div class="toast" id="toast"></div>
 <div class="fs" id="fs"></div>
+<!-- 方案库 / 方案详情：独立的整页层，返回键先回列表再关页 -->
+<div class="fs" id="planPage"></div>
 
 <script src="bank.js"></script>
 <script src="ui/openui-core.js"></script>
 <script src="ui/openui-ui.js"></script>
 <script src="app-core.js"></script>
 <script src="app-admin.js"></script>
+<script src="app-plan.js"></script>
 <script src="app-chat.js"></script>
 </body>
 </html>

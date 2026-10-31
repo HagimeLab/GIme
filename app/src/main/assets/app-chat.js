@@ -694,9 +694,9 @@ window.onOuiAction = function (action, payload) {
   } catch (e) { /* 老包没有这个桥口就当没发生，别把气泡点崩 */ }
 };
 
-/* 动作路由：只做 GIme 真有语义的四种，其余明确说「不支持」。
-   对照 agent 的 runUIAction，那边还有 approve:/toggle:/insight:，
-   那是它的计划域（plan），GIme 没有这块业务，硬套只会点出一个莫名其妙的状态。 */
+/* 动作路由：send/value/submit/nav 是对话动作，approve/adjust/toggle/insight 进方案域
+   （P1 并入后的四个业务动词），其余明确说「不支持」。
+   nav 的目标除了四个 tab，还多了 #/plans 与 #/plan/<id>。 */
 function chatOuiRoute(verb, arg, m, node, form) {
   if (verb === "send") {
     /* 没带参数就退回按钮文字：Button("继续", {action: "send"}) 是很自然的写法 */
@@ -736,10 +736,57 @@ function chatOuiRoute(verb, arg, m, node, form) {
     return;
   }
   if (verb === "nav") {
-    var tab = String(arg || "").replace(/^#?tab-/, "");
+    var raw = String(arg || "");
+    /* 方案页是整页层，必须在会话面板上面打开；先收面板再开页。 */
+    if (/^#?\/?(plans?|plan\/.+)$/.test(raw)) {
+      closeTop();
+      if (typeof planNav === "function" && planNav(raw)) return;
+    }
+    var tab = raw.replace(/^#?tab-/, "");
     if (["home", "bank", "wrong", "me"].indexOf(tab) < 0) { toast("没有这个页面：" + arg); return; }
     closeTop();          /* 卡片在会话面板里，切页之前先把面板收掉 */
     goTab(tab);
+    return;
+  }
+  if (verb === "approve") {
+    var apId = String(arg || "").trim();
+    /* 带方案 id：直接把方案启用/打开；不带 id 就按 agent 的语义，
+       把按钮文字当成用户的确认发出去，让模型补方案。 */
+    if (apId && typeof planFind === "function" && planFind(apId)) {
+      closeTop();
+      if (typeof planApproveByArg === "function") planApproveByArg(apId);
+      return;
+    }
+    var apSay = apId || (node && node.textContent ? String(node.textContent) : "");
+    if (!nz(apSay)) { toast("这个按钮没带要确认的内容"); return; }
+    if (chatBusy) { toast("大肥鱼还在回上一条，等它说完再确认"); return; }
+    chatOuiOpenPanel();
+    chatAsk("确认：" + apSay);
+    return;
+  }
+  if (verb === "toggle") {
+    if (typeof planToggleByArg === "function") planToggleByArg(arg);
+    return;
+  }
+  if (verb === "insight") {
+    if (typeof planInsight === "function") planInsight(String(arg || "").trim());
+    return;
+  }
+  if (verb === "adjust") {
+    var adId = String(arg || "").trim();
+    if (adId && typeof planFind === "function" && planFind(adId)) {
+      closeTop();
+      if (typeof planAdjustByArg === "function") planAdjustByArg(adId);
+      return;
+    }
+    /* 没有方案 id：把调整要求放进输入框，让用户补一句再发 */
+    chatOuiOpenPanel();
+    var box = document.getElementById("chatText");
+    if (box) {
+      box.value = adId ? "帮我调整方案：" + adId : "我想调整一下方案：";
+      window.__ouiKeepFocus = true;
+      try { box.focus(); } catch (e) { }
+    }
     return;
   }
   toast("这个卡片动作 GIme 还不支持：" + verb);
@@ -2061,6 +2108,8 @@ if (S && S.order && S.order.length && S.order[S.idx] && byId[S.order[S.idx]]) {
   render();
   document.getElementById("quiz").classList.add("on");
 }
+/* 冷启动带 #/plan/<id> 或 #/plans 时直接落到方案页（方案数据此时已可读） */
+try { if (typeof planDeepLink === "function") planDeepLink(); } catch (e) { }
 /* 最后再告诉原生层「页面好了」：此时导入入口函数都已经挂上，
    原生层排队的文件（冷启动时从文件管理器递进来的）可以开始读了。 */
 try { if (window.Android && Android.pageReady) Android.pageReady(); } catch (e) {}

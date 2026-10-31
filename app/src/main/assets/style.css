@@ -517,7 +517,8 @@ button.rec:active { opacity: .62; }
 .ask-hint { margin-top: 8px; text-align: center; font-size: .625rem; color: var(--ink-3); line-height: 1.4; }
 
 /* ---------------- 遮罩 / 底部弹层 / 居中弹窗 / Toast ---------------- */
-.overlay { position: fixed; top: 0; left: 0; right: 0; bottom: 0; z-index: 900;
+/* 960：要能盖住方案整页（950），但仍低于面板 1000 与弹窗 1010 */
+.overlay { position: fixed; top: 0; left: 0; right: 0; bottom: 0; z-index: 960;
            background: rgba(20,22,26,0); visibility: hidden;
            transition: background .2s ease, visibility .25s; }
 .overlay.on { background: rgba(20,22,26,.35); visibility: visible; }
@@ -613,11 +614,15 @@ button.rec:active { opacity: .62; }
 .fs { position: fixed; top: 0; left: 0; right: 0; bottom: 0; z-index: 1100; background: var(--paper);
       transform: translateX(100%); transition: transform .3s var(--ease); overflow-y: auto; }
 .fs.on { transform: translateX(0); }
+/* 方案页要能在上面弹新建/调整面板（sheet 1000、glass 1010），所以压在它们下面；
+   同时仍高于答题页 850 与底部 tab 800。 */
+.fs#planPage { z-index: 950; }
 .fs-head { display: flex; align-items: center; padding: calc(var(--st) + 14px) 18px 12px; }
 .fs-head button { flex: 0 0 46px; }
 .fs-head h2 { flex: 1; text-align: center; font-size: 1.0625rem; font-weight: 700; }
 .fs-head i { flex: 0 0 46px; }
-.fs-body { padding: 6px 22px 40px; }
+/* 底部要加上系统导航栏高度：方案页/搜索页滚到底时最后一张卡不能压在导航条下面 */
+.fs-body { padding: 6px 22px calc(var(--sb) + 40px); }
 .srch { width: 100%; padding: 15px 20px; font-size: .9375rem; border-radius: 999px; border: none; outline: none;
         background: var(--surface); color: var(--ink); box-shadow: var(--sink);
         -webkit-user-select: text; user-select: text; }
@@ -858,7 +863,9 @@ html.swap, html.swap * { transition: none !important; }
    否则它会沿竖直方向抢高度 */
 .msg-body .live { flex: 0 0 auto; max-width: 100%; }
 /* 卡片比气泡宽：气泡按文字长度收缩，卡片要占满整行才好看 */
-.oui-slot { display: block; width: 100%; margin-top: 10px; }
+/* 卡片与气泡分开摆：上 10px 是标题与气泡正文的呼吸，下 10px 是按钮与
+   「内容由大肥鱼生成」提示行之间的呼吸（P0 验收 D-1/D-2）。 */
+.oui-slot { display: block; width: 100%; margin: 10px 0; }
 .oui-slot:empty { display: none; }   /* 画不出来就当没这张卡，不留空框 */
 
 .oui-stack {
@@ -1188,3 +1195,84 @@ html.swap, html.swap * { transition: none !important; }
   --stroke-2: rgba(255, 255, 255, 0.16);
   --shadow: 0 4px 16px rgba(0, 0, 0, 0.3);
 }
+
+/* ============================================================
+   方案域（P1）：首页任务 Hero / 方案库 / 方案详情
+   只用既有黑白灰令牌；间距沿用 10/14/18 的节奏，不引入新颜色。
+   ============================================================ */
+.pl-hero { margin: 4px 0 6px; }
+.pl-hero-top { display: flex; align-items: baseline; margin-bottom: 10px; }
+.pl-hero-k { flex: 1; font-size: 1.0625rem; font-weight: 700; letter-spacing: .5px; }
+.pl-hero-d { font-size: .75rem; color: var(--ink-3); }
+.pl-hero-main { display: flex; align-items: baseline; margin-bottom: 12px; }
+.pl-hero-num { font-size: 2.5rem; font-weight: 800; line-height: 1; letter-spacing: -1px; }
+.pl-hero-unit { margin-left: 8px; font-size: .8125rem; color: var(--ink-2); }
+.pl-hero-of { margin-left: auto; font-size: .75rem; color: var(--ink-3); }
+.pl-bar { height: 8px; border-radius: 999px; background: var(--surface); box-shadow: var(--sink);
+          overflow: hidden; }
+.pl-bar i { display: block; height: 100%; border-radius: 999px; background: var(--ink);
+            transition: width .25s var(--ease); }
+.pl-empty b { display: block; font-size: 1.0625rem; font-weight: 700; margin-bottom: 6px; }
+.pl-empty span { display: block; font-size: .8125rem; color: var(--ink-3); line-height: 1.65;
+                 margin-bottom: 18px; }
+.pl-chips { display: flex; flex-wrap: wrap; margin: 12px -4px 0; }
+.pl-chip { margin: 4px; padding: 7px 12px; border-radius: 999px; background: var(--surface);
+           box-shadow: var(--sink); font-size: .75rem; font-weight: 600; color: var(--ink); }
+.pl-chip b { font-weight: 700; }
+.pl-chip span { margin-left: 6px; color: var(--ink-3); }
+.pl-cta { display: flex; margin: 16px -5px 0; }
+.pl-cta button { flex: 1; margin: 0 5px; padding: 13px 0; border-radius: var(--r-in);
+                 font-size: .875rem; font-weight: 700; }
+.pl-go { background: var(--ink); color: var(--paper); }
+.pl-alt { background: var(--surface); color: var(--ink); box-shadow: var(--sink); }
+
+.pl-card { display: block; width: 100%; text-align: left; margin-bottom: 14px; }
+.pl-card-top { display: flex; align-items: baseline; }
+.pl-card-top b { flex: 1; min-width: 0; font-size: 1rem; font-weight: 700; }
+.pl-state { font-size: .6875rem; color: var(--ink-3); }
+.pl-state.off { opacity: .7; }
+.pl-goal { margin-top: 6px; font-size: .8125rem; color: var(--ink-2); line-height: 1.6; }
+.pl-card .pl-bar { margin-top: 12px; }
+.pl-meta { display: flex; margin-top: 8px; font-size: .6875rem; color: var(--ink-3); }
+.pl-meta span { margin-right: 14px; }
+
+.pl-power { flex: 0 0 auto !important; padding: 8px 12px; border-radius: 999px;
+            background: var(--surface); box-shadow: var(--sink); font-size: .75rem; font-weight: 700; }
+.pl-ov .pl-goal { font-size: .9375rem; color: var(--ink); }
+.pl-nums { display: flex; margin: 16px 0 14px; }
+.pl-nums div { flex: 1; }
+.pl-nums b { display: block; font-size: 1.375rem; font-weight: 800; }
+.pl-nums i { font-style: normal; font-size: .6875rem; color: var(--ink-3); }
+.pl-item { display: flex; align-items: flex-start; width: 100%; text-align: left;
+           padding: 11px 0; border-bottom: 1px solid var(--line); }
+.pl-item:last-child { border-bottom: none; }
+.pl-box { flex: 0 0 20px; width: 20px; height: 20px; margin: 1px 10px 0 0;
+          border-radius: 7px; border: 1.5px solid var(--ink-3); }
+.pl-item.done .pl-box { position: relative; background: var(--ink); border-color: var(--ink); }
+.pl-item.done .pl-box:after { content: ""; position: absolute; left: 6px; top: 2px;
+                              width: 5px; height: 10px; border: solid var(--paper);
+                              border-width: 0 2px 2px 0; transform: rotate(45deg); }
+.pl-item.done .pl-text { color: var(--ink-3); text-decoration: line-through; }
+.pl-text { flex: 1; font-size: .875rem; line-height: 1.6; }
+.pl-item.future { opacity: .55; }
+.pl-days { margin-bottom: 4px; }
+.pl-day { margin-bottom: 14px; }
+.pl-day-head { display: flex; align-items: baseline; margin-bottom: 6px; }
+.pl-day-head b { flex: 1; font-size: .8125rem; font-weight: 700; }
+.pl-day-head span { font-size: .6875rem; color: var(--ink-3); }
+.pl-adj { font-size: .75rem; color: var(--ink-3); line-height: 1.9; }
+.pl-adj b { color: var(--ink-2); font-weight: 600; }
+.pl-acts { display: flex; flex-wrap: wrap; margin: 20px -5px 0; }
+.pl-acts button { flex: 1 0 40%; margin: 5px; padding: 13px 0; border-radius: var(--r-in);
+                  background: var(--surface); box-shadow: var(--sink);
+                  font-size: .8125rem; font-weight: 600; }
+.pl-field { width: 100%; padding: 13px 16px; border: none; border-radius: var(--r-in);
+            background: var(--surface); box-shadow: var(--sink); color: var(--ink);
+            font-size: .875rem; outline: none; -webkit-user-select: text; user-select: text; }
+textarea.pl-field { resize: none; line-height: 1.6; }
+.pl-field-l { display: block; margin: 14px 0 6px; font-size: .75rem; color: var(--ink-3); }
+.pl-row { display: flex; align-items: center; padding: 10px 0; border-bottom: 1px solid var(--line);
+          font-size: .8125rem; }
+.pl-row span { flex: 1; }
+.pl-row button { flex: 0 0 auto; padding: 6px 10px; border-radius: 999px;
+                 background: var(--surface); box-shadow: var(--sink); font-size: .75rem; }

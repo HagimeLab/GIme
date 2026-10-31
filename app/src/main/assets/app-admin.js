@@ -463,6 +463,7 @@ function closeLayer(el) {
   el.classList.remove("on");
   var i = openLayers.indexOf(el);
   if (i >= 0) openLayers.splice(i, 1);
+  if (el.id === "planPage" && typeof planPageClosed === "function") planPageClosed();
   if (!openLayers.length) document.getElementById("overlay").className = "overlay";
 }
 function closeTop() {
@@ -470,6 +471,13 @@ function closeTop() {
   return false;
 }
 window.onBack = function () {
+  var top = openLayers[openLayers.length - 1];
+  /* 方案页在最上面：详情先回列表，再按一次才关整页。
+     面板/弹窗压在方案页上面时仍先收面板——不能从详情背后偷偷换页。 */
+  if (top && top.id === "planPage") {
+    if (typeof planBack === "function" && planBack()) return true;
+    return closeTop();
+  }
   if (closeTop()) return true;
   var fs = document.getElementById("fs");
   if (fs.classList.contains("on")) { closeFS(); return true; }

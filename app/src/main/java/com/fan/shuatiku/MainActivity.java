@@ -918,6 +918,21 @@ public class MainActivity extends Activity {
             }
         }
 
+        /** 读一份完整方案（详情页要逐日内容）。 */
+        @JavascriptInterface
+        public String planGet(String id) {
+            if (planStore == null) return "{\"error\":\"方案库还没准备好\"}";
+            try {
+                org.json.JSONObject p = planStore.find(id);
+                if (p == null) return "{\"error\":\"方案不存在\"}";
+                org.json.JSONObject o = new org.json.JSONObject();
+                o.put("plan", p);
+                return o.toString();
+            } catch (Throwable t) {
+                return "{\"error\":" + quote(String.valueOf(t.getMessage())) + "}";
+            }
+        }
+
         private String planOutJson(com.fan.shuatiku.agent.PlanStore.Out out) {
             if (out == null) return "{\"error\":\"方案库没有返回\"}";
             try {

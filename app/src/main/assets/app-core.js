@@ -1083,8 +1083,10 @@ function enterGroups(which, pg) {
   if (which === "home") {
     var cats = document.getElementById("cats");
     var head = pageKids(pg, "cats-head");
+    var hero = pageKidById(pg, "planHero");
     return [
       { els: pageKids(pg, "search"), step: 0 },
+      { els: hero ? [hero] : [], step: 0 },
       { els: head.concat(cats ? [].slice.call(cats.children) : []), step: 0 },
       { els: sectionOf(pg, "tasks"), step: 0 },
       { els: sectionOf(pg, "recent"), step: 0 }
@@ -1138,9 +1140,11 @@ var banksLoaded = false;
 
 function bootGroups(home) {
   var cats = [].slice.call(document.getElementById("cats").children);
+  var hero = pageKidById(home, "planHero");
   return [
     { els: pageKids(home, "hello"), step: 0 },
     { els: pageKids(home, "search"), step: 0 },
+    { els: hero ? [hero] : [], step: 0 },
     { els: pageKids(home, "cats-head").concat(cats), step: 20 },
     { els: sectionOf(home, "tasks"), step: 0 },
     { els: sectionOf(home, "recent"), step: 0 },
@@ -1288,6 +1292,10 @@ function tabTap(which) {
 var catsClosed = false;
 
 function renderHome() {
+  /* 今日待刷 + 进行中方案合成一张 Hero；方案域还没加载时留空，不挡首页 */
+  var hero = document.getElementById("planHero");
+  if (hero) hero.innerHTML = typeof planHeroHtml === "function" ? planHeroHtml() : "";
+
   var all = stats("all");
   var noQ = !all.total;
   document.getElementById("hiName").textContent = noQ ? "先导入一个题库" : (all.seen ? "继续上次进度" : "先挑一个题库");
@@ -1692,6 +1700,7 @@ function renderMe() {
     row("autoExp", "答完展开解析", "关闭后判分只给答案，解析自己点开", true, set.autoExp) +
     row("import", "导入题库", "PDF / Word / txt / md，带解析一起导", false) +
     row("agent", "大肥鱼", agentSub(), false) +
+    row("remind", "每日提醒", "8:30 / 21:00 · 每个方案单独开关", false) +
     row("notify", "通知权限", remindInfo
       ? (remindInfo.granted ? "已允许 · 提醒可以弹出" : "未允许 · 点这里开启")
       : "当前环境不支持", false) +
@@ -1711,6 +1720,7 @@ function row(k, title, sub, sw, on, mark) {
          : k === "font" ? "cycleFont()"
          : k === "import" ? "openImport()"
          : k === "agent" ? "openAgentCfg()"
+         : k === "remind" ? "openPlans()"
          : k === "notify" ? "askRemindPerm()"
          : k === "battery" ? "askBatteryOpt()"
          : k === "update" ? "checkUpdate(true)" : "askClear()";

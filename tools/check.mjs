@@ -20,7 +20,7 @@ const CSS_FILE = path.join(ASSETS, "style.css");
 /* 页面已拆成 index.html 骨架 + style.css + 五个脚本，按页面里的真实加载顺序列出。
    ui/openui-*.js 是并入的 OpenUI 渲染器（core 是官方 UMD bundle，ui 是宿主适配层），
    它们必须在 app-chat.js 之前就位，因为气泡渲染要用 window.renderOpenUI。 */
-const JS_FILES = ["ui/openui-core.js", "ui/openui-ui.js", "app-core.js", "app-admin.js", "app-chat.js"];
+const JS_FILES = ["ui/openui-core.js", "ui/openui-ui.js", "app-core.js", "app-admin.js", "app-plan.js", "app-chat.js"];
 
 let pass = 0;
 const fails = [];
@@ -2035,6 +2035,7 @@ ok("题目段以标记开头", W.chatCtxMsg({ id: "x" }).indexOf("当前题目�
 ok("聊天请求里题目单独一条 system 消息",
    /messages = \[\{ role: "system", content: chatSysBase\(\) \}\][\s\S]{0,120}?chatCtxMsg\(ctx\)/.test(html));
 
+
 /* ③ 省 token：窗口、轮次、schema、输出、工具结果 */
 ok("历史窗口缩到 8 条", /chatMsgs\.slice\(-8\)/.test(html));
 ok("工具轮次 3 轮", /var CHAT_ROUNDS = 3;/.test(html));
@@ -3473,6 +3474,200 @@ ok("提醒投递口只在 debug 生效，且能模拟开机/取消",
    /planRemindTest\(int slot\) \{[\s\S]{0,120}if \(!BuildConfig\.DEBUG\) return;/.test(mainSrc) &&
    /slot == 0[\s\S]{0,120}ACTION_BOOT/.test(mainSrc) &&
    /slot < 0[\s\S]{0,80}Reminder\.disarm/.test(mainSrc));
+
+/* ---------- 34. 方案域：Hero / 列表 / 详情 / 打卡 / OpenUI 四动作 ---------- */
+section("[34] 方案域：首页 Hero / 方案库 / 详情 / 打卡 / 四动作");
+
+/* PlanStore 的行为在 PlanStoreTest.java 里穷举；这里用一份内存假库只验页面接线：
+   读摘要、单取详情、rev 冲突重试、以及 OpenUI 四个业务动词落到同一套写操作上。 */
+function fakePlanSummary(plans, today) {
+  return plans.map(function (p) {
+    var done = 0, total = 0, td = null;
+    p.days.forEach(function (d) {
+      if (d.date === today) td = d;
+      d.items.forEach(function (it) { total++; if (it.done) done++; });
+    });
+    var o = { id: p.id, title: p.title, goal: p.goal, enabled: p.enabled !== false,
+              remind: !!p.remind, totalDays: p.totalDays, done: done, total: total,
+              pct: total ? Math.round(done * 100 / total) : 0 };
+    if (td) o.today = td.items.map(function (it) { return { text: it.text, done: !!it.done }; });
+    return o;
+  });
+}
+const fake = { rev: 0, seq: 0, plans: [], conflictOnce: false };
+const todayKey = sandbox.planTodayKey();
+function fakeFind(id) { return fake.plans.find(function (p) { return p.id === id; }) || null; }
+function fakeIso(dayOffset) {
+  const d = new Date(); d.setDate(d.getDate() + dayOffset);
+  const p2 = (n) => (n < 10 ? "0" + n : "" + n);
+  return d.getFullYear() + "-" + p2(d.getMonth() + 1) + "-" + p2(d.getDate());
+}
+fake.planSnapshot = () => JSON.stringify({ rev: fake.rev, plans: fakePlanSummary(fake.plans, todayKey) });
+fake.planGet = (id) => {
+  const p = fakeFind(id);
+  return p ? JSON.stringify({ plan: p }) : JSON.stringify({ error: "方案不存在" });
+};
+fake.planCreate = (goal, days, title, daysJson, rev) => {
+  if (rev !== fake.rev) return JSON.stringify({ rev: -1, error: "rev 冲突" });
+  const n = Math.max(1, Math.min(60, days || 7));
+  const dd = [];
+  for (let i = 0; i < n; i++) {
+    dd.push({ date: fakeIso(i), items: [{ text: "任务" + i + "A", done: false },
+                                        { text: "任务" + i + "B", done: false }] });
+  }
+  const p = { id: "p" + (++fake.seq), goal: goal, title: title || goal, totalDays: n,
+              enabled: true, remind: false, days: dd,
+              adjustments: [{ ts: Date.now(), reason: "建立方案", change: "测试" }] };
+  fake.plans.push(p); fake.rev++;
+  return JSON.stringify({ rev: fake.rev, plan: p });
+};
+fake.planUpdate = (id, action, argsJson, rev) => {
+  /* 模拟「别处刚改过」：让调用方走一次重读再重试 */
+  if (fake.conflictOnce) { fake.conflictOnce = false; fake.rev++; return JSON.stringify({ rev: -1, error: "rev 冲突" }); }
+  if (rev !== fake.rev) return JSON.stringify({ rev: -1, error: "rev 冲突" });
+  const p = fakeFind(id);
+  if (!p) return JSON.stringify({ error: "方案不存在" });
+  const a = JSON.parse(argsJson || "{}");
+  let day = null;
+  if (a.date) day = p.days.find(function (d) { return d.date === a.date; });
+  if (action === "pause") p.enabled = false;
+  else if (action === "resume") p.enabled = true;
+  else if (action === "remind_on") p.remind = true;
+  else if (action === "remind_off") p.remind = false;
+  else if (action === "rename") p.title = String(a.title || p.title);
+  else if (action === "add_item") { if (!day) return JSON.stringify({ error: "找不到该日期" }); day.items.push({ text: String(a.text || ""), done: false }); }
+  else if (action === "remove_item") { if (!day) return JSON.stringify({ error: "找不到该日期" }); day.items = day.items.filter(function (it) { return it.text !== a.text; }); }
+  else if (action === "toggle_item") {
+    if (!day) return JSON.stringify({ error: "找不到该日期" });
+    const it = day.items.find(function (x) { return x.text === a.text; });
+    if (!it) return JSON.stringify({ error: "当天没有这一项" });
+    it.done = a.done !== undefined ? !!a.done : !it.done;
+  } else return JSON.stringify({ error: "未知 action：" + action });
+  fake.rev++;
+  return JSON.stringify({ rev: fake.rev, plan: p });
+};
+fake.planDelete = (id, rev) => {
+  if (rev !== fake.rev) return JSON.stringify({ rev: -1, error: "rev 冲突" });
+  const p = fakeFind(id);
+  if (!p) return JSON.stringify({ error: "方案不存在" });
+  fake.plans = fake.plans.filter(function (x) { return x.id !== id; });
+  fake.rev++;
+  return JSON.stringify({ rev: fake.rev, plan: p });
+};
+W.Android = { planSnapshot: fake.planSnapshot, planGet: fake.planGet,
+              planCreate: fake.planCreate, planUpdate: fake.planUpdate, planDelete: fake.planDelete };
+W.PLAN.rev = 0; W.PLAN.list = []; W.PLAN.full = {}; W.PLAN.ready = false;
+W.planLoad();
+W.goTab("home");
+ok("空方案库：Hero 给出新建入口",
+   /还没有进行中的方案/.test(W.document.getElementById("planHero").innerHTML) &&
+   /planCreateSheet\(\)/.test(W.document.getElementById("planHero").innerHTML),
+   W.document.getElementById("planHero").innerHTML.slice(0, 120));
+
+/* 新建：走页面表单，不绕过 planCreateGo */
+W.planCreateSheet();
+W.document.getElementById("planGoal").value = "两周刷完错题";
+W.document.getElementById("planDays").value = "2";
+W.document.getElementById("planTitle").value = "错题冲刺";
+W.planCreateGo();
+ok("新建方案：按表单建立并直接进详情", fake.plans.length === 1 && W.planView.mode === "detail",
+   JSON.stringify({ n: fake.plans.length, view: W.planView }));
+const plId = fake.plans[0].id;
+
+W.goTab("home");
+const heroHtml = W.document.getElementById("planHero").innerHTML;
+ok("Hero 显示今日待办与进行中方案", /开始今日/.test(heroHtml) && heroHtml.indexOf("错题冲刺") >= 0,
+   heroHtml.slice(0, 200));
+
+
+W.openPlans();
+ok("方案库列出方案与状态", W.planView.mode === "list" &&
+   W.document.getElementById("planPage").innerHTML.indexOf("错题冲刺") >= 0 &&
+   W.document.getElementById("planPage").innerHTML.indexOf("执行中") >= 0);
+
+W.openPlan(plId);
+ok("详情页渲染今日与其他日程（今天不重复）",
+   W.document.getElementById("planPage").innerHTML.indexOf("两周刷完错题") >= 0 &&
+   W.document.getElementById("planPage").innerHTML.indexOf("其他日程") >= 0 &&
+   (W.document.getElementById("planPage").innerHTML.match(/>今天</g) || []).length === 1);
+const planPgEl = W.document.getElementById("planPage");
+planPgEl.scrollTop = 240;
+W.planRenderDetail(plId);
+ok("同一份详情重画时保住滚动位置", planPgEl.scrollTop === 240, String(planPgEl.scrollTop));
+planPgEl.scrollTop = 0;
+
+W.planToggle(plId, todayKey, "任务0A");
+ok("打卡：今天的项标记完成并写回", fake.plans[0].days[0].items[0].done === true &&
+   /pl-item done/.test(W.document.getElementById("planPage").innerHTML));
+
+fake.conflictOnce = true;
+W.planToggle(plId, todayKey, "任务0B");
+ok("rev 冲突：重读后重试一次，不丢改动", fake.plans[0].days[0].items[1].done === true &&
+   W.PLAN.rev === fake.rev, JSON.stringify({ rev: W.PLAN.rev, fake: fake.rev }));
+
+W.planRemindToggle(plId);
+ok("每日提醒开关写回方案", fake.plans[0].remind === true);
+W.planPowerToggle(plId);
+ok("暂停方案", fake.plans[0].enabled === false &&
+   /恢复/.test(W.document.getElementById("planPage").innerHTML));
+
+W.planAdjustSheet(plId);
+W.document.getElementById("planAddText").value = "今天加一条";
+W.planAddItem(plId);
+ok("调整：给今天加一条任务", fake.plans[0].days[0].items.length === 3 &&
+   fake.plans[0].days[0].items[2].text === "今天加一条");
+
+W.planAdjustSheet(plId);
+W.document.getElementById("planNewTitle").value = "新标题";
+W.planRename(plId);
+ok("调整：改标题", fake.plans[0].title === "新标题");
+
+/* OpenUI 四个业务动词 */
+W.chatOuiRoute("nav", "#/plans", null, null, null);
+ok("nav:#/plans 打开方案库", W.planView.mode === "list" && W.openLayers.some(function (l) { return l.id === "planPage"; }));
+W.chatOuiRoute("nav", "#/plan/" + plId, null, null, null);
+ok("nav:#/plan/<id> 打开方案详情", W.planView.mode === "detail" && W.planView.id === plId);
+const beforeToggle = fake.plans[0].days[0].items[2].done;
+W.chatOuiRoute("toggle", plId + ":" + todayKey + ":2", null, null, null);
+ok("toggle:<id>:<date>:<序号> 打卡", fake.plans[0].days[0].items[2].done !== beforeToggle);
+W.chatOuiRoute("approve", plId, null, null, null);
+ok("approve:<id> 启用暂停的方案", fake.plans[0].enabled === true);
+W.chatOuiRoute("adjust", plId, null, null, null);
+ok("adjust:<id> 打开调整面板",
+   W.document.getElementById("sheet3").innerHTML.indexOf("调整方案") >= 0);
+while (W.openLayers.length) W.closeTop();
+let insightAsked = "";
+const realAsk = W.chatAsk;
+W.chatAsk = function (q) { insightAsked = String(q); };
+W.chatBusy = false;
+W.openPlan(plId);
+W.planInsight(plId);
+W.chatAsk = realAsk;
+ok("insight:<id> 带着方案进度追问大肥鱼",
+   insightAsked.indexOf("新标题") >= 0 && insightAsked.indexOf("进度") >= 0, insightAsked.slice(0, 120));
+
+/* 返回键顺序：面板 > 详情回列表 > 关整页。不能从面板底下偷偷换页 */
+while (W.openLayers.length) W.closeTop();   /* insight 打开了会话面板，先收掉 */
+W.openPlan(plId);
+W.planAdjustSheet(plId);
+W.onBack();
+ok("返回键先收面板，详情页不换",
+   W.planView.mode === "detail" && !W.document.getElementById("sheet3").classList.contains("on"));
+W.onBack();
+ok("再按返回：详情回列表", W.planView.mode === "list");
+
+W.planDeleteAsk(plId);
+W.document.getElementById("gOk").onclick();
+ok("删除方案：确认后从库里消失", fake.plans.length === 0 && W.planView.mode === "list");
+
+/* D-1/D-2：卡片与气泡上下各留 10px，按钮不再贴着提示行 */
+ok("D-1/D-2：卡片槽上下各留 10px",
+   /\.oui-slot \{ display: block; width: 100%; margin: 10px 0; \}/.test(html));
+/* 方案页要能被新建/调整面板盖住（950 < sheet 1000），又要盖住答题页（850） */
+ok("方案页层级：高于答题页、低于面板",
+   /\.fs#planPage \{ z-index: 950; \}/.test(html) && /\.sheet \{[^}]*z-index: 1000/.test(html));
+
+delete W.Android;
 
 /* ---------- 结果 ---------- */
 console.log("\n" + "=".repeat(46));
