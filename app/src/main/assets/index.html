@@ -160,7 +160,11 @@
         <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M8.5 12.6l6-6a3 3 0 0 1 4.3 4.3l-7.6 7.6a5 5 0 0 1-7.1-7.1l7.2-7.2"/></svg>
       </button>
       <textarea id="chatText" rows="1" placeholder="问大肥鱼这道题…"
+        oninput="chatAutoGrow(this)"
         onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();chatSend()}"></textarea>
+      <button class="chat-att chat-more" id="chatExpand" onclick="chatToggleInput()" aria-label="展开输入框" title="展开输入框">
+        <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M6 15l6-6 6 6"/></svg>
+      </button>
       <button class="chat-send" id="chatSend" onclick="chatSend()">发送</button>
     </div>
   </div>

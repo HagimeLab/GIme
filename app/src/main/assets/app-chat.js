@@ -1383,11 +1383,62 @@ function chatScrollBottomSoon() {
     mo.observe(l, { childList: true, subtree: true });
   }
 }
+/* 输入框：默认随内容长到 96px；点展开按钮后放开到 40vh */
+function chatAutoGrow(el) {
+  if (!el) return;
+  var ch = document.getElementById("chat");
+  var max = ch && ch.classList.contains("chat-expanded") ? Math.round(innerHeight * 0.4) : 96;
+  el.style.height = "auto";
+  el.style.height = Math.max(44, Math.min(el.scrollHeight, max)) + "px";
+}
+function chatToggleInput() {
+  var ch = document.getElementById("chat");
+  var ta = document.getElementById("chatText");
+  if (!ch || !ta) return;
+  ch.classList.toggle("chat-expanded");
+  chatAutoGrow(ta);
+  try { ta.focus(); } catch (e) { }
+  chatScrollBottomSoon();
+}
+/* 首页全屏对话：从顶部把手/头部往下拖，超过阈值就收回 */
+function chatPullInit() {
+  var ch = document.getElementById("chat");
+  if (!ch || ch.__pullBound) return;
+  ch.__pullBound = 1;
+  var startY = 0, dy = 0, active = false;
+  function onStart(e) {
+    if (!ch.classList.contains("full") || !ch.classList.contains("on")) return;
+    var t = e.target;
+    if (!t || !t.closest || !(t.closest(".handle") || t.closest(".chat-head"))) return;
+    active = true; dy = 0;
+    startY = e.touches && e.touches[0] ? e.touches[0].clientY : 0;
+    ch.style.transition = "none";
+  }
+  function onMove(e) {
+    if (!active) return;
+    var y = e.touches && e.touches[0] ? e.touches[0].clientY : startY;
+    dy = Math.max(0, y - startY);
+    ch.style.transform = "translateY(" + dy + "px)";
+    if (e.cancelable) e.preventDefault();
+  }
+  function onEnd() {
+    if (!active) return;
+    active = false;
+    ch.style.transition = "";
+    ch.style.transform = "";
+    if (dy > 110) closeTop();
+  }
+  ch.addEventListener("touchstart", onStart, { passive: true });
+  ch.addEventListener("touchmove", onMove, { passive: false });
+  ch.addEventListener("touchend", onEnd);
+  ch.addEventListener("touchcancel", onEnd);
+}
 function openChat() {
   if (!S) { toast("先进一道题再问"); return; }
   chatUnread = false;
   var ch = document.getElementById("chat");
-  ch.classList.remove("float");   /* 答题页仍走底部上滑 */
+  ch.classList.remove("full");           /* 答题页仍走底部上滑 */
+  ch.classList.remove("chat-expanded");
   chatRender();
   openLayer(ch);
   chatScrollBottomSoon();
@@ -1397,7 +1448,8 @@ function openChat() {
 function openChatTab() {
   chatUnread = false;
   var ch = document.getElementById("chat");
-  ch.classList.add("float");      /* 首页入口：悬浮在首页上，不再从底边滑上来 */
+  ch.classList.add("full");       /* 首页入口：整屏对话，可下拉收回 */
+  ch.classList.remove("chat-expanded");
   chatRender();
   openLayer(ch);
   chatScrollBottomSoon();
@@ -1681,6 +1733,7 @@ async function chatSend() {
   var text = String(el && el.value || "").trim();
   if (!text) return;
   el.value = "";
+  chatAutoGrow(el);
   if (chatBusy) {       /* 新消息抢占当前 run：先掐断，再把这句话接上 */
     chatInterrupt = text;
     chatStop();
@@ -2795,6 +2848,7 @@ if (S && S.order && S.order.length && S.order[S.idx] && byId[S.order[S.idx]]) {
 }
 /* 冷启动带 #/plan/<id> 或 #/plans 时直接落到方案页（方案数据此时已可读） */
 try { if (typeof planDeepLink === "function") planDeepLink(); } catch (e) { }
+chatPullInit();
 /* 最后再告诉原生层「页面好了」：此时导入入口函数都已经挂上，
    原生层排队的文件（冷启动时从文件管理器递进来的）可以开始读了。 */
 try { if (window.Android && Android.pageReady) Android.pageReady(); } catch (e) {}

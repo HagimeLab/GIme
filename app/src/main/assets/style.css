@@ -380,22 +380,12 @@ button.rec:active { opacity: .62; }
 /* 大肥鱼对话：从底部上滑，消息区自己滚，输入条常驻 */
 .sheet.chat { height: 74vh; max-height: 74vh; overflow: hidden; display: flex; flex-direction: column;
               padding: 0 18px calc(var(--sb) + 10px); z-index: 990; }
-/* 首页入口：对话悬浮在首页之上（不贴底、不滑上来）；答题页仍用上面的底部上滑 */
-.sheet.chat.float {
-  top: 84px; bottom: calc(var(--sb) + 92px);
-  left: 14px; right: 14px;
-  height: auto; max-height: none;
-  padding-bottom: 10px;
-  border-radius: var(--r-card);
-  box-shadow: var(--sh);
-  visibility: hidden; pointer-events: none;
-  opacity: 0; transform: scale(.96);
-  transition: transform .22s var(--ease), opacity .18s ease, visibility 0s .22s;
-}
-.sheet.chat.float.on {
-  visibility: visible; pointer-events: auto;
-  opacity: 1; transform: scale(1);
-  transition: transform .22s var(--ease), opacity .18s ease;
+/* 首页入口：整屏对话，可下拉收回；答题页仍用上面的底部上滑 */
+.sheet.chat.full {
+  top: 0; bottom: 0; left: 0; right: 0;
+  height: 100%; max-height: none;
+  padding: calc(var(--st) + 4px) 18px calc(var(--sb) + 10px);
+  border-radius: 0;
 }
 .chat-head { display: flex; align-items: center; gap: 10px; padding: 4px 0 10px; }
 .chat-head .ava { width: 34px; height: 34px; flex-basis: 34px;
@@ -525,6 +515,11 @@ button.rec:active { opacity: .62; }
 .chat-att { flex: 0 0 40px; width: 40px; height: 44px; padding: 0; border-radius: 14px; border: none;
             background: transparent; color: var(--ink-3); display: flex; align-items: center; justify-content: center; }
 .chat-att:active { background: var(--raise); }
+.chat-more { flex: 0 0 36px; width: 36px; }
+.chat-more svg { transition: transform .18s var(--ease); }
+.chat.chat-expanded .chat-more svg { transform: rotate(180deg); }
+.chat.chat-expanded .chat-in textarea { max-height: 40vh; }
+.chat.chat-expanded .chat-hint { display: none; }
 /* 待确认的附件导入：和 note 同样占一行，但带两个按钮 */
 .chat-confirm .cf-name { font-weight: 600; color: var(--ink); }
 .chat-confirm .cf-warn { margin-top: 8px; font-size: .75rem; font-weight: 600; color: var(--ink); }

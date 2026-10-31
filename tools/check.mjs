@@ -2597,12 +2597,17 @@ ok("面板关着时点历史卡片也能把对话打开", (() => {
       && src.indexOf('contains("on")') >= 0
       && src.indexOf("openChatTab()") >= 0;
 })());
-ok("首页对话用悬浮层，答题页仍走底部上滑", (() => {
-  return /\.sheet\.chat\.float/.test(html)
-      && /ch\.classList\.add\("float"\)/.test(html)
-      && /ch\.classList\.remove\("float"\)/.test(html);
+ok("首页对话整屏，答题页仍走底部上滑", (() => {
+  return /\.sheet\.chat\.full/.test(html)
+      && /ch\.classList\.add\("full"\)/.test(html)
+      && /ch\.classList\.remove\("full"\)/.test(html);
 })());
-ok("悬浮层打开后多段补滚到底", /function chatScrollBottomSoon/.test(html)
+ok("全屏对话可下拉收回", /function chatPullInit/.test(html)
+   && /touchmove/.test(html) && /dy > 110/.test(html));
+ok("输入框可展开/收起", /function chatToggleInput/.test(html)
+   && /chat-expanded/.test(html) && /function chatAutoGrow/.test(html)
+   && /id="chatExpand"/.test(html) && /oninput="chatAutoGrow\(this\)"/.test(html));
+ok("对话打开后多段补滚到底", /function chatScrollBottomSoon/.test(html)
    && /chatScrollBottomSoon\(\)/.test(html));
 ok("OpenUI 卡挂载后跟随到底", /root\.scrollTop = root\.scrollHeight/.test(html));
 ok("回传原生桥之后还要在页面里走一遍", (() => {
