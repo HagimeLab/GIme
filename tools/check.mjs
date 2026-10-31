@@ -3166,6 +3166,10 @@ ok("催促后执行工具并给出最终回答",
    W.chatMsgs.some((m) => m.role === "step" && String(m.text).indexOf("已自动催促执行") >= 0) &&
    String(W.chatMsgs[W.chatMsgs.length - 1].text || "").indexOf("4 个题库") >= 0,
    JSON.stringify(W.chatMsgs.map((m) => m.text).slice(-4)));
+ok("半截工具调用不算正文，改为自动续跑",
+   W.chatToolMarkupOnly('<tool_call>{"name":"update_plan","arguments":{"text":"做') === true &&
+   W.chatToolMarkupOnly("正常回答") === false &&
+   /function chatNeedToolResume/.test(html) && /chatSendText\(rp, true\)/.test(html));
 
 /* ⑤ 同一 (工具, 参数) 第二次出现：不再重复执行，只把话挑明 */
 W.chatMsgs = []; loopReqs = [];

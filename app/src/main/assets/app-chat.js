@@ -49,6 +49,8 @@ var chatMsgs = [], chatBusy = false, chatUnread = false, chatSeq = 0;
 /* T2：HITL 待确认 / AgentLoop 本地兜底（没有原生桥时，至少写操作仍要预览） */
 var chatPendingTool = null, chatHitlSeq = 0, chatHitlPaused = false, chatLastRun = null;
 var chatInterrupt = "";
+/* 截断的工具调用不在原地硬续：另起一条隐藏续跑，让新一轮带着工具定义执行 */
+var chatToolResume = "", chatToolResumeLeft = 0;
 var localApproved = {};
 var HITL_TOOLS = { write_answers: 1, write_explanations: 1, delete_plan: 1 };
 var chatWait = {};
@@ -1275,6 +1277,20 @@ function chatToolIntent(text) {
   if (!/(我|让我|我来|我先|我需要|我可以|我应该|接下来|先|准备|将|会)/.test(s)) return false;
   return /(list[_]?banks|list[_]?questions|list[_]?plans|create[_]?plan|update[_]?plan|delete[_]?plan|notify[_]?phone|write[_]?(answers|explanations)|import[_]?(bank|attachment)|get[_]?current[_]?question|工具)/i.test(s);
 }
+function chatToolMarkupOnly(text) {
+  var t = String(text == null ? "" : text);
+  if (t.indexOf(TOOL_BLOCK_OPEN) < 0 && t.indexOf("DSML") < 0) return false;
+  var rest = stripToolMarkup(t);
+  if (t.indexOf("DSML") >= 0) {
+    rest = rest.replace(/<\s*\/?\s*[｜|]{1,2}\s*DSML\s*[｜|]{1,2}\s*[^>]*>/gi, "").trim();
+  }
+  return !rest;
+}
+function chatNeedToolResume() {
+  if (chatToolResumeLeft > 0) {
+    chatToolResume = "继续执行刚才未完成的工具调用；如果已经完成，就直接给出最终回答。";
+  }
+}
 /* 回答里的工具执行摘要单独成块；只读展示，默认收起 */
 function chatToolsHtml(m) {
   var list = (m && Array.isArray(m.tools)) ? m.tools : [];
@@ -1794,6 +1810,7 @@ function chatFallbackHint(em) {
 }
 
 async function chatSendText(text, silent) {
+  if (!silent) { chatToolResume = ""; chatToolResumeLeft = 2; }
   var cfg = agentCfg();
   if (!cfg) { toast(agentMode() === "login" ? "先登录 DeepSeek" : "先填 API Key"); openAgentCfg(); return; }
   /* 内置通道但没登录：直接把人送到登录页，别让他先发一条再吃报错。 */
@@ -1900,6 +1917,15 @@ async function chatSendText(text, silent) {
   if (openLayers.indexOf(document.getElementById("chat")) < 0) {
     chatUnread = true;
     syncAskDot();
+  }
+  /* 工具调用被截断：当前 run 收口后自动开一条隐藏续跑，不让用户补“继续”。 */
+  if (chatToolResume) {
+    var rp = chatToolResume;
+    chatToolResume = "";
+    if (chatToolResumeLeft > 0) {
+      chatToolResumeLeft--;
+      setTimeout(function () { if (!chatBusy) chatSendText(rp, true); }, 120);
+    }
   }
 }
 async function chatRun(cfg, attachMeta) {
@@ -2162,12 +2188,19 @@ async function chatRun(cfg, attachMeta) {
       continue;
     }
     var answer = String(msg.content || "").trim();
+    /* 只剩半截工具调用：这不是答案。收掉气泡，另起一条带工具的续跑。 */
+    if (answer && chatToolMarkupOnly(answer)) {
+      chatDrop(live);
+      chatPush({ role: "step", hidden: true, text: "工具调用被截断，已自动接续执行" }, true);
+      chatNeedToolResume();
+      return;
+    }
     /* 流式已经把正文填进去了；工具调用轮次之后正文可能没流全，用最终值兜底。
        只在真的拿到正文时才覆盖 —— 否则上游「只调工具不回答」时会把已流出的字擦掉。 */
     if (answer) live.text = answer;
     /* 输出被单轮 4096 token 截断、或模型空返回：自动续写，别让用户手点「继续」。
        续写仍写进同一个气泡，最多两次；续完还是截断才如实提示。 */
-    var contLeft = 2;
+    var contLeft = 2, toolResumeHit = false;
     while (contLeft > 0 && (fr === "length" || (!answer && !String(live.text || "").trim()))) {
       contLeft--;
       var beforeText = String(live.text || "");
@@ -2193,6 +2226,18 @@ async function chatRun(cfg, attachMeta) {
         break;
       }
       var cpart = String((cm && cm.content) || "");
+      if ((cm && Array.isArray(cm.tool_calls) && cm.tool_calls.length) ||
+          chatToolMarkupOnly(cpart) || chatToolIntent(cpart)) {
+        /* 续写本身是在发起工具调用：不要把半截标记当正文，另起带工具的续跑 */
+        live.text = beforeText;
+        live.shown = beforeText.length;
+        live._html = "";
+        try { chatLivePaint(live); } catch (x) { }
+        toolResumeHit = true;
+        chatPush({ role: "step", hidden: true, text: "工具调用被截断，已自动接续执行" }, true);
+        chatNeedToolResume();
+        break;
+      }
       if (String(live.text || "") === beforeText && cpart) live.text = beforeText + cpart;
       answer = String(live.text || "").trim();
       fr = cfr || fr;
@@ -2208,7 +2253,7 @@ async function chatRun(cfg, attachMeta) {
         ? "（这一轮只写了思考过程，已被长度上限截断；自动续写也没能接上。）"
         : "（大肥鱼没有返回文字）";
     }
-    if (fr === "length") {
+    if (fr === "length" && !toolResumeHit) {
       chatPush({ role: "step", text: "回答过长，已自动续写 2 次仍被截断" }, true);
     }
     if (dig.length) live.tools = capDigest(dig);
