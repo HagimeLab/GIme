@@ -924,6 +924,12 @@ public class MainActivity extends Activity {
             return com.fan.shuatiku.agent.ToolRegistry.schemasJson();
         }
 
+        /** Agent 护栏：begin / tick / check / approve / deny / finish，一个口全分发。 */
+        @JavascriptInterface
+        public String agentCall(String op, String json) {
+            return com.fan.shuatiku.agent.AgentLoop.handle(op, json);
+        }
+
         /** MCP notify_phone / 建方案后的即时通知。返回 false 表示没发出去。 */
         @JavascriptInterface
         public boolean notifyPhone(String title, String body) {

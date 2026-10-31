@@ -1227,12 +1227,7 @@ ok("外部接口没 Key 仍然算未配置", W.agentCfg() === null);
 W.set.agent = { base: "https://api.example.com/v1", model: "m1", key: "sk-test" };
 
 let chatReqs = [], chatBankSave = null;
-const chatReplies = [
-  { choices: [{ message: { role: "assistant", content: "", tool_calls: [{
-      id: "t1", type: "function", function: { name: "write_explanations",
-      arguments: JSON.stringify({ items: [{ id: "nb1-0", explain: "agent 写的新解析" }] }) } }] } }] },
-  { choices: [{ message: { role: "assistant", content: "选 A：甲就是正确答案。" } }] }
-];
+const chatReplies = [];
 W.Android = {
   chatApi: (id, url, body, key) => {
     chatReqs.push({ url: url, key: key, body: JSON.parse(body) });
@@ -1240,14 +1235,48 @@ W.Android = {
   },
   saveBank: (id, json) => { chatBankSave = [id, JSON.parse(json)]; return true; }
 };
-W.chatMsgs = [];
-W.chatBusy = false;
-W.chatPush({ role: "user", text: "这题为什么选 A？", ctx: W.chatQuestionCtx() });
+function chatUserMsg() {
+  W.chatMsgs = [];
+  W.chatBusy = false;
+  W.chatPendingTool = null;
+  W.chatHitlPaused = false;
+  W.chatPush({ role: "user", text: "这题为什么选 A？", ctx: W.chatQuestionCtx() });
+}
+
+/* A. 写操作走 HITL：先预览、不落盘；批准后才执行 */
+chatReplies.push({ choices: [{ message: { role: "assistant", content: "", tool_calls: [{
+  id: "t1", type: "function", function: { name: "write_explanations",
+  arguments: JSON.stringify({ items: [{ id: "nb1-0", explain: "agent 写的新解析" }] }) } }] } }] });
+chatUserMsg();
 await W.chatRun(W.agentCfg());
-ok("工具调用写回题库", chatBankSave && chatBankSave[0] === "nb1"
+ok("写操作先出预览、预览阶段不落盘",
+   !chatBankSave && !!W.chatPendingTool && W.chatPendingTool.name === "write_explanations",
+   JSON.stringify({ saved: !!chatBankSave, pending: W.chatPendingTool && W.chatPendingTool.name }));
+ok("预览消息里带 OpenUI 卡",
+   W.chatMsgs.some((m) => m.role === "assistant" && String(m.text).indexOf("openui-lang") >= 0));
+ok("预览阶段只发一次请求", chatReqs.length === 1, String(chatReqs.length));
+const hitlId = W.chatPendingTool.id;
+W.chatHitlAction("ok:" + hitlId);
+ok("批准后才落盘", !!chatBankSave && chatBankSave[0] === "nb1"
    && chatBankSave[1].questions.some((q) => q.explain === "agent 写的新解析"),
    chatBankSave && chatBankSave[0]);
+ok("执行回执写进对话",
+   W.chatMsgs.some((m) => m.role === "note" && String(m.text).indexOf("回执") >= 0),
+   JSON.stringify(W.chatMsgs.slice(-2)));
+ok("待确认状态清空", !W.chatPendingTool);
 ok("工具结果同步到内存", W.byId["nb1-0"].explain === "agent 写的新解析", W.byId["nb1-0"].explain);
+
+/* B. 只读工具：tool 结果回填后模型继续作答 */
+chatReqs = [];
+chatBankSave = null;
+chatReplies.length = 0;
+chatReplies.push({ choices: [{ message: { role: "assistant", content: "", tool_calls: [{
+  id: "t2", type: "function", function: { name: "list_questions",
+  arguments: JSON.stringify({ bank: "nb1", ids: ["nb1-0"] }) } }] } }] });
+chatReplies.push({ choices: [{ message: { role: "assistant", content: "选 A：甲就是正确答案。" } }] });
+chatUserMsg();
+await W.chatRun(W.agentCfg());
+ok("只读工具循环发两次请求", chatReqs.length === 2, String(chatReqs.length));
 const chatLast = W.chatMsgs[W.chatMsgs.length - 1];
 ok("最终回答进入对话", chatLast && chatLast.role === "assistant"
    && chatLast.text.indexOf("选 A") >= 0, JSON.stringify(chatLast));
@@ -1261,7 +1290,7 @@ const awTool = W.chatTool("write_answers", { items: [{ id: "nb1-1", answer: ["A"
 ok("大肥鱼工具能改客观题答案",
    awTool.updated === 1 && W.byId["nb1-1"].answer.join("") === "A", JSON.stringify(awTool));
 ok("改答案工具描述写明要用户明确要求",
-   /只在用户明确要求/.test(JSON.stringify(W.CHAT_TOOLS)));
+   /只在用户明确要求/.test(JSON.stringify(W.chatTools())));
 /* 系统提示拆成「固定段 + 题目段」：固定段每次逐字相同，上游前缀缓存才命得中；
    题目单独一条，换题只让这一条变。 */
 ok("固定段不带题目", chatReqs[0].body.messages[0].role === "system"
@@ -1271,7 +1300,7 @@ ok("题目上下文单独一条 system 消息", chatReqs[0].body.messages[1].rol
    && chatReqs[0].body.messages[1].content.indexOf("甲题") >= 0
    && chatReqs[0].body.messages[1].content.indexOf("当前题目上下文") >= 0);
 ok("工具结果作为 tool 消息回填", chatReqs[1].body.messages.some((m) => m.role === "tool"
-   && String(m.content).indexOf("\"updated\":1") >= 0));
+   && String(m.content).indexOf("questions") >= 0));
 
 W.Android = { chatApi: (id) => W.onChatApi(id, 401, JSON.stringify({ error: { message: "invalid api key" } })) };
 let chatErr = null;
@@ -1291,7 +1320,10 @@ W.chatMsgs = [];
 W.chatPush({ role: "user", text: "你好" });
 await W.chatRun(W.agentCfg());
 ok("答题页关着时请求里没有题目段",
-   noCtxReq && noCtxReq.messages.filter((m) => m.role === "system").length === 1,
+   noCtxReq && noCtxReq.messages.filter((m) => m.role === "system").length === 2 &&
+   noCtxReq.messages[0].content.indexOf("当前题目上下文") < 0 &&
+   noCtxReq.messages[1].content.indexOf("Agent 执行规则") === 0 &&
+   JSON.stringify(noCtxReq.messages).indexOf("当前题目上下文") < 0,
    JSON.stringify(noCtxReq && noCtxReq.messages.map((m) => m.role)));
 W.document.getElementById("quiz").classList.add("on");
 
@@ -2064,11 +2096,11 @@ ok("方案进度作为独立 system 消息追加，固定段不掺方案",
 
 /* ③ 省 token：窗口、轮次、schema、输出、工具结果 */
 ok("历史窗口缩到 8 条", /chatMsgs\.slice\(-8\)/.test(html));
-ok("工具轮次 3 轮", /var CHAT_ROUNDS = 3;/.test(html));
+ok("工具轮次上限 8 轮", /var CHAT_ROUNDS = 8;/.test(html) && /var CHAT_TOKEN_BUDGET = 24000;/.test(html));
 ok("带附件识别那一轮单独放宽轮次与输出",
    /var rounds = fileRun \? CHAT_FILE_ROUNDS : CHAT_ROUNDS;/.test(html) &&
-   /max_tokens: fileRun \? CHAT_FILE_MAX_TOKENS : 1200/.test(html), "带附件那轮没走独立额度");
-ok("最后一轮不再给工具定义", /if \(!lastRound\) \{ body\.tools = CHAT_TOOLS/.test(html));
+   /max_tokens: fileRun \? CHAT_FILE_MAX_TOKENS : CHAT_MAX_TOKENS/.test(html), "带附件那轮没走独立额度");
+ok("最后一轮不再给工具定义", /if \(!lastRound\) \{ body\.tools = chatTools\(\)/.test(html));
 ok("工具结果有单独的缩口径（不再散在循环里）",
    /var TOOL_RESULT_MAX = 3000;/.test(html) && /function shrinkToolResult\(out\)/.test(html) &&
    /var payload = shrinkToolResult\(out\);/.test(html));
@@ -2544,7 +2576,7 @@ while (W.openLayers.length) W.closeTop();
    契约：只收 pdf/docx/md/txt；正文随请求上行（上限 CHAT_FILE_SEND_MAX，超出明说）；
    模型按导入格式逐题交回 questions，本地只校验不补答案；落库前必过确认卡。 */
 section("[29d] 大肥鱼附件：正文上行、模型出题、确认前不落盘");
-const attachTool = (W.CHAT_TOOLS || []).filter((t) => t.function && t.function.name === "import_attachment")[0];
+const attachTool = (W.chatTools() || []).filter((t) => t.function && t.function.name === "import_attachment")[0];
 ok("import_attachment 改成收 questions，旧的 filter / dryRun 已撤",
    !!attachTool && attachTool.function.parameters.required.join() === "questions" &&
    !!attachTool.function.parameters.properties.questions &&
@@ -2919,14 +2951,15 @@ const finalText = (t, fr) => ({ choices: [{ finish_reason: fr || "stop",
   message: { role: "assistant", content: t } }] });
 
 /* ① 步数用尽：最后一轮没给工具却还在调工具 ⇒ 走「不带工具的收口轮」，不抛错 */
+const realAgentBudget = W.__agentTokenBudget;
+W.__agentTokenBudget = 1000000;   /* 这一段只验轮次；token 预算在 AgentLoopTest 里单独验 */
 W.chatMsgs = []; W.chatBusy = false;
 W.chatPush({ role: "user", text: "这库里有多少题？" });
-loopReplies = [
-  askTool("list_questions", { bank: "lp", limit: 30 }, 1),
-  askTool("list_questions", { bank: "lp", limit: 30, offset: 1 }, 2),
-  askTool("list_questions", { bank: "lp", limit: 30, offset: 2 }, 3),
-  finalText("按已经拿到的信息：这个库共 30 题。")
-];
+loopReplies = [];
+for (let li = 0; li < W.CHAT_ROUNDS; li++) {
+  loopReplies.push(askTool("list_questions", { bank: "lp", limit: 30, offset: li }, li + 1));
+}
+loopReplies.push(finalText("按已经拿到的信息：这个库共 30 题。"));
 let loopThrew = null;
 try { await W.chatRun(W.agentCfg()); } catch (e) { loopThrew = e; }
 ok("步数用尽不再抛错（原来 throw 会把已查到的东西一起丢掉）",
@@ -2937,16 +2970,16 @@ ok("多要了一次「不带工具」的收口请求",
    JSON.stringify({ n: loopReqs.length, rounds: W.CHAT_ROUNDS,
      tools: loopReqs.map((r) => !!r.body.tools) }));
 ok("收口那轮把「只用已有信息作答」写进了消息里",
-   JSON.stringify(loopReqs[loopReqs.length - 1].body.messages).indexOf("工具步骤已用完") >= 0);
+   JSON.stringify(loopReqs[loopReqs.length - 1].body.messages).indexOf("轮次预算用完") >= 0);
 ok("收口的回答正常上屏",
    W.chatMsgs[W.chatMsgs.length - 1].text.indexOf("共 30 题") >= 0,
    W.chatMsgs[W.chatMsgs.length - 1].text);
-ok("如实标一句停在哪一步", stepTexts().some((t) => t.indexOf("工具步骤用完 " + W.CHAT_ROUNDS + " 步") >= 0),
+ok("如实标一句停在哪一步", stepTexts().some((t) => t.indexOf("Agent 停止：轮次预算用完") >= 0),
    JSON.stringify(stepTexts()));
 
 /* ③ 过程可见：每一步留一行，而不是把工具轮的气泡整个丢掉 */
 ok("每次工具调用都留了一行在做什么",
-   stepTexts().filter((t) => t.indexOf("查了题库") >= 0).length === W.CHAT_ROUNDS,
+   stepTexts().filter((t) => t.indexOf("查了题库") >= 0).length === W.CHAT_ROUNDS - 1,
    JSON.stringify(stepTexts()));
 ok("那行写的是题数，不是原始 JSON",
    stepTexts().some((t) => /查了题库「循环测试库」：给回 \d+ 题/.test(t)), JSON.stringify(stepTexts()));
@@ -2976,7 +3009,11 @@ loopReplies = [
 ];
 await W.chatRun(W.agentCfg());
 ok("重复调用被挡下来（第二次不再执行，只提醒别绕圈）",
-   toolPayloadOf(loopReqs[2]).indexOf("上一轮已经执行过") >= 0, toolPayloadOf(loopReqs[2]).slice(0, 160));
+   loopReqs.length === 3 &&
+   JSON.stringify(loopReqs[2].body.messages).indexOf("工具调用被拦下（REPEAT_CALL）") >= 0 &&
+   stepTexts().filter((t) => t.indexOf("查了题库") >= 0).length === 1,
+   JSON.stringify({ n: loopReqs.length, steps: stepTexts() }));
+W.__agentTokenBudget = realAgentBudget;
 
 /* ④ finish_reason：页面以前从不读它，截断看起来像「答完了」 */
 W.chatMsgs = []; loopReqs = [];

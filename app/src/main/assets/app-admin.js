@@ -1509,6 +1509,7 @@ function mcpListQuestions(args) {
     return { bank: { id: bank.id, name: bank.name }, total: picked.length,
              questions: picked.map(mcpQ), missing: missing };
   }
+  if (args.wrong === true) all = all.filter(inWrong);
   if (args.type) all = all.filter(function (q) { return q.type === args.type; });
   if (args.query) {
     var qq = String(args.query).toLowerCase();
@@ -1516,8 +1517,13 @@ function mcpListQuestions(args) {
   }
   var off = Math.max(0, parseInt(args.offset, 10) || 0);
   var lim = Math.min(100, Math.max(1, parseInt(args.limit, 10) || 20));
+  var page = all.slice(off, off + lim);
+  if (args.compact === true) {
+    return { bank: { id: bank.id, name: bank.name }, total: all.length, offset: off, limit: lim,
+             compact: true, ids: page.map(function (q) { return q.id; }) };
+  }
   return { bank: { id: bank.id, name: bank.name }, total: all.length, offset: off, limit: lim,
-           questions: all.slice(off, off + lim).map(mcpQ) };
+           questions: page.map(mcpQ) };
 }
 function mcpWriteExplanations(args) {
   var bank = mcpBankArg(args.bank);
@@ -1542,6 +1548,12 @@ function mcpWriteExplanations(args) {
     changes.push({ q: q, ex: nextEx, rf: nextRef, hasEx: hasEx, hasRef: hasRef });
   });
   if (!changes.length) return { updated: 0, missing: missing };
+  if (args.dryRun === true) {
+    return { dryRun: true, updated: changes.length, missing: missing,
+             changes: changes.map(function (c) {
+               return { id: c.q.id, explain: c.hasEx ? c.ex : "", ref: c.hasRef ? c.rf : "" };
+             }) };
+  }
   if (!window.Android || !Android.saveBank) throw new Error("当前环境不能保存题库");
   var clone = {};
   qs.forEach(function (q) { clone[q.id] = Object.assign({}, q); });
@@ -1592,6 +1604,10 @@ function mcpWriteAnswers(args) {
     changes.push({ q: q, ans: ans });
   });
   if (!changes.length) return { updated: 0, missing: missing };
+  if (args.dryRun === true) {
+    return { dryRun: true, updated: changes.length, missing: missing,
+             changes: changes.map(function (c) { return { id: c.q.id, answer: c.ans.slice() }; }) };
+  }
   if (!window.Android || !Android.saveBank) throw new Error("当前环境不能保存题库");
   var clone = {};
   qs.forEach(function (q) { clone[q.id] = Object.assign({}, q); });

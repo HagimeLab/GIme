@@ -30,7 +30,7 @@ adb forward tcp:8765 tcp:8765
 |---|---|---|
 | `list_banks` | 列出当前题库 | 无 |
 | `import_bank` | 把一段文本按 App 导入格式解析成新题库 | `text`（必填）、`name`、`dryRun` |
-| `list_questions` | 提取单题/多题与选项 | `bank`、`ids`、`offset`、`limit`、`type`、`query` |
+| `list_questions` | 提取单题/多题与选项 | `bank`、`ids`、`offset`、`limit`、`type`、`query`、`wrong`、`compact` |
 | `write_explanations` | 写或改解析（explain）与主观题参考答案（ref） | `bank`、`items[{id, explain?, ref?}]`、`mode=replace\|append` |
 | `write_answers` | 改客观题（单选/多选/判断）的正确答案 | `bank`、`items[{id, answer:["A"]}]` |
 | `create_plan` | 建立执行方案（可只给目标+天数，也可给逐日内容） | `goal`（必填）、`totalDays`、`title`、`days`、`notify`、`note` |
@@ -44,6 +44,8 @@ adb forward tcp:8765 tcp:8765
 `dryRun:true` 只返回识别统计与前三题预览，不落盘。
 `write_explanations` / `write_answers` 的 `items` 可以给一条也可以给多条；
 先整体校验再写盘，写盘失败时内存不会改动。
+`list_questions` 的 `wrong:true` 只看错题本；`compact:true` 只回题目 id 列表
+（不带题干/选项，建计划时用，避免重复读正文烧 token）。
 `write_answers` 只接受客观题，选项字母必须存在；单选/判断只能一个答案，
 主观题请用 `write_explanations` 改参考答案。写操作只在用户明确要求时调用。
 

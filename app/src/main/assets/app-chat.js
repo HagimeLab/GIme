@@ -4,35 +4,10 @@
    结果由 window.onChatApi 异步交回。工具调用复用 MCP 那套题库函数，口径只有一份。 */
 /* 附件识别的额度（CHAT_SEG_MAX / CHAT_FILE_ROUNDS / CHAT_FILE_MAX_TOKENS / CHAT_AUTO_ROUNDS）
    在「外部打开」那一节声明——它们要拼进下面的工具描述，必须先赋值。 */
-var CHAT_TOOLS = [
+var CHAT_LOCAL_TOOLS = [
   { type: "function", function: { name: "get_current_question",
     description: "读取当前答题页的题目、选项、用户选择与答案。仅在用户问到当前题目时调用。",
     parameters: { type: "object", properties: {}, additionalProperties: false } } },
-  { type: "function", function: { name: "list_questions",
-    description: "按题库 id 或名称取题与选项；bank 省略时用当前题库。仅在用户要求查题时调用。",
-    parameters: { type: "object", properties: {
-      bank: { type: "string" }, ids: { type: "array", items: { type: "string" } },
-      offset: { type: "integer" }, limit: { type: "integer" },
-      type: { type: "string" }, query: { type: "string" }
-    }, additionalProperties: false } } },
-  { type: "function", function: { name: "write_explanations",
-    description: "把解析（explain）或主观题参考答案（ref）写回题库；bank 省略时用当前题库。只在用户明确要求改解析/参考答案时调用。",
-    parameters: { type: "object", properties: {
-      bank: { type: "string" },
-      items: { type: "array", items: { type: "object", properties: {
-        id: { type: "string" }, explain: { type: "string" }, ref: { type: "string" }
-      }, required: ["id"], additionalProperties: false } },
-      mode: { type: "string", enum: ["replace", "append"] }
-    }, required: ["items"], additionalProperties: false } } },
-  { type: "function", function: { name: "write_answers",
-    description: "修改客观题（单选/多选/判断）的正确答案；bank 省略时用当前题库。只在用户明确要求改答案时调用，不要主动改。",
-    parameters: { type: "object", properties: {
-      bank: { type: "string" },
-      items: { type: "array", items: { type: "object", properties: {
-        id: { type: "string" },
-        answer: { type: "array", items: { type: "string" } }
-      }, required: ["id", "answer"], additionalProperties: false } }
-    }, required: ["items"], additionalProperties: false } } },
   { type: "function", function: { name: "import_attachment",
     description: "把你从附件正文里识别出的题目加入题库（新建一个题库）。只在用户明确要求把附件加进题库时调用。" +
       "把正文里的题全部识别出来一次交回；写不下（被长度上限截断）就接着调用，直到全部交完。" +
@@ -55,7 +30,27 @@ var CHAT_TOOLS = [
         }, required: ["type", "stem"], additionalProperties: false } }
     }, required: ["questions"], additionalProperties: false } } }
 ];
+/* 页面用的 tools 参数：10 个注册工具（Java ToolRegistry 的 schema）+ 两个页面本地工具。
+   注册工具的顺序由 Registry 固定；本地工具排在后面，避免和 MCP 的名字撞车。 */
+function chatTools() {
+  var out = [], reg = typeof mcpRegistryTools === "function" ? mcpRegistryTools() : [], i;
+  for (i = 0; i < reg.length; i++) {
+    var t = reg[i];
+    out.push({ type: "function", function: {
+      name: t.name,
+      description: t.description || "",
+      parameters: t.inputSchema || { type: "object", properties: {}, additionalProperties: false }
+    } });
+  }
+  for (i = 0; i < CHAT_LOCAL_TOOLS.length; i++) out.push(CHAT_LOCAL_TOOLS[i]);
+  return out;
+}
 var chatMsgs = [], chatBusy = false, chatUnread = false, chatSeq = 0;
+/* T2：HITL 待确认 / AgentLoop 本地兜底（没有原生桥时，至少写操作仍要预览） */
+var chatPendingTool = null, chatHitlSeq = 0, chatHitlPaused = false, chatLastRun = null;
+var chatInterrupt = "";
+var localApproved = {};
+var HITL_TOOLS = { write_answers: 1, write_explanations: 1, delete_plan: 1 };
 var chatWait = {};
 var chatLastId = "", chatGuard = 0;
 /* ---- 会话（历史对话）----
@@ -818,6 +813,10 @@ function chatOuiRoute(verb, arg, m, node, form) {
     }
     return;
   }
+  if (verb === "hitl") {
+    if (typeof chatHitlAction === "function") chatHitlAction(arg);
+    return;
+  }
   toast("这个卡片动作 GIme 还不支持：" + verb);
 }
 
@@ -1505,17 +1504,27 @@ function chatRenamePending() {
 
 async function chatSend() {
   chatAutoRounds = 0;   /* 用户自己开口 = 重新开一条导入链 */
-  if (chatBusy) return;
   var el = document.getElementById("chatText");
   var text = String(el && el.value || "").trim();
   if (!text) return;
   el.value = "";
+  if (chatBusy) {       /* 新消息抢占当前 run：先掐断，再把这句话接上 */
+    chatInterrupt = text;
+    chatStop();
+    return;
+  }
   await chatSendText(text);
 }
 /* 程序化发一句（外部文件交给大肥鱼时用）：不经过输入框，其余与手动发送同一条路。 */
 function chatAsk(text) {
-  if (chatBusy) return;
-  return chatSendText(String(text == null ? "" : text).trim());
+  var t = String(text == null ? "" : text).trim();
+  if (!t) return;
+  if (chatBusy) {
+    chatInterrupt = t;
+    chatStop();
+    return;
+  }
+  return chatSendText(t);
 }
 async function chatSendText(text, silent) {
   var cfg = agentCfg();
@@ -1572,7 +1581,10 @@ async function chatSendText(text, silent) {
     if (chatPending) chatPending.parsing = false;   /* 停了也别把已收到的困在卡里 */
   }
   chatBusy = false;
+  chatLastRun = agentCall("finish", {});
   chatRender();
+  /* HITL 的预览卡已经把这一轮收口；不要再自动续轮去追模型 */
+  if (chatHitlPaused) { chatHitlPaused = false; return; }
   /* 附件这条路要「一次点完就全导进去」：这一轮真的又收进题了就自动再要一轮，
      直到某一轮一题都没新增（交完了 / 全是重复），或者触到自动轮次上限。
      用户自己发消息会把轮次清零（chatSend），所以闲聊不会被接上去。 */
@@ -1626,6 +1638,9 @@ async function chatRun(cfg, attachMeta) {
      额度比闲聊宽——多给几轮工具调用，也让它一次能写完一批题。 */
   var fileRun = !!attachMeta;
   var rounds = fileRun ? CHAT_FILE_ROUNDS : CHAT_ROUNDS;
+  var tokenBudget = (typeof window.__agentTokenBudget === "number" && window.__agentTokenBudget > 0)
+    ? window.__agentTokenBudget : CHAT_TOKEN_BUDGET;
+  agentCall("begin", { maxRounds: rounds, maxTokens: tokenBudget });
   /* 系统提示拆成两段：第一段永远不变，第二段才是题目。
      上游（DeepSeek 等）按前缀命中缓存，题目要是拼在第一段末尾，
      用户一换题整段前缀就分叉，固定那部分永远命不中。 */
@@ -1634,6 +1649,7 @@ async function chatRun(cfg, attachMeta) {
   /* 方案进度是第二段可变上下文：固定段仍逐字不变，前缀缓存不破。 */
   var planMsg = typeof chatPlanMsg === "function" ? chatPlanMsg() : "";
   if (planMsg) messages.push({ role: "system", content: planMsg });
+  messages.push({ role: "system", content: chatAgentRules() });
   /* 附件元信息排在题目之后：它随附件走，不参与那条稳定的前缀。 */
   if (attachMeta) messages.push({ role: "system", content: attachMeta });
   /* 历史只带最近 8 条：API Key 模式每轮都要重发，12 条纯属多花钱；
@@ -1655,6 +1671,7 @@ async function chatRun(cfg, attachMeta) {
   /* 同一个 (工具, 参数) 在一次请求里出现第二次，就是模型在绕圈：
      本地工具不花钱，但轮次是硬预算，第二次不再重复执行、只把话挑明。 */
   var seenCall = {};
+  var budgetStop = "";
   chatLastImported = 0;   /* 本轮真的新增了多少题：自动续轮靠它判断 */
   var dig = [];   /* 这一轮做过的工具动作，收口时挂到回答气泡上 */
   /* 一条流式气泡 + 它的增量回调。收口那一轮也要用，所以抽出来。 */
@@ -1680,11 +1697,11 @@ async function chatRun(cfg, attachMeta) {
     var onDelta = live.onDelta;
     var data;
     var body = { model: cfg.model, messages: messages, temperature: 0.3,
-                 max_tokens: fileRun ? CHAT_FILE_MAX_TOKENS : 1200 };
+                 max_tokens: fileRun ? CHAT_FILE_MAX_TOKENS : CHAT_MAX_TOKENS };
     /* 内置通道按「页面对话」复用上游会话：把会话 id 传下去，换会话就是换一条上游链路，
        不会带着上一段历史回答这一问。API Key 模式不加这个字段，别给第三方接口塞它没要的东西。 */
     if (isBuiltin && chatCurId) body.user = chatCurId;
-    if (!lastRound) { body.tools = CHAT_TOOLS; body.tool_choice = "auto"; }
+    if (!lastRound) { body.tools = chatTools(); body.tool_choice = "auto"; }
     try {
       data = await chatRequest(cfg, body, onDelta);
     } catch (e) {
@@ -1694,6 +1711,16 @@ async function chatRun(cfg, attachMeta) {
     var msg = data && data.choices && data.choices[0] && data.choices[0].message;
     if (!msg) { chatDrop(live); throw new Error("API 返回里没有 choices[0].message"); }
     var fr = (data.choices[0] && data.choices[0].finish_reason) || "";
+    /* 预算按上游 usage 记；没有 usage 就按消息与正文长度粗估，宁可早停不晚停 */
+    var usage = (data && data.usage) || {};
+    var pt = usage.prompt_tokens || Math.round(JSON.stringify(messages).length / 2);
+    var ct = usage.completion_tokens || Math.round(String(msg.content || "").length / 2);
+    var tick = agentCall("tick", { promptTokens: pt, completionTokens: ct });
+    if (tick && tick.stopped) {
+      budgetStop = tick.stopReason || "BUDGET";
+      chatDrop(live);
+      break;
+    }
     var calls = msg.tool_calls || [];
     /* 上游把调用写成了正文（或者只是想照样模仿）：摘出来执行，
        别把那坨标记甩给用户。摘不动的原样留着。 */
@@ -1711,21 +1738,55 @@ async function chatRun(cfg, attachMeta) {
       /* 这一轮只是在调工具，不是给用户看的回答：把流式气泡收掉，别留一串工具 JSON。 */
       chatDrop(live);
       messages.push({ role: "assistant", content: msg.content || "", tool_calls: calls });
+      var blocked = false;
       for (var i = 0; i < calls.length; i++) {
         var call = calls[i], fn = call.function || {}, args = {};
         if (fn.arguments && typeof fn.arguments === "object") args = fn.arguments;
         else if (typeof fn.arguments === "string") {
           try { args = JSON.parse(fn.arguments); } catch (e) { args = {}; }
         }
+        var gate = agentGate(fn.name, args, seenCall);
+        if (gate && gate.action === "stop") {
+          budgetStop = gate.reason || "BUDGET";
+          blocked = true;
+          break;
+        }
+        if (gate && gate.action === "deny") {
+          messages.push({ role: "tool", tool_call_id: call.id,
+            content: JSON.stringify({ error: gate.reason, message: gate.message || "这次调用被护栏拦下" }) });
+          messages.push({ role: "system", content: "工具调用被拦下（" + gate.reason +
+            "）。不要重复同一个调用，基于已有信息回答或换一个策略。" });
+          chatPush({ role: "step", hidden: true,
+                     text: "工具调用被拦下：" + (gate.message || gate.reason) }, true);
+          blocked = true;
+          break;
+        }
+        if (gate && gate.action === "preview") {
+          var pv = null, pvErr = "";
+          try { pv = chatToolPreview(fn.name, args); }
+          catch (e) { pvErr = e && e.message ? e.message : String(e); }
+          if (pvErr || !pv) {
+            messages.push({ role: "tool", tool_call_id: call.id,
+              content: JSON.stringify({ error: pvErr || "无法生成变更预览" }) });
+            chatPush({ role: "step", hidden: true, text: "变更预览失败：" + (pvErr || "未知原因") }, true);
+            continue;
+          }
+          chatHitlSeq++;
+          chatPendingTool = { id: "h" + chatHitlSeq, name: fn.name, args: args,
+                              preview: pv, signature: gate.signature };
+          chatPush({ role: "assistant",
+                     text: "这次要改数据，先确认：\n\n```openui-lang\n" +
+                           chatHitlCard(chatPendingTool) + "\n```" }, true);
+          chatPush({ role: "step", hidden: true,
+                     text: "待确认：批准后才会执行，未批准不会落盘" }, true);
+          chatHitlPaused = true;
+          chatSave();
+          chatRender();
+          return;
+        }
         var out, errText = "";
         try { out = chatTool(fn.name, args); }
         catch (e) { errText = e && e.message ? e.message : String(e); out = { error: errText }; }
-        var sig = fn.name + JSON.stringify(args);
-        if (!errText && seenCall[sig]) {
-          out.note = "这个调用上一轮已经执行过，结果没变。请基于已有信息作答，或换个条件再查。";
-        } else if (!errText) {
-          seenCall[sig] = 1;
-        }
         /* 工具结果会随后续每次请求重发。先按「少给几道题」缩，实在还超再硬截——
            直接切字符串会把 JSON 切坏，模型拿到半截括号更容易胡编。 */
         var payload = shrinkToolResult(out);
@@ -1740,6 +1801,7 @@ async function chatRun(cfg, attachMeta) {
         chatWorkStep(stepTxt, !errText, true);
         dig.push(toolDigestLine(fn.name, args, out, errText));
       }
+      if (blocked) break;
       chatRender();
       continue;
     }
@@ -1772,16 +1834,18 @@ async function chatRun(cfg, attachMeta) {
   }
   /* 步数用完不再抛错：原来这里 throw，用户只看到一条报错，而这几步已经查到的
      东西一起丢了。改成不带工具再要一次「用已有信息作答」，并如实标一句停在哪。 */
-  messages.push({ role: "system", content: "工具步骤已用完（" + rounds + " 步）。只用上面已经拿到的信息直接回答用户，" +
+  var stopWhy = budgetStop
+    ? (budgetStop === "BUDGET_TOKENS" ? "token 预算用完" : "轮次预算用完")
+    : ("工具步骤用完（" + rounds + " 步）");
+  messages.push({ role: "system", content: "Agent 已停止（" + stopWhy + "）。只用上面已经拿到的信息直接回答用户，" +
     "还差什么就直说，不要再调用工具。" });
-  chatPush({ role: "step", hidden: true,
-             text: "工具步骤用完 " + rounds + " 步，先按已经拿到的信息作答" }, true);
-  chatWorkTitle("正在整理答案（工具步骤已用完）");
+  chatPush({ role: "step", hidden: true, text: "Agent 停止：" + stopWhy + "，先按已经拿到的信息作答" }, true);
+  chatWorkTitle("正在整理答案（" + stopWhy + "）");
   var fin = liveBubble();
   var d2;
   try {
     d2 = await chatRequest(cfg, { model: cfg.model, messages: messages, temperature: 0.3,
-                                  max_tokens: fileRun ? CHAT_FILE_MAX_TOKENS : 1200 }, fin.onDelta);
+                                  max_tokens: fileRun ? CHAT_FILE_MAX_TOKENS : CHAT_MAX_TOKENS }, fin.onDelta);
   } catch (e) { chatDrop(fin); throw e; }
   var m2 = d2 && d2.choices && d2.choices[0] && d2.choices[0].message;
   var a2 = String((m2 && m2.content) || "").trim();
@@ -1798,7 +1862,9 @@ async function chatRun(cfg, attachMeta) {
   chatSave();
   pokeLive(fin, function () { fin.live = false; chatRender(); });
 }
-var CHAT_ROUNDS = 3;
+var CHAT_ROUNDS = 8;
+var CHAT_MAX_TOKENS = 4096;      /* 普通聊天/工具轮的单轮输出上限，工具调用 JSON 别被截断 */
+var CHAT_TOKEN_BUDGET = 24000;   /* 可被 window.__agentTokenBudget 覆盖 */
 function chatSysBase() {
   return "你是一只乐于助人的蓝色大肥鱼，用中文回答：先给结论，再讲依据；" +
          "简洁但把关键步骤说清，不要编造题库里没有的内容。" +
@@ -1806,6 +1872,14 @@ function chatSysBase() {
          "不要为了补充上下文自发调用任何工具，也不要主动改解析、参考答案或答案。";
 }
 function chatCtxMsg(ctx) { return "当前题目上下文（JSON）：" + JSON.stringify(ctx); }
+/* Agent 执行规则：单独一段，固定段仍逐字可缓存。
+   只写「顺序与前置条件」，不写具体工具参数；改数据仍要用户批准。 */
+function chatAgentRules() {
+  return "Agent 执行规则：需要题库数据时先读（建计划只要 id 时用 compact:true）；" +
+         "建计划先 create_plan，拿到返回的 plan.id 后再用 update_plan 填日程；" +
+         "用户要求提醒或通知时，最后调用 notify_phone。write_answers / write_explanations / " +
+         "delete_plan 会先弹预览卡，未批准不要重复调用。";
+}
 /* 合起来的一份仍保留：单测和「没人问题时」的旧调用点都用它。 */
 function chatSystem(ctx) { return chatSysBase() + chatCtxMsg(ctx); }
 /* 单条工具结果最多带多少字符：它会随这一轮之后的每次请求重发。 */
@@ -1989,6 +2063,17 @@ function patchImportDigest(state, detail) {
   return false;
 }
 function chatTool(name, args) {
+  /* 注册工具里的题库/方案工具：执行复用 MCP 同一套函数，schema 只在 Registry 里。 */
+  if (name === "list_banks") {
+    return { banks: BANK.subjects.map(function (s) {
+      return { id: s.id, name: s.name, count: stats(s.id).total, file: s.file || "" };
+    }) };
+  }
+  if (name === "import_bank") return mcpImport(args);
+  if (["create_plan", "update_plan", "delete_plan", "list_plans", "notify_phone"].indexOf(name) >= 0) {
+    if (typeof mcpPlanTool !== "function") throw new Error("方案工具还没加载");
+    return mcpPlanTool(name, args);
+  }
   if (name === "get_current_question") {
     var now = chatQuestionCtx();
     if (!now) throw new Error("现在没有打开答题页，读不到当前题目");
@@ -2004,7 +2089,8 @@ function chatTool(name, args) {
   if (name === "list_questions") {
     /* 对话里默认只取 5 道：拿一堆题会全部塞进下一轮的输入，token 翻几倍。 */
     return mcpListQuestions({ bank: bank, ids: args.ids, offset: args.offset,
-                              limit: args.limit || 5, type: args.type, query: args.query });
+                              limit: args.limit || 5, type: args.type, query: args.query,
+                              wrong: args.wrong === true, compact: args.compact === true });
   }
   if (name === "write_explanations") {
     var r = mcpWriteExplanations({ bank: bank, items: args.items, mode: args.mode });
@@ -2023,6 +2109,174 @@ function chatTool(name, args) {
     return ra;
   }
   throw new Error("未知工具：" + name);
+}
+/* ================= T2：AgentLoop 护栏 / HITL =================
+   预算、重复调用与写操作批准状态在 Java AgentLoop；这里只负责问闸门、
+   把 preview 画成 OpenUI 卡、批准后执行。没有原生桥时退化为本地兜底：
+   至少保住「写操作必须预览」与「同参重复不执行」，其余预算由轮次上限兜底。 */
+var chatAgentLocal = null;
+function agentSummaryLocal() {
+  var s = chatAgentLocal;
+  if (!s) return null;
+  return { runId: s.runId, rounds: s.rounds, maxRounds: s.maxRounds, tokens: s.tokens,
+           maxTokens: s.maxTokens, toolCalls: s.toolCalls, repeats: s.repeats,
+           previews: s.previews, stopped: s.stopped, stopReason: s.stopReason };
+}
+function agentBeginLocal(rounds, tokens) {
+  chatAgentLocal = { runId: "local" + Date.now(), maxRounds: rounds || 8,
+    maxTokens: tokens || 24000, rounds: 0, tokens: 0, stopped: false, stopReason: "",
+    seen: {}, approved: {}, denied: {}, toolCalls: 0, repeats: 0, previews: 0 };
+  return agentSummaryLocal();
+}
+function agentTickLocal(p, c) {
+  var s = chatAgentLocal;
+  if (!s) return null;
+  if (s.stopped) return agentSummaryLocal();
+  s.rounds++;
+  s.tokens += Math.max(0, p || 0) + Math.max(0, c || 0);
+  if (s.rounds >= s.maxRounds) { s.stopped = true; s.stopReason = "BUDGET_ROUNDS"; }
+  else if (s.tokens > s.maxTokens) { s.stopped = true; s.stopReason = "BUDGET_TOKENS"; }
+  return agentSummaryLocal();
+}
+function agentCheckLocal(tool, args) {
+  var s = chatAgentLocal;
+  if (!s) return null;
+  var sig = tool + ":" + stableJson(args || {});
+  if (s.stopped) return { action: "stop", reason: s.stopReason, signature: sig };
+  if (s.denied[sig]) return { action: "deny", reason: "DENIED", signature: sig };
+  if (s.seen[sig]) {
+    s.repeats++;
+    return { action: "deny", reason: "REPEAT_CALL", signature: sig,
+             message: "同一个工具和参数已经执行过；请停止重试或换策略。" };
+  }
+  if (HITL_TOOLS[tool] && !s.approved[sig]) {
+    s.previews++;
+    return { action: "preview", reason: "NEEDS_APPROVAL", signature: sig };
+  }
+  s.seen[sig] = 1;
+  s.toolCalls++;
+  return { action: "allow", signature: sig };
+}
+function agentCall(op, payload) {
+  var via = null;
+  try {
+    if (window.Android && Android.agentCall) {
+      via = JSON.parse(Android.agentCall(String(op || ""), JSON.stringify(payload || {})));
+    }
+  } catch (e) { via = null; }
+  if (via) return via;
+  payload = payload || {};
+  if (op === "begin") return agentBeginLocal(payload.maxRounds, payload.maxTokens);
+  if (op === "tick") return agentTickLocal(payload.promptTokens, payload.completionTokens);
+  if (op === "check") return agentCheckLocal(payload.tool, payload.args);
+  if (op === "approve") {
+    if (chatAgentLocal) chatAgentLocal.approved[payload.signature] = 1;
+    localApproved[payload.signature] = 1;
+    return { ok: true, signature: payload.signature };
+  }
+  if (op === "deny") {
+    if (chatAgentLocal) {
+      chatAgentLocal.denied[payload.signature] = 1;
+      chatAgentLocal.seen[payload.signature] = 1;
+    }
+    return { ok: true, signature: payload.signature };
+  }
+  if (op === "finish") return agentSummaryLocal();
+  if (op === "reset") { chatAgentLocal = null; return { ok: true }; }
+  return null;
+}
+function stableJson(v) {
+  if (v === null || typeof v !== "object") return JSON.stringify(v);
+  if (Object.prototype.toString.call(v) === "[object Array]") {
+    var a = [];
+    for (var i = 0; i < v.length; i++) a.push(stableJson(v[i]));
+    return "[" + a.join(",") + "]";
+  }
+  var keys = Object.keys(v).sort(), parts = [];
+  for (var k = 0; k < keys.length; k++) parts.push(JSON.stringify(keys[k]) + ":" + stableJson(v[keys[k]]));
+  return "{" + parts.join(",") + "}";
+}
+function agentGate(tool, args, seen) {
+  var r = agentCall("check", { tool: tool, args: args || {} });
+  if (r) return r;
+  var sig = tool + ":" + stableJson(args || {});
+  if (seen[sig]) return { action: "deny", reason: "REPEAT_CALL", signature: sig,
+    message: "同一个工具和参数已经执行过；请停止重试或换策略。" };
+  if (HITL_TOOLS[tool] && !localApproved[sig]) {
+    return { action: "preview", reason: "NEEDS_APPROVAL", signature: sig };
+  }
+  seen[sig] = 1;
+  return { action: "allow", signature: sig };
+}
+function chatCurrentBank(args) {
+  var cur = quizOpen() && S && S.order && S.order.length ? q() : null;
+  return args.bank || (cur && cur.subject) || "";
+}
+/* 写操作先 dry-run：只校验与算变更，不落盘；预览卡用这份结果。 */
+function chatToolPreview(name, args) {
+  if (name === "delete_plan") {
+    var p = planFull(args.planId);
+    if (!p) throw new Error("方案不存在：" + args.planId);
+    return { dryRun: true, action: "delete_plan", plan: { id: p.id, title: p.title } };
+  }
+  var bank = chatCurrentBank(args);
+  if (!bank) throw new Error("当前没有题库，请指定 bank");
+  if (name === "write_explanations") {
+    return mcpWriteExplanations({ bank: bank, items: args.items, mode: args.mode, dryRun: true });
+  }
+  if (name === "write_answers") {
+    return mcpWriteAnswers({ bank: bank, items: args.items, dryRun: true });
+  }
+  return null;
+}
+function chatHitlText(name, pv) {
+  if (name === "delete_plan") return "删除方案「" + ((pv.plan && pv.plan.title) || "") + "」及其执行记录";
+  var n = pv && pv.updated !== undefined ? pv.updated : 0;
+  var ids = pv && pv.changes ? pv.changes.slice(0, 4).map(function (c) { return c.id; }).join("、") : "";
+  if (!n) return "没有可改的条目" + (pv && pv.missing && pv.missing.length ? "（找不到：" + pv.missing.join("、") + "）" : "");
+  return (name === "write_answers" ? "改答案" : "改解析/参考答案") + "：共 " + n + " 题" +
+         (ids ? "（" + ids + (n > 4 ? " 等" : "") + "）" : "");
+}
+function chatHitlCard(pend) {
+  var text = chatHitlText(pend.name, pend.preview);
+  return "root = Stack([c])\n" +
+         "c = Card(\"待确认变更\", [t, r])\n" +
+         "t = Text(" + JSON.stringify(text) + ")\n" +
+         "r = Row([ok, no])\n" +
+         "ok = Button(\"批准执行\", \"hitl:ok:" + pend.id + "\")\n" +
+         "no = Button(\"取消\", \"hitl:no:" + pend.id + "\")";
+}
+
+function chatHitlAction(arg) {
+  var s = String(arg || ""), cut = s.indexOf(":");
+  var verb = cut < 0 ? s : s.slice(0, cut), id = cut < 0 ? "" : s.slice(cut + 1);
+  var p = chatPendingTool;
+  if (!p || p.id !== id) { toast("这次变更已过期，重新让大肥鱼发起一次"); return; }
+  if (verb === "no") {
+    agentCall("deny", { signature: p.signature });
+    chatPendingTool = null;
+    chatHitlPaused = false;
+    chatPush({ role: "note", text: "已取消这次变更，没有落盘。" });
+    chatRender();
+    toast("已取消");
+    return;
+  }
+  agentCall("approve", { signature: p.signature });
+  localApproved[p.signature] = 1;
+  var runArgs = JSON.parse(JSON.stringify(p.args || {}));
+  delete runArgs.dryRun;
+  var out, err = "";
+  try { out = chatTool(p.name, runArgs); }
+  catch (e) { err = e && e.message ? e.message : String(e); out = { error: err }; }
+  if (!err && out && typeof out === "object") out.receipt = "r" + Date.now().toString(36);
+  chatPendingTool = null;
+  chatHitlPaused = false;
+  chatPush({ role: "note", text: err ? "执行失败：" + err :
+    (p.name === "delete_plan" ? "已删除方案「" + ((out.deleted && out.deleted.title) || "") + "」" :
+      "已执行：共 " + ((out && out.updated) || 0) + " 条" + (p.name === "write_answers" ? "答案" : "解析/参考答案")) +
+    (out && out.receipt ? "（回执 " + out.receipt + "）" : "") });
+  chatRender();
+  toast(err ? "执行失败" : "已执行");
 }
 function chatRequest(cfg, body, onDelta) {
   return new Promise(function (resolve, reject) {
@@ -2062,6 +2316,9 @@ function chatStop() {
   chatBusy = false;
   chatRender();
   toast("已停止");
+  var nx = chatInterrupt;
+  chatInterrupt = "";
+  if (nx) setTimeout(function () { if (!chatBusy) chatSendText(nx); }, 350);
 }
 /* 原生侧网络抖动自动重试时，把「正在重试 n/2」插进对话里，别让用户以为死了。 */
 window.onChatRetry = function (id, n, note) {

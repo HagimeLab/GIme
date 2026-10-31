@@ -89,8 +89,10 @@ public final class ToolRegistry {
         put(p, "type", with(prop("string", "single / multi / judge / fill / short"),
                 "enum", arr(new String[]{"single", "multi", "judge", "fill", "short"})));
         put(p, "query", prop("string", "题干包含的文字"));
+        put(p, "wrong", prop("boolean", "只看错题本里的题；默认 false"));
+        put(p, "compact", prop("boolean", "建计划/只需要 id 时传 true：只回 id 列表，不带题干与选项"));
         return tool("list_questions",
-                "提取一个题库里的题目与选项。ids 指定单题或多题；不给 ids 时按 offset/limit 分页。",
+                "提取一个题库里的题目与选项。ids 指定单题或多题；不给 ids 时按 offset/limit 分页。建计划只需要 id 时传 compact:true，避免重复读题干烧 token。",
                 schema(p, new String[]{"bank"}),
                 true, false, true, "none", new String[]{"题库存在"}, new String[]{"BANK_NOT_FOUND", "NOT_READY"});
     }
