@@ -24,3 +24,6 @@ dist/
 # 该域名在部分网络下不通；jsDelivr 可以直接从仓库按路径直出这个文件。
 !release/
 !release/*.apk
+
+# 本地周期方案：只在本机维护，不进 Git、不参与 GitHub 推送
+/plan/
