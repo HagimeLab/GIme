@@ -82,6 +82,23 @@ svg { display: block; }
 .sec-title b { flex: 1; font-size: 1.0625rem; font-weight: 700; letter-spacing: .5px; }
 .sec-title span { font-size: .8125rem; color: var(--ink-3); }
 
+/* 首页学习资料卡：按错题薄弱点让大肥鱼联网找资料 */
+.study-card { padding: 14px 16px; border-radius: var(--r-card); background: var(--raise);
+              border: 1px solid var(--line); box-shadow: var(--sh-sm); }
+.study-card .sc-top { display: flex; align-items: flex-start; }
+.study-card .sc-ic { flex: 0 0 34px; width: 34px; height: 34px; margin-right: 10px;
+                     border-radius: 12px; background: var(--surface); color: var(--ink-2);
+                     display: flex; align-items: center; justify-content: center; }
+.study-card .sc-copy { flex: 1; min-width: 0; }
+.study-card .sc-copy b { display: block; font-size: .9375rem; }
+.study-card .sc-copy em { display: block; margin-top: 4px; font-style: normal;
+                          font-size: .75rem; line-height: 1.55; color: var(--ink-3); }
+.study-card .sc-net { flex: 0 0 auto; margin-left: 8px; padding: 2px 7px; border-radius: 999px;
+                      border: 1px solid var(--line); font-size: .625rem; color: var(--ink-3); }
+.study-card .sc-net.on { background: var(--ink); color: var(--paper); border-color: var(--ink); }
+.study-card .sc-go { display: block; margin: 12px 0 0 auto; padding: 9px 14px; border-radius: 12px;
+                     background: var(--ink); color: var(--paper); font-size: .75rem; font-weight: 700; }
+
 /* ---------------- 首页 ---------------- */
 .page { display: none; padding: calc(var(--st) + 18px) 22px 118px; }
 .page.on { display: block; }
@@ -397,6 +414,7 @@ button.rec:active { opacity: .62; }
 .chat-head .chat-cfg.chat-ico { padding: 6px 8px; display: inline-flex; align-items: center; }
 .chat-head .chat-cfg.chat-ico .ico { width: 16px; height: 16px; margin: 0; stroke: currentColor;
                                      fill: none; stroke-width: 2; stroke-linecap: round; }
+.chat-head .chat-cfg.chat-ico.on { background: var(--ink); color: var(--paper); }
 /* 历史会话列表：一行一个会话，右侧垃圾桶单独一颗按钮 */
 .conv-list { margin: 4px 0 8px; }
 .conv-row { display: flex; align-items: stretch; gap: 8px; margin: 8px 0; }

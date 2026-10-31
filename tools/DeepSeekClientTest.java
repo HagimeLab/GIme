@@ -342,6 +342,8 @@ public class DeepSeekClientTest {
            cb.optString("chat_session_id") + "/" + cb.optString("prompt"));
         eq("thinking 透传", true, cb.optBoolean("thinking_enabled"));
         eq("search 默认关", false, cb.optBoolean("search_enabled", true));
+        JSONObject cbs = DeepSeekWeb.completionBody("sid-1", null, "问题", true, true);
+        eq("search 可按请求开启", true, cbs.optBoolean("search_enabled", false));
 
         // ── HIF 令牌：从官方接口拉取、按 x-hif-ttl 缓存 ──
         eq("HIF 令牌解析",

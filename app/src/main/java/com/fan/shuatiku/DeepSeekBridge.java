@@ -475,6 +475,7 @@ public final class DeepSeekBridge {
         JSONArray messages = req.optJSONArray("messages");
         if (messages == null) messages = new JSONArray();
         JSONArray tools = req.optJSONArray("tools");
+        boolean search = req.optBoolean("search", true);
 
         // 页面传的 user 当会话键；没有就退化成一个固定值（单用户 App 足够）
         String convKey = req.optString("user", "");
@@ -537,7 +538,7 @@ public final class DeepSeekBridge {
                 content.setLength(0);
                 reasoning.setLength(0);
                 throttle.acquire(ms -> sink.toJs("window.onChatThrottle(" + quote(id) + "," + ms + ")"));
-                web.stream(prompt, sid, parent, true, new DeepSeekWeb.Listener() {
+                web.stream(prompt, sid, parent, true, search, new DeepSeekWeb.Listener() {
                     @Override public void onThinking(String t) {
                         reasoning.append(t);
                         thinkOut.feed(t);

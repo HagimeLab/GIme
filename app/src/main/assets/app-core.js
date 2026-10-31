@@ -1430,6 +1430,48 @@ function tabTap(which) {
    不落盘——重启后展开是最不容易让人迷路的状态 */
 var catsClosed = false;
 
+/* 首页学习资料卡：按错题本的题型分布找薄弱点，交给大肥鱼联网检索 */
+function studyFocus() {
+  var byType = {}, total = 0, best = "", n = 0, i, q, k;
+  for (i = 0; i < BANK.questions.length; i++) {
+    q = BANK.questions[i];
+    if (!inWrong(q)) continue;
+    total++;
+    k = q.type || "single";
+    byType[k] = (byType[k] || 0) + 1;
+  }
+  for (k in byType) if (byType[k] > n) { n = byType[k]; best = k; }
+  return { total: total, type: best, label: best ? typeName(best) : "", count: n };
+}
+function renderStudyCard() {
+  var el = document.getElementById("studyCard");
+  if (!el) return;
+  var f = studyFocus();
+  var on = typeof webSearchOn === "function" && webSearchOn();
+  var sub = f.total
+    ? "错题本里有 " + f.total + " 道错题" + (f.label ? "，" + f.label + "最多（" + f.count + " 道）" : "") + "；联网找 3 份适合的资料"
+    : "先做几道题，我再按你的薄弱点联网找资料";
+  el.innerHTML = '<div class="study-card">' +
+    '<div class="sc-top">' +
+      '<span class="sc-ic"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M4 5.5A2.5 2.5 0 0 1 6.5 3H20v16H6.5A2.5 2.5 0 0 0 4 21.5z"/><path d="M4 5.5v16"/></svg></span>' +
+      '<div class="sc-copy"><b>今日学习资料</b><em>' + esc(sub) + "</em></div>" +
+      '<span class="sc-net' + (on ? " on" : "") + '">' + (on ? "联网" : "未联网") + "</span>" +
+    "</div>" +
+    '<button class="sc-go" onclick="studyMaterials()">让大肥鱼找资料</button>' +
+  "</div>";
+}
+function studyMaterials() {
+  if (typeof webSearchOn === "function" && !webSearchOn()) {
+    toast("先在聊天页打开联网搜索");
+    return;
+  }
+  var f = studyFocus();
+  var focus = f.total ? "，尤其是" + f.label + "（" + f.count + " 道错题）" : "";
+  var prompt = "结合我的学习情况和错题" + focus +
+    "，联网帮我找 3 份适合的学习资料，给出可点击链接、来源和推荐理由；不要编造链接。";
+  openChatTab();
+  chatAsk(prompt);
+}
 function renderHome() {
   /* 今日待刷 + 进行中方案合成一张 Hero；方案域还没加载时留空，不挡首页 */
   var hero = document.getElementById("planHero");
@@ -1458,6 +1500,7 @@ function renderHome() {
   document.getElementById("cats").innerHTML = cats;
   syncCatsFold();
   renderTasks(noQ);
+  renderStudyCard();
 }
 
 /* 折叠：只改一个容器的类，六张卡片一起动，不会逐张错位。

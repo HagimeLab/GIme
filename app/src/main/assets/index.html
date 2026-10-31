@@ -42,6 +42,9 @@
   <div class="sec-title"><b>今日待刷题</b><span onclick="openPaper()" style="text-decoration:underline">组卷出题</span></div>
   <div id="tasks"></div>
 
+  <div class="sec-title"><b>学习资料</b><span>按薄弱点推荐</span></div>
+  <div id="studyCard"></div>
+
   <div class="sec-title"><b>最近练习</b><span onclick="openFS('stat')">查看全部</span></div>
   <div class="card pad" id="recent"></div>
 </div>
@@ -142,6 +145,9 @@
     </button>
     <button class="chat-cfg chat-ico" onclick="openConvList()" aria-label="历史会话" title="历史会话">
       <svg class="ico" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8"/><path d="M12 8v4l3 2"/></svg>
+    </button>
+    <button class="chat-cfg chat-ico" id="chatWeb" onclick="toggleWebSearch()" aria-label="联网搜索" title="联网搜索">
+      <svg class="ico" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8"/><path d="M4 12h16M12 4c2.6 2.2 4 5 4 8s-1.4 5.8-4 8c-2.6-2.2-4-5-4-8s1.4-5.8 4-8z"/></svg>
     </button>
     <button class="chat-cfg" onclick="openAgentCfg()">设置</button>
   </div>

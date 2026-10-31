@@ -305,6 +305,27 @@ function agentMode() {
   if (a.mode === "login" || a.mode === "key") return a.mode;
   return isBuiltin(a) ? "login" : "key";
 }
+/* 联网搜索：内置通道默认开；API Key 通道没有这能力，按钮直接藏掉 */
+function webSearchOn() {
+  return agentMode() === "login" && set.webSearch !== false;
+}
+function syncWebBtn() {
+  var b = document.getElementById("chatWeb");
+  if (!b) return;
+  var usable = agentMode() === "login";
+  b.hidden = !usable;
+  var on = usable && webSearchOn();
+  b.classList.toggle("on", on);
+  b.setAttribute("aria-pressed", on ? "true" : "false");
+  b.title = on ? "联网搜索已开启，点此关闭" : "联网搜索已关闭，点此开启";
+}
+function toggleWebSearch() {
+  if (agentMode() !== "login") { toast("联网搜索只在手机号登录模式可用"); return; }
+  set.webSearch = !webSearchOn();
+  save();
+  syncWebBtn();
+  toast(set.webSearch ? "联网搜索已开启" : "联网搜索已关闭");
+}
 /* 「我的」里那一行的小字：两种接入各看各的齐备程度。 */
 function agentSub() {
   if (agentMode() === "login") {
@@ -1273,6 +1294,7 @@ function chatRender() {
      空会话时它由 CSS 隐藏，名字显示在中间的 hero 里。 */
   var ttl = document.getElementById("chatTitle");
   if (ttl) ttl.textContent = "蓝色大肥鱼";
+  syncWebBtn();
   var h = "";
   /* 空会话不再往列表里塞提示：中间的 hero 自带虚线提示 */
   chatMsgs.forEach(function (m) {
@@ -1946,6 +1968,7 @@ async function chatRun(cfg, attachMeta) {
     /* 内置通道按「页面对话」复用上游会话：把会话 id 传下去，换会话就是换一条上游链路，
        不会带着上一段历史回答这一问。API Key 模式不加这个字段，别给第三方接口塞它没要的东西。 */
     if (isBuiltin && chatCurId) body.user = chatCurId;
+    if (isBuiltin) body.search = webSearchOn();
     if (!lastRound) { body.tools = chatTools(); body.tool_choice = "auto"; }
     try {
       data = await chatRequest(cfg, body, onDelta);
@@ -2254,7 +2277,9 @@ function chatAgentRules() {
          "Button 的 action 取 send:/value:/nav:/approve:/adjust:/toggle:/insight:。" +
          "Card 第一个参数是标题字符串、第二个才是子组件数组；没有标题就直接用 Stack，不要写 Card([...])。" +
          "示例：root = Stack([Card(\"标题\", [Text(\"正文\"), Progress(\"完成度\", 50), Button(\"继续\", \"send:继续\")])])。" +
-         "不要用 Card { ... } 块语法，也不要在正文重复卡片内容。";
+         "不要用 Card { ... } 块语法，也不要在正文重复卡片内容。" +
+         (webSearchOn() ? "联网搜索已开启：用户问学习资料、最新信息或备考建议时，优先联网检索；" +
+           "推荐资料要给出可点击链接、来源和适用场景，不要编造链接。" : "");
 }
 /* 合起来的一份仍保留：单测和「没人问题时」的旧调用点都用它。 */
 function chatSystem(ctx) { return chatSysBase() + chatCtxMsg(ctx); }

@@ -694,6 +694,12 @@ public final class DeepSeekWeb {
     static JSONObject completionBody(String sessionId, Long parentMessageId,
                                      String prompt, boolean thinking)
             throws org.json.JSONException {
+        return completionBody(sessionId, parentMessageId, prompt, thinking, false);
+    }
+
+    static JSONObject completionBody(String sessionId, Long parentMessageId,
+                                     String prompt, boolean thinking, boolean search)
+            throws org.json.JSONException {
         JSONObject body = new JSONObject();
         body.put("chat_session_id", sessionId);
         body.put("parent_message_id", parentMessageId == null
@@ -702,7 +708,7 @@ public final class DeepSeekWeb {
         body.put("prompt", prompt);
         body.put("ref_file_ids", new JSONArray());
         body.put("thinking_enabled", thinking);
-        body.put("search_enabled", false);
+        body.put("search_enabled", search);
         body.put("action", JSONObject.NULL);
         body.put("source", "default");
         body.put("preempt", false);
@@ -719,6 +725,11 @@ public final class DeepSeekWeb {
      */
     public void stream(String prompt, String sessionId, Long parentMessageId,
                        boolean thinking, Listener listener) throws Exception {
+        stream(prompt, sessionId, parentMessageId, thinking, false, listener);
+    }
+
+    public void stream(String prompt, String sessionId, Long parentMessageId,
+                       boolean thinking, boolean search, Listener listener) throws Exception {
         // 先确保两枚 HIF 令牌可用（过期才拉，正常是内存命中）
         ensureHif();
         /* 2026-10-21 实测真实页面：
@@ -727,7 +738,7 @@ public final class DeepSeekWeb {
         String sessionUrl = ORIGIN + "/a/chat/s/" + sessionId;
         String pow = powHeader(parentMessageId == null ? ORIGIN + "/" : sessionUrl);
 
-        JSONObject body = completionBody(sessionId, parentMessageId, prompt, thinking);
+        JSONObject body = completionBody(sessionId, parentMessageId, prompt, thinking, search);
 
         // 真实完成请求的 Accept 是 */*，服务端仍回 event-stream
         String leim = hifLeim, dliq = hifDliq;

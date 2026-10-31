@@ -2395,6 +2395,11 @@ ok("链接走原生打开", html.indexOf("data-md-href") >= 0
 /* ---------- 30b. OpenUI 卡片：围栏拆分 / 流式遮挡 / 通用回传 ---------- */
 section("[30b] OpenUI 卡片渲染");
 
+ok("联网搜索默认开、可手动关", /function webSearchOn/.test(html)
+   && /set\.webSearch !== false/.test(html) && /function toggleWebSearch/.test(html));
+ok("内置请求透传 search 开关", /body\.search = webSearchOn\(\)/.test(html));
+ok("首页有学习资料卡", /id="studyCard"/.test(html)
+   && /function renderStudyCard/.test(html) && /function studyMaterials/.test(html));
 ok("OpenUI 渲染器与表单读取器都已就位", typeof W.renderOpenUI === "function" && typeof W.readForm === "function");
 ok("OpenUI 解析器能解析一段界面源码", (() => {
   try {
