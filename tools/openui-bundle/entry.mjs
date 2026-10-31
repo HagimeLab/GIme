@@ -68,6 +68,23 @@ const components = [
     value: z.number(),
   }),
   comp("Badge", "小标签", { text: z.string() }),
+  comp("List", "列表；items 为条目文本数组", {
+    items: z.array(z.string()),
+    ordered: z.boolean().optional(),
+  }),
+  comp("Steps", "编号步骤列表；items 为步骤文本数组", {
+    items: z.array(z.string()),
+  }),
+  comp("Callout", "提示块；tone 取 info / warn / success", {
+    title: z.string().optional(),
+    text: z.string(),
+    tone: z.enum(["info", "warn", "success"]).optional(),
+  }),
+  comp("Chart", "图表；kind 取 bar / line，labels 与 values 等长", {
+    kind: z.enum(["bar", "line"]).optional(),
+    labels: z.array(z.string()),
+    values: z.array(z.number()),
+  }),
   comp("Divider", "分隔线", {}),
   comp("Form", "表单容器；提交时收集内部 Input/Select/Toggle 的值", {
     name: z.string(),

@@ -68,6 +68,68 @@ function renderNode(node, ctx) {
       return makeText('div', `oui-text${p.muted ? ' muted' : ''}`, p.text);
     case 'Badge':
       return makeText('span', 'oui-badge', p.text);
+    case 'List': {
+      const d = make(p.ordered ? 'ol' : 'ul', 'oui-list');
+      for (const item of listOf(p.items)) d.append(makeText('li', '', item));
+      return d;
+    }
+    case 'Steps': {
+      const d = make('ol', 'oui-steps');
+      listOf(p.items).forEach((item, i) => {
+        const li = make('li', '');
+        li.append(makeText('i', '', String(i + 1)), makeText('span', '', item));
+        d.append(li);
+      });
+      return d;
+    }
+    case 'Callout': {
+      const tone = p.tone === 'warn' || p.tone === 'success' ? p.tone : 'info';
+      const d = make('div', 'oui-callout ' + tone);
+      if (p.title) d.append(makeText('b', 'oui-callout-t', p.title));
+      d.append(makeText('div', 'oui-callout-x', p.text));
+      return d;
+    }
+    case 'Chart': {
+      const d = make('div', 'oui-chart');
+      const labels = listOf(p.labels), values = listOf(p.values).map(Number);
+      if (!values.length) return d;
+      const max = Math.max.apply(null, values.concat([1]));
+      if (p.kind === 'line') {
+        const n = values.length, w = 300, h = 110;
+        const pts = values.map((v, i) => {
+          const x = n === 1 ? w / 2 : i * (w / (n - 1));
+          const y = h - 8 - (Math.max(0, v) / max) * (h - 20);
+          return x.toFixed(1) + ',' + y.toFixed(1);
+        }).join(' ');
+        const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+        svg.setAttribute('class', 'oui-line');
+        svg.setAttribute('viewBox', '0 0 ' + w + ' ' + h);
+        svg.setAttribute('preserveAspectRatio', 'none');
+        const poly = document.createElementNS('http://www.w3.org/2000/svg', 'polyline');
+        poly.setAttribute('points', pts);
+        poly.setAttribute('fill', 'none');
+        poly.setAttribute('stroke', 'currentColor');
+        poly.setAttribute('stroke-width', '2');
+        svg.append(poly);
+        d.append(svg);
+      } else {
+        const bars = make('div', 'oui-bars');
+        values.forEach((v, i) => {
+          const col = make('div', 'oui-bar');
+          const fill = make('i', '');
+          fill.style.height = Math.max(0, Math.min(100, (Math.max(0, v) / max) * 100)) + '%';
+          col.append(makeText('b', '', String(v)), fill, makeText('span', '', labels[i] || ''));
+          bars.append(col);
+        });
+        d.append(bars);
+      }
+      if (p.kind === 'line' && labels.length) {
+        const x = make('div', 'oui-chart-x');
+        for (const label of labels) x.append(makeText('span', '', label));
+        d.append(x);
+      }
+      return d;
+    }
     case 'Metric': {
       const d = make('div', 'oui-metric');
       d.append(makeText('div', 'oui-metric-k', p.label), makeText('div', 'oui-metric-v', p.value));

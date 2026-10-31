@@ -1244,6 +1244,28 @@ function chatLayout() {
     }
   }
 }
+/* 回答里的工具执行摘要单独成块；只读展示，默认收起 */
+function chatToolsHtml(m) {
+  var list = (m && Array.isArray(m.tools)) ? m.tools : [];
+  if (!list.length) return "";
+  return '<details class="blk-tools"><summary>执行过程 · ' + list.length + " 步</summary>" +
+    '<div class="blk-tool-list">' + list.map(function (t) {
+      return '<div class="blk-tool">' + esc(t) + "</div>";
+    }).join("") + "</div></details>";
+}
+function chatCopyMsg(id) {
+  var m = null;
+  for (var i = 0; i < chatMsgs.length; i++) {
+    if (chatMsgs[i] && chatMsgs[i].id === id) { m = chatMsgs[i]; break; }
+  }
+  if (!m) return;
+  var text = ouiSplit(m).text || String(m.text || "");
+  if (!String(text).trim()) { toast("这条没有可复制的正文"); return; }
+  try {
+    if (window.Android && Android.copyText) { Android.copyText(text); toast("已复制回答"); return; }
+  } catch (e) { }
+  toast("复制失败");
+}
 function chatRender() {
   var list = document.getElementById("chatList");
   if (!list) return;
@@ -1265,20 +1287,27 @@ function chatRender() {
            '<span class="ub-file">📎 ' + esc(m.file) + " 已随这条消息发给大肥鱼</span></div></div>";
       return;
     }
-    /* 有思考链就渲染成可折叠块：流式期间默认展开（跟着字一起长），
-       回答结束后默认收起（想看再点开，不占地方）。用户手动点过就按用户的选择。 */
-    var inner = (m.live || m.reasoning)
-      ? '<div class="live">' + chatLiveHtml(m) + "</div>"
-      : '<div class="bubble' + (me ? "" : " md") + '">' +
-        (me ? esc(m.text).replace(/\n/g, "<br>") : mdFor(m)) + "</div>";
-    /* 围栏里的界面等 innerHTML 落地后再挂成真组件（字符串里塞不了 DOM）。
-       只看 live：思考链答完也留着（默认折叠），拿 reasoning 当条件会漏掉一半回答。 */
-    if (!me && !m.live && ouiSplit(m).src) {
-      /* 卡片要挂在气泡下方、自己占满一行。.msg 是横向 flex（头像 + 气泡），
-         直接当第三个孩子塞进来会被挤到气泡右边、只剩窄窄一条，
-         所以这里多包一层纵向的 .msg-body。 */
-      inner = '<div class="msg-body">' + inner +
-              '<div class="oui-slot" data-oui="' + esc(m.id || "") + '"></div></div>';
+    var inner;
+    if (me) {
+      inner = '<div class="bubble">' + esc(m.text).replace(/\n/g, "<br>") + "</div>";
+    } else if (m.live) {
+      /* 流式：一张回答卡，思考/正文都在里面 */
+      inner = '<div class="blocks"><div class="live blk">' + chatLiveHtml(m) + "</div></div>";
+    } else {
+      /* 分块卡片：回答正文一张卡，OpenUI 结果一张独立卡，不再互相套娃 */
+      var hasBody = !!String(m.text || "").trim() || !!String(m.reasoning || "").trim();
+      var content = m.reasoning
+        ? chatLiveHtml(m)
+        : '<div class="bubble md">' + mdFor(m) + "</div>";
+      inner = '<div class="blocks">' +
+                '<div class="blk">' +
+                  '<div class="blk-head"><span class="blk-tag">回答</span>' +
+                    (hasBody ? '<button class="blk-copy" onclick="chatCopyMsg(\'' +
+                      esc(m.id || "") + '\')">复制</button>' : "") +
+                  "</div>" + content + chatToolsHtml(m) + "</div>" +
+                (ouiSplit(m).src
+                  ? '<div class="oui-slot" data-oui="' + esc(m.id || "") + '"></div>' : "") +
+              "</div>";
     }
     h += '<div class="msg' + (me ? " me" : " ai") + '" data-mid="' + esc(m.id || "") + '">' +
          (me ? "" : agentAvaHtml()) + inner + "</div>";

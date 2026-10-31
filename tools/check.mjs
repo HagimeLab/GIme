@@ -2387,7 +2387,7 @@ ok("回答结束后正文按 Markdown 渲染", (() => {
   const h = W.chatLiveHtml({ id: "mddone", role: "assistant", reasoning: "", text: "**粗**", live: false });
   return h.indexOf("<strong>粗</strong>") >= 0;
 })());
-ok("用户消息不进 Markdown 渲染", html.indexOf('(me ? "" : " md")') >= 0);
+ok("用户消息不进 Markdown 渲染", /if \(me\) \{\s*inner = '<div class="bubble">' \+ esc\(m\.text\)/.test(html));
 ok("链接走原生打开", html.indexOf("data-md-href") >= 0
    && html.indexOf("Android.openUrl") >= 0
    && /public void openUrl\((?:final )?String url\)/.test(mainSrc));
@@ -2412,7 +2412,8 @@ ok("OpenUI 组件签名来自 schema（参数顺序正确）", (() => {
     const sigs = W.OpenUI.signatures || [];
     const card = sigs.find((x) => x.name === "Card") || {};
     const prog = sigs.find((x) => x.name === "Progress") || {};
-    return sigs.length >= 15 &&
+    return sigs.length >= 19 &&
+      ["Chart", "List", "Steps", "Callout"].every((n) => sigs.some((x) => x.name === n)) &&
       String(card.signature).indexOf("title?") >= 0 &&
       String(card.signature).indexOf("children") >= 0 &&
       String(prog.signature).indexOf("label?") >= 0 &&
@@ -2420,6 +2421,8 @@ ok("OpenUI 组件签名来自 schema（参数顺序正确）", (() => {
       W.OpenUI.prompt().indexOf("undefined —") < 0;
   } catch (e) { return false; }
 })());
+ok("OpenUI 新组件已接渲染器", ["List", "Steps", "Callout", "Chart"].every((n) =>
+  new RegExp("case '" + n + "'").test(jsSources[1])));
 
 /* 三条：正文与围栏分开、源码不进正文、流式期把没收尾的围栏藏起来 */
 const uiMsg = W.chatPush({
@@ -2503,7 +2506,7 @@ ok("只有收尾后的回答才挂卡片占位", (() => {
   return typeof W.chatRender === "function"
       && html.indexOf('data-oui="') >= 0
       && html.indexOf("chatOuiMount(list)") >= 0
-      && /!me && !m\.live && ouiSplit\(m\)\.src/.test(html);
+      && /ouiSplit\(m\)\.src\s*\?/.test(html);
 })());
 ok("思考链不影响卡片挂载", (() => {
   /* 真机踩过：模型先想再答，reasoning 非空；旧条件把它排除，卡片就永远不出现。 */
@@ -2519,14 +2522,13 @@ ok("解析不出界面时不留空框", (() => {
   const plain = W.chatPush({ role: "assistant", text: "没有围栏的一句话", reasoning: "", live: false });
   return W.ouiSplit(plain).src === "" && W.mdFor(plain).indexOf("没有围栏的一句话") >= 0;
 })());
-ok("卡片挂在气泡下方，自己占满一行", (() => {
-  /* .msg 是横向 flex（头像 + 气泡）。占位直接当第三个孩子会被挤到气泡
-     右边、只剩窄窄一条，真机量出来只有 204px。所以外面要包一层纵向的
-     .msg-body：气泡在上、卡片在下，两者同宽。 */
-  return html.indexOf('<div class="msg-body">') >= 0
-      && /msg-body[\s\S]{0,160}oui-slot/.test(html)
-      && cssText.indexOf(".msg-body") >= 0
-      && /\.msg-body\s*\{[^}]*flex-direction:\s*column/.test(cssText)
+ok("问答改成「正文/过程/结果」分块卡", (() => {
+  return html.indexOf('<div class="blk">') >= 0
+      && /blk[\s\S]{0,260}oui-slot/.test(html)
+      && /function chatToolsHtml/.test(html)
+      && /执行过程 · /.test(html)
+      && /function chatCopyMsg/.test(html)
+      && cssText.indexOf(".msg.ai .blk") >= 0
       && /\.oui-slot\s*\{[^}]*width:\s*100%/.test(cssText);
 })());
 

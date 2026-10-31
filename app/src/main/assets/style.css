@@ -435,6 +435,25 @@ button.rec:active { opacity: .62; }
 .msg.ai .bubble { border-top-left-radius: 6px; }
 .msg.me .bubble { background: var(--ink); color: var(--paper); border-top-right-radius: 6px; }
 .msg .ava { width: 28px; height: 28px; flex-basis: 28px; margin-top: 2px; }
+/* 分块回答卡：正文 / 执行过程 / OpenUI 结果都在同一张卡里分区 */
+.msg.ai { align-items: stretch; }
+.msg.ai .blocks { flex: 1; min-width: 0; max-width: calc(100% - 36px);
+                  display: flex; flex-direction: column; gap: 10px; }
+.msg.ai .blk { width: 100%; min-width: 0; padding: 10px 13px;
+               border-radius: 16px; background: var(--surface); border: 1px solid var(--line);
+               box-shadow: var(--sh-sm); font-size: calc(.875rem * var(--chat-fs, 1)); line-height: 1.65; }
+.msg.ai .blk .bubble { max-width: 100%; padding: 0; background: none; box-shadow: none;
+                       border-radius: 0; font-size: inherit; line-height: inherit; }
+.msg.ai .live.blk { max-width: 100%; }
+.blocks > .oui-slot { margin: 0; }
+.blk-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 6px; }
+.blk-tag { font-size: .625rem; color: var(--ink-3); letter-spacing: .06em; }
+.blk-copy { font-size: .625rem; color: var(--ink-3); background: none; border: 1px solid var(--line);
+            border-radius: 999px; padding: 2px 8px; }
+.blk-tools { margin-top: 8px; border-top: 1px solid var(--line); padding-top: 6px; }
+.blk-tools summary { font-size: .6875rem; color: var(--ink-3); cursor: pointer; }
+.blk-tool-list { margin-top: 4px; }
+.blk-tool { font-size: .6875rem; color: var(--ink-2); line-height: 1.6; }
 .msg .bubble.typing { color: var(--ink-3); }
 .msg .bubble .ub-file { display: block; margin-top: 6px; font-size: .6875rem; opacity: .72; }
 .chat-hero .chat-file { margin: 0 0 10px; width: 100%; }
@@ -864,10 +883,10 @@ html.swap, html.swap * { transition: none !important; }
 .oui {
   width: 100%;
   padding: 14px;
-  border-radius: 18px;
-  background: var(--surface);
-  border: 1px solid var(--stroke);
-  box-shadow: var(--shadow);
+  border-radius: 16px;
+  background: var(--raise);
+  border: 1px solid var(--line);
+  box-shadow: none;
   color: var(--text);
   font-size: 14px;
 }
@@ -920,9 +939,9 @@ html.swap, html.swap * { transition: none !important; }
 }
 
 .oui-card {
-  padding: 12px;
-  border-radius: 14px;
-  background: var(--surface-2);
+  padding: 0;
+  border-radius: 0;
+  background: transparent;
 }
 
 .oui-card-t {
@@ -930,6 +949,32 @@ html.swap, html.swap * { transition: none !important; }
   font-size: 14px;
   font-weight: 700;
 }
+.oui-list { margin: 4px 0 0; padding-left: 1.2em; }
+.oui-list li { margin: 3px 0; line-height: 1.6; }
+.oui-steps { list-style: none; margin: 0; padding: 0; }
+.oui-steps li { display: flex; align-items: flex-start; margin: 8px 0; }
+.oui-steps i { flex: 0 0 22px; width: 22px; height: 22px; margin-right: 10px; border-radius: 50%;
+               background: var(--ink); color: var(--paper); font-style: normal; font-size: 12px;
+               line-height: 22px; text-align: center; }
+.oui-steps span { flex: 1; min-width: 0; line-height: 1.6; }
+.oui-callout { padding: 10px 12px; border-radius: 12px; background: var(--surface);
+               border-left: 3px solid var(--ink-3); }
+.oui-callout.warn { border-left-color: #D14343; }
+.oui-callout.success { border-left-color: #2E7D4F; }
+.oui-callout-t { display: block; margin-bottom: 3px; font-size: 13px; }
+.oui-callout-x { font-size: 13px; line-height: 1.6; color: var(--ink-2); }
+.oui-chart { width: 100%; }
+.oui-bars { display: flex; align-items: flex-end; height: 130px; margin: 0 -4px; padding-top: 8px; }
+.oui-bar { flex: 1; min-width: 0; margin: 0 4px; display: flex; flex-direction: column;
+           align-items: center; height: 100%; justify-content: flex-end; }
+.oui-bar b { margin-bottom: 3px; font-size: 11px; color: var(--ink-2); }
+.oui-bar i { display: block; width: 70%; max-width: 34px; min-height: 3px;
+             border-radius: 8px 8px 3px 3px; background: var(--ink); }
+.oui-bar span { max-width: 100%; margin-top: 4px; font-size: 10px; color: var(--ink-3);
+                white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.oui-line { width: 100%; height: 110px; color: var(--ink); }
+.oui-chart-x { display: flex; justify-content: space-between; margin-top: 4px;
+               font-size: 10px; color: var(--ink-3); }
 
 .oui-title.l1 {
   font-size: 18px;
