@@ -268,10 +268,10 @@ public final class DeepSeekBridge {
     }
 
     private DeepSeekWeb openWeb(String token) {
-        return new DeepSeekWeb(token, prefs.getString(PREF_COOKIE, ""),
-                prefs.getString(PREF_DEVICE_ID, ""), new DeepSeekWeb.CookieSink() {
+        return new DeepSeekWeb(token, SecurePrefs.dec(prefs.getString(PREF_COOKIE, "")),
+                SecurePrefs.dec(prefs.getString(PREF_DEVICE_ID, "")), new DeepSeekWeb.CookieSink() {
                     @Override public void onCookies(String cookie) {
-                        prefs.edit().putString(PREF_COOKIE, cookie).apply();
+                        prefs.edit().putString(PREF_COOKIE, SecurePrefs.enc(cookie)).apply();
                     }
                 });
     }
@@ -310,9 +310,9 @@ public final class DeepSeekBridge {
     /** 当前登录态（给页面显示用）。 */
     static String statusJson(Activity a) {
         SharedPreferences p = a.getSharedPreferences(PREFS, Activity.MODE_PRIVATE);
-        String token = p.getString(PREF_TOKEN, "");
+        String token = SecurePrefs.dec(p.getString(PREF_TOKEN, ""));
         long at = p.getLong(PREF_LOGIN_AT, 0);
-        String mobile = p.getString(PREF_MOBILE, "");
+        String mobile = SecurePrefs.dec(p.getString(PREF_MOBILE, ""));
         JSONObject o = new JSONObject();
         try {
             o.put("loggedIn", token != null && !token.isEmpty());
@@ -342,7 +342,7 @@ public final class DeepSeekBridge {
      * 读到这种就解包取 value 并回写修好，用户不用重新登录。
      */
     private String token() {
-        String t = prefs.getString(PREF_TOKEN, "");
+        String t = SecurePrefs.dec(prefs.getString(PREF_TOKEN, ""));
         if (t == null) t = "";
         t = t.trim();
         if (t.startsWith("{")) {
@@ -350,7 +350,7 @@ public final class DeepSeekBridge {
                 String v = new org.json.JSONObject(t).optString("value", "");
                 if (v != null && !v.isEmpty()) {
                     t = v.trim();
-                    prefs.edit().putString(PREF_TOKEN, t).apply();
+                    prefs.edit().putString(PREF_TOKEN, SecurePrefs.enc(t)).apply();
                 }
             } catch (Exception ignored) { }
         }

@@ -145,7 +145,7 @@ public class DeepSeekLoginActivity extends Activity {
         /* 再补一条更可靠的路：App 自己已经存着 token 时，先用它问一次上游。
            WebView 的 localStorage 可能被清过、或者页面还没把 token 写回来；
            只看 localStorage 就会出现「网页已经登录着，App 却不自动返回」。 */
-        String savedToken = unwrap(getSharedPreferences(PREFS, MODE_PRIVATE).getString(PREF_TOKEN, ""));
+        String savedToken = unwrap(SecurePrefs.dec(getSharedPreferences(PREFS, MODE_PRIVATE).getString(PREF_TOKEN, "")));
         if (!savedToken.isEmpty()) verify(savedToken);
     }
 
@@ -260,10 +260,10 @@ public class DeepSeekLoginActivity extends Activity {
            于是永远等不到自动返回。裸 token 失败再带 Cookie/设备指纹兜底。 */
         String ck = pageCookie;
         if (ck.isEmpty()) ck = cookieHeader();
-        if (ck.isEmpty()) ck = getSharedPreferences(PREFS, MODE_PRIVATE).getString(PREF_COOKIE, "");
+        if (ck.isEmpty()) ck = SecurePrefs.dec(getSharedPreferences(PREFS, MODE_PRIVATE).getString(PREF_COOKIE, ""));
         final String verifyCookie = ck == null ? "" : ck;
-        final String verifyDevice = getSharedPreferences(PREFS, MODE_PRIVATE)
-                .getString(PREF_DEVICE_ID, "");
+        final String verifyDevice = SecurePrefs.dec(getSharedPreferences(PREFS, MODE_PRIVATE)
+                .getString(PREF_DEVICE_ID, ""));
         android.util.Log.d("GImeLogin", "verify start token=" + t.length()
                 + " cookie=" + verifyCookie.length());
         new Thread(new Runnable() {
@@ -366,14 +366,14 @@ public class DeepSeekLoginActivity extends Activity {
         SharedPreferences p = getSharedPreferences(PREFS, MODE_PRIVATE);
         /* 已存 token 快速自检时 WebView 可能还没加载完，Cookie/设备 id 会取到空；
            空值不能覆盖掉上一次登录存下的那一份。 */
-        String oldCookie = p.getString(PREF_COOKIE, "");
-        String oldDevice = p.getString(PREF_DEVICE_ID, "");
+        String oldCookie = SecurePrefs.dec(p.getString(PREF_COOKIE, ""));
+        String oldDevice = SecurePrefs.dec(p.getString(PREF_DEVICE_ID, ""));
         p.edit()
-                .putString(PREF_TOKEN, token)
-                .putString(PREF_MOBILE, mobile)
+                .putString(PREF_TOKEN, SecurePrefs.enc(token))
+                .putString(PREF_MOBILE, SecurePrefs.enc(mobile))
                 .putLong(PREF_LOGIN_AT, System.currentTimeMillis())
-                .putString(PREF_COOKIE, cookie == null || cookie.isEmpty() ? oldCookie : cookie)
-                .putString(PREF_DEVICE_ID, deviceId == null || deviceId.isEmpty() ? oldDevice : deviceId)
+                .putString(PREF_COOKIE, SecurePrefs.enc(cookie == null || cookie.isEmpty() ? oldCookie : cookie))
+                .putString(PREF_DEVICE_ID, SecurePrefs.enc(deviceId == null || deviceId.isEmpty() ? oldDevice : deviceId))
                 .apply();
         setHint("登录成功（" + mobile + "），正在返回…");
         setResult(RESULT_OK);

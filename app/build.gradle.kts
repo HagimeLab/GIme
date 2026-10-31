@@ -45,7 +45,9 @@ android {
 
     buildTypes {
         getByName("release") {
-            isMinifyEnabled = false
+            /* R8：桥方法靠 keep 规则守；assets/题库文件不受代码压缩影响 */
+            isMinifyEnabled = true
+            proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
             if (hasKeystore) signingConfig = signingConfigs.getByName("release")
         }
         // debug 也用同一把钥匙。否则 debug 装过的手机换成 release 会因签名不同被系统拒绝安装，

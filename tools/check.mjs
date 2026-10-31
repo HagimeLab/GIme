@@ -1825,8 +1825,8 @@ const gradleSrc = fs.readFileSync(path.join(ROOT, "app/build.gradle.kts"), "utf8
 /* ① 登录必须把 Cookie 与设备指纹一起收下（只带 token 的流量最像脚本） */
 ok("登录页存 Cookie", loginSrc.indexOf("PREF_COOKIE") >= 0 && loginSrc.indexOf("cookieHeader()") >= 0);
 ok("登录页存设备指纹", loginSrc.indexOf("PREF_DEVICE_ID") >= 0 && loginSrc.indexOf("deepseek-device-id:chat") >= 0);
-ok("打开登录页先用已存 token 自检",
-   /String savedToken = unwrap\(getSharedPreferences\(PREFS, MODE_PRIVATE\)\.getString\(PREF_TOKEN/.test(loginSrc)
+ok("打开登录页先用已存 token 自检（解密后）",
+   /String savedToken = unwrap\(SecurePrefs\.dec\(getSharedPreferences\(PREFS, MODE_PRIVATE\)\.getString\(PREF_TOKEN/.test(loginSrc)
    && /verify\(savedToken\)/.test(loginSrc));
 ok("自检先裸 token，再带 Cookie/设备指纹兜底",
    /new DeepSeekWeb\(token\)\.currentMobile\(\)/.test(loginSrc)
@@ -1850,8 +1850,8 @@ ok("请求头带 x-device-id", /h\.put\("x-device-id", deviceId\)/.test(webSrc))
 ok("请求头带 x-client-platform", /x-client-platform/.test(webSrc));
 ok("空 Cookie 时不发空头", /if \(jar != null && !jar\.isEmpty\(\)\) h\.put\("Cookie"/.test(webSrc));
 ok("构造器接受 cookie/deviceId", /DeepSeekWeb\(String token, String cookie, String deviceId\)/.test(webSrc));
-ok("桥接层把 Cookie 传进去",
-   /new DeepSeekWeb\(token, prefs\.getString\(PREF_COOKIE/.test(bridgeSrc));
+ok("桥接层把 Cookie 解密后传进去",
+   /new DeepSeekWeb\(token, SecurePrefs\.dec\(prefs\.getString\(PREF_COOKIE/.test(bridgeSrc));
 
 /* ③ 会话复用：不再每问一句 create_session */
 ok("默认复用上游会话", /REUSE_SESSION = true/.test(bridgeSrc));
@@ -2125,8 +2125,8 @@ ok("删除语义写在 applySetCookie 里", /expired = true/.test(webSrc));
 ok("每个响应都收 Cookie", (webSrc.match(/harvest\(c\)/g) || []).length >= 3,
    (webSrc.match(/harvest\(c\)/g) || []).length + " 处");
 ok("Cookie 变化有回调", /interface CookieSink/.test(webSrc) && /CookieSink sink/.test(webSrc));
-ok("桥接层把轮换后的 Cookie 落盘",
-   /onCookies\(String cookie\)[\s\S]{0,600}?putString\(PREF_COOKIE, cookie\)/.test(bridgeSrc));
+ok("桥接层把轮换后的 Cookie 加密落盘",
+   /onCookies\(String cookie\)[\s\S]{0,600}?putString\(PREF_COOKIE, SecurePrefs\.enc\(cookie\)\)/.test(bridgeSrc));
 
 /* ⑦ 更像浏览器：Client Hints / Sec-Fetch / 不缓存 */
 ok("带 Client Hints", /sec-ch-ua/.test(webSrc) && /sec-ch-ua-platform/.test(webSrc));
