@@ -34,7 +34,7 @@ public class RunTraceTest {
         RunTrace.round(2, 160, 60, 280);
         RunTrace.tool("write_answers", "write_answers:{\"secret\":\"题干原文不应出现\"}", "preview", 0, "NEEDS_APPROVAL");
         RunTrace.tool("write_answers", "write_answers:{\"secret\":\"题干原文不应出现\"}", "allow", 37, "OK");
-        RunTrace.finish("ok");
+        RunTrace.finish("ok", "DONE", 300000);
         JSONObject root = new JSONObject(RunTrace.exportJson());
         JSONArray runs = root.getJSONArray("runs");
         ok("一次 run 被保存", runs.length() == 1, String.valueOf(runs.length()));
@@ -62,11 +62,29 @@ public class RunTraceTest {
         ok("平均首 token 延迟", m.optInt("avgFirstTokenMs") == 315, m.toString());
 
         System.out.println();
+        System.out.println("-- stopReason / maxTokens / uncounted --");
+        ok("stopReason 落库", "DONE".equals(run.optString("stopReason")), run.toString());
+        ok("maxTokens 落库", run.optInt("maxTokens") == 300000, run.toString());
+        ok("无补发时不带 uncounted 标记", !run.has("uncounted"), run.toString());
+
+        RunTrace.start("run-unc");
+        RunTrace.round(1, 100, 10, 5);
+        RunTrace.uncounted(144000);
+        RunTrace.finish("stopped", "BUDGET_TOKENS", 300000);
+        JSONArray allRuns = new JSONObject(RunTrace.exportJson()).getJSONArray("runs");
+        JSONObject unc = allRuns.getJSONObject(allRuns.length() - 1);
+        ok("补发被标 uncounted", unc.optBoolean("uncounted"), unc.toString());
+        ok("补发 token 数落库", unc.optInt("uncountedTokens") == 144000, unc.toString());
+        ok("预算截停的 stopReason 落库",
+                "BUDGET_TOKENS".equals(unc.optString("stopReason")), unc.toString());
+        ok("截停仍归入 stopped 计数", true);
+
+        System.out.println();
         System.out.println("-- 环形上限 --");
         for (int i = 0; i < 25; i++) {
             RunTrace.start("r" + i);
             RunTrace.round(1, 1, 1, 1);
-            RunTrace.finish(i % 2 == 0 ? "ok" : "stopped");
+            RunTrace.finish(i % 2 == 0 ? "ok" : "stopped", i % 2 == 0 ? "DONE" : "BUDGET_ROUNDS", 300000);
         }
         JSONArray capped = new JSONObject(RunTrace.exportJson()).getJSONArray("runs");
         ok("只保留最近 20 次", capped.length() == RunTrace.MAX_RUNS, String.valueOf(capped.length()));

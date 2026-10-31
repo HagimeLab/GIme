@@ -78,14 +78,45 @@ public final class RunTrace {
         }
     }
 
+    /**
+     * 记一次「没走 tick、但真花了 token」的请求（触顶后补发的全量请求）。
+     *
+     * <p>护栏统计口径不动——补记会二次触发停机判定，行为就变了。
+     * 这里只把数字挂到 run 上并标 uncounted，让诊断包不骗人。
+     */
+    public static synchronized void uncounted(int promptTokens) {
+        if (current == null || promptTokens <= 0) return;
+        current.uncountedTokens += promptTokens;
+        if (sink != null) {
+            sink.log("run_uncounted " + current.id + " promptTokens=" + promptTokens
+                    + "（未计入护栏统计）");
+        }
+    }
+
+    /** 兼容旧调用：只带状态，停止原因留空。 */
     public static synchronized void finish(String status) {
+        finish(status, "", 0);
+    }
+
+    /**
+     * 收尾一次 run。
+     *
+     * <p>stopReason 一定要带上：status=stopped 分不出是「轮次用完」还是「token 触顶」，
+     * 两种情况的处置完全不同（前者该加轮次，后者该砍上下文）。
+     * maxTokens 一起落库，便于事后核对阈值本身有没有被改。
+     */
+    public static synchronized void finish(String status, String stopReason, int maxTokens) {
         if (current == null) return;
         current.status = status == null || status.isEmpty() ? "ok" : status;
+        current.stopReason = stopReason == null ? "" : stopReason;
+        current.maxTokens = maxTokens;
         current.finishedAt = System.currentTimeMillis();
         runs.add(current);
         while (runs.size() > MAX_RUNS) runs.remove(0);
         if (sink != null) {
             sink.log("run_finish " + current.id + " status=" + current.status
+                    + " stopReason=" + (current.stopReason.isEmpty() ? "-" : current.stopReason)
+                    + " maxTokens=" + current.maxTokens
                     + " rounds=" + current.rounds.size() + " tools=" + current.tools.size());
         }
         current = null;
@@ -149,6 +180,10 @@ public final class RunTrace {
         final long startedAt = System.currentTimeMillis();
         long finishedAt;
         String status = "running";
+        String stopReason = "";
+        int maxTokens;
+        /** 触顶后补发的全量请求：确实发了、确实花了钱，但没走 tick，不计入护栏统计。 */
+        int uncountedTokens;
         final List<Round> rounds = new ArrayList<Round>();
         final List<Tool> tools = new ArrayList<Tool>();
 
@@ -161,6 +196,12 @@ public final class RunTrace {
                 o.put("startedAt", startedAt);
                 o.put("finishedAt", finishedAt);
                 o.put("status", status);
+                o.put("stopReason", stopReason);
+                o.put("maxTokens", maxTokens);
+                if (uncountedTokens > 0) {
+                    o.put("uncounted", true);
+                    o.put("uncountedTokens", uncountedTokens);
+                }
                 JSONArray rs = new JSONArray();
                 for (Round r : rounds) rs.put(r.toJson());
                 o.put("rounds", rs);

@@ -181,8 +181,12 @@ public final class AgentLoop {
             if ("deny".equals(o)) return deny(a.optString("signature", ""));
             if ("finish".equals(o)) {
                 String status = a.optString("status", stopped ? "stopped" : "ok");
-                RunTrace.finish(status);
+                RunTrace.finish(status, stopReason, maxTokens);
                 return finish();
+            }
+            if ("uncounted".equals(o)) {
+                RunTrace.uncounted(a.optInt("promptTokens", 0));
+                return "{\"ok\":true}";
             }
             if ("trace".equals(o)) return RunTrace.exportJson();
             if ("reset".equals(o)) { reset(); RunTrace.reset(); return "{\"ok\":true}"; }
