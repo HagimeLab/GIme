@@ -1664,13 +1664,19 @@ function mcpDispatch(req) {
       protocolVersion: pv,
       capabilities: { tools: {} },
       serverInfo: { name: "gime", version: APP_VER },
-      instructions: "GIme 题库工具：list_banks 看题库；import_bank 导入文本；list_questions 取题与选项；" +
-        "write_explanations 写或改解析；write_answers 改客观题正确答案。" +
-        "所有工具都只在用户明确要求时调用，尤其不要主动改动题库、解析或答案。"
+      instructions: "GIme 工具：list_banks 看题库；import_bank 导入文本；list_questions 取题与选项；" +
+        "write_explanations 写或改解析；write_answers 改客观题正确答案；" +
+        "create_plan / update_plan / delete_plan / list_plans 管理方案；notify_phone 发通知。" +
+        "所有工具都只在用户明确要求时调用，尤其不要主动改动题库、解析、答案或方案。"
     });
   }
   if (m === "ping") return mcpOk(id, {});
-  if (m === "tools/list") return mcpOk(id, { tools: MCP_TOOLS });
+  if (m === "tools/list") {
+    /* 方案工具的 schema 在 app-plan.js：action 枚举直接引用 PLAN_ACTIONS，
+       与 PlanStore.ACTIONS 是同一份，不在这里再抄一遍。 */
+    var planTools = typeof mcpPlanTools === "function" ? mcpPlanTools() : [];
+    return mcpOk(id, { tools: MCP_TOOLS.concat(planTools) });
+  }
   if (m === "tools/call") {
     var p = req.params || {}, args = p.arguments || {}, data;
     try {
@@ -1682,6 +1688,10 @@ function mcpDispatch(req) {
       else if (p.name === "list_questions") data = mcpListQuestions(args);
       else if (p.name === "write_explanations") data = mcpWriteExplanations(args);
       else if (p.name === "write_answers") data = mcpWriteAnswers(args);
+      else if (["create_plan", "update_plan", "delete_plan", "list_plans", "notify_phone"].indexOf(p.name) >= 0) {
+        if (typeof mcpPlanTool !== "function") throw new Error("方案工具还没加载");
+        data = mcpPlanTool(p.name, args);
+      }
       else return mcpOk(id, mcpToolError("未知工具：" + p.name));
       return mcpOk(id, mcpToolResult(data));
     } catch (e) {

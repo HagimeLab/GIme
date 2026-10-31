@@ -1,7 +1,7 @@
 # GIme MCP 接口
 
 App 内置一个只监听 `127.0.0.1:8765` 的 MCP 服务（Streamable HTTP，JSON-RPC 2.0），
-让 agent 直接读写 App 里的题库。服务默认就是开着的：应用进程在跑它就在跑，
+让 agent 直接读写 App 里的题库与方案。服务默认就是开着的：应用进程在跑它就在跑，
 应用关掉（Activity 销毁）才停；没有开关，也不需要配置面板。
 
 ## 口令
@@ -33,6 +33,11 @@ adb forward tcp:8765 tcp:8765
 | `list_questions` | 提取单题/多题与选项 | `bank`、`ids`、`offset`、`limit`、`type`、`query` |
 | `write_explanations` | 写或改解析（explain）与主观题参考答案（ref） | `bank`、`items[{id, explain?, ref?}]`、`mode=replace\|append` |
 | `write_answers` | 改客观题（单选/多选/判断）的正确答案 | `bank`、`items[{id, answer:["A"]}]` |
+| `create_plan` | 建立执行方案（可只给目标+天数，也可给逐日内容） | `goal`（必填）、`totalDays`、`title`、`days`、`notify`、`note` |
+| `update_plan` | 改方案：暂停/恢复、改名、开关提醒、加删项、勾选、整体重排 | `planId`、`action`、`date`、`text`、`done`、`title`、`days`、`notify`、`note` |
+| `delete_plan` | 删除方案及其执行记录（不可恢复） | `planId` |
+| `list_plans` | 列出方案进度与今天要做的项 | 无 |
+| `notify_phone` | 给手机发一条通知（App 运行时立即弹出） | `title`、`body`（必填） |
 
 题库用 id 或显示名指定；重名时会报错让你改用 id。
 `import_bank` 的文本格式与 App 内导入一致（参见 App 里的「格式说明」举例）；
@@ -41,6 +46,13 @@ adb forward tcp:8765 tcp:8765
 先整体校验再写盘，写盘失败时内存不会改动。
 `write_answers` 只接受客观题，选项字母必须存在；单选/判断只能一个答案，
 主观题请用 `write_explanations` 改参考答案。写操作只在用户明确要求时调用。
+
+方案工具与页面共用同一份 `plans.json` 与同一个 `rev`：
+`action` 枚举就是 `PlanStore.ACTIONS`（pause / resume / rename / remind_on / remind_off /
+add_item / remove_item / toggle_item / set_days），传别的值会被拒绝而不是当成没发生。
+`create_plan` / `update_plan` 的 `notify` 默认分别是 true / false；
+`notify_phone` 在没有通知权限时返回 `posted:false`，工具本身不报错。
+MCP 写操作遇到 rev 冲突会自动重读一次再重试，仍冲突才把错误交回调用方。
 
 ## 直接走 HTTP
 
@@ -79,4 +91,6 @@ curl -s http://127.0.0.1:8765/mcp \
 - 只绑 `127.0.0.1`，不做局域网监听。
 - 每个请求都要口令；口令只存在 App 私有配置里，日志里那一行是唯一的取用方式
   （Android 上别的应用读不到别的应用的日志，拿不到 adb 也看不到）。
-- 工具能改题库文件（导入、写解析），但没有删除题库的工具；删除仍在 App 界面里做。
+- 工具能改题库文件（导入、写解析），但没有删除题库的工具；删除题库仍在 App 界面里做。
+- 方案可以 `delete_plan`（方案要求如此），但它只删 `plans.json` 里的那一份，
+  碰不到题库、进度或错题本。

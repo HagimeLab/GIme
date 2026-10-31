@@ -15,7 +15,7 @@ import android.os.Build;
  * 渠道 id 换成 GIme 自己的（原来叫 "agent"，两个 App 装在一台机器上会串），
  * 点通知回到 GIme 的方案页而不是首页。
  */
-final class Notify {
+public final class Notify {
 
     /** 通知渠道 id。改了它等于换一条新渠道，用户之前的静音设置会失效，别随手动。 */
     static final String CHANNEL = "gime-plan";
@@ -33,10 +33,10 @@ final class Notify {
         nm.createNotificationChannel(ch);
     }
 
-    /** 弹一条通知。id 用不同值可以并存，同值会覆盖。 */
-    static void show(Context c, int id, String title, String body) {
+    /** 弹一条通知。id 用不同值可以并存，同值会覆盖。返回 false 表示没发出去。 */
+    public static boolean show(Context c, int id, String title, String body) {
         NotificationManager nm = (NotificationManager) c.getSystemService(Context.NOTIFICATION_SERVICE);
-        if (nm == null) return;
+        if (nm == null) return false;
         channel(c);
 
         Intent i = new Intent(c, com.fan.shuatiku.MainActivity.class);
@@ -57,8 +57,10 @@ final class Notify {
         if (Build.VERSION.SDK_INT >= 21) b.setColor(0xff111113);
         try {
             nm.notify(id, b.build());
+            return true;
         } catch (Throwable ignored) {
             /* 通知权限被拒时这里会抛，提醒失败不该把 App 带崩 */
+            return false;
         }
     }
 }

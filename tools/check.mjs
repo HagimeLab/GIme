@@ -1057,9 +1057,9 @@ ok("未知协议版本回退到本机支持的版本",
    mcp(2, "initialize", { protocolVersion: "1999-01-01" }).result.protocolVersion);
 const mcpList = mcp(3, "tools/list");
 const toolNames = mcpList.result.tools.map((t) => t.name);
-ok("tools/list 给出五个工具",
+ok("题库五个工具仍在（与方案工具合计 10 个）",
    ["list_banks", "import_bank", "list_questions", "write_explanations", "write_answers"]
-     .every((n) => toolNames.indexOf(n) >= 0),
+     .every((n) => toolNames.indexOf(n) >= 0) && toolNames.length === 10,
    toolNames.join(","));
 ok("每个工具都有 object 类 inputSchema",
    mcpList.result.tools.every((t) => t.inputSchema && t.inputSchema.type === "object"));
@@ -3666,6 +3666,73 @@ ok("D-1/D-2：卡片槽上下各留 10px",
 /* 方案页要能被新建/调整面板盖住（950 < sheet 1000），又要盖住答题页（850） */
 ok("方案页层级：高于答题页、低于面板",
    /\.fs#planPage \{ z-index: 950; \}/.test(html) && /\.sheet \{[^}]*z-index: 1000/.test(html));
+
+/* ---------- 35. MCP 计划工具：10 工具 / schema / rev / 非法 action ---------- */
+section("[35] MCP 计划工具：schema / rev 冲突 / 非法 action");
+
+const toolsMsg = W.mcpDispatch({ jsonrpc: "2.0", id: 200, method: "tools/list" });
+const allTools = toolsMsg.result.tools;
+ok("tools/list 合计 10 个工具",
+   allTools.length === 10 &&
+   ["create_plan", "update_plan", "delete_plan", "list_plans", "notify_phone"]
+     .every((n) => allTools.some((t) => t.name === n)), allTools.map((t) => t.name).join(","));
+const upTool = allTools.find((t) => t.name === "update_plan");
+ok("update_plan 的 action 枚举引用 PLAN_ACTIONS",
+   JSON.stringify(upTool.inputSchema.properties.action.enum) === JSON.stringify(W.PLAN_ACTIONS));
+
+/* JS 的 PLAN_ACTIONS 是 schema 的唯一来源，必须与 Java 侧 PlanStore.ACTIONS 逐字一致 */
+const planStoreJava = fs.readFileSync(path.join(ROOT, "app/src/main/java/com/fan/shuatiku/agent/PlanStore.java"), "utf8");
+const actBlock = planStoreJava.match(/public static final String\[\] ACTIONS = \{([\s\S]*?)\};/);
+const javaActions = (actBlock[1].match(/"([a-z_]+)"/g) || []).map((s) => s.slice(1, -1));
+ok("PLAN_ACTIONS 与 PlanStore.ACTIONS 逐字一致",
+   JSON.stringify(javaActions) === JSON.stringify(W.PLAN_ACTIONS),
+   javaActions.join(",") + " vs " + W.PLAN_ACTIONS.join(","));
+
+let notified = null;
+W.Android.notifyPhone = (t, b) => { notified = [t, b]; return true; };
+const createdPlan = W.mcpDispatch({ jsonrpc: "2.0", id: 201, method: "tools/call",
+  params: { name: "create_plan", arguments: { goal: "MCP 建的方案", totalDays: 2, notify: true } } })
+  .result.structuredContent;
+ok("create_plan 建立方案并推送通知",
+   !!createdPlan.plan && createdPlan.plan.totalDays === 2 && createdPlan.notified === true &&
+   !!notified && notified[0] === "新方案已建立", JSON.stringify(createdPlan).slice(0, 160));
+const mcpPid = createdPlan.plan.id;
+
+const listedPlans = W.mcpDispatch({ jsonrpc: "2.0", id: 202, method: "tools/call",
+  params: { name: "list_plans", arguments: {} } }).result.structuredContent;
+ok("list_plans 返回方案与今天要做的项",
+   listedPlans.plans.length === 1 && listedPlans.plans[0].today.length === 2,
+   JSON.stringify(listedPlans).slice(0, 160));
+
+const mcpToday = W.planTodayKey();
+const firstText = createdPlan.plan.days[0].items[0].text;
+let mcpUpd = W.mcpDispatch({ jsonrpc: "2.0", id: 203, method: "tools/call",
+  params: { name: "update_plan", arguments: { planId: mcpPid, action: "toggle_item",
+    date: mcpToday, text: firstText } } }).result.structuredContent;
+ok("update_plan 勾选完成", mcpUpd.plan.days[0].items[0].done === true);
+
+fake.conflictOnce = true;
+mcpUpd = W.mcpDispatch({ jsonrpc: "2.0", id: 204, method: "tools/call",
+  params: { name: "update_plan", arguments: { planId: mcpPid, action: "remind_on" } } })
+  .result.structuredContent;
+ok("MCP 写操作遇 rev 冲突自动重读重试", mcpUpd.plan.remind === true);
+
+const illegal = W.mcpDispatch({ jsonrpc: "2.0", id: 205, method: "tools/call",
+  params: { name: "update_plan", arguments: { planId: mcpPid, action: "explode" } } }).result;
+ok("非法 action 枚举被拒绝且不写盘",
+   illegal.isError === true && /未知 action/.test(illegal.content[0].text), JSON.stringify(illegal));
+
+const notifyCall = W.mcpDispatch({ jsonrpc: "2.0", id: 206, method: "tools/call",
+  params: { name: "notify_phone", arguments: { title: "提醒", body: "去刷题" } } })
+  .result.structuredContent;
+ok("notify_phone 弹通知", notifyCall.posted === true && notified[1] === "去刷题");
+const emptyNotify = W.mcpDispatch({ jsonrpc: "2.0", id: 207, method: "tools/call",
+  params: { name: "notify_phone", arguments: { body: " " } } }).result;
+ok("notify_phone 空正文拒绝", emptyNotify.isError === true);
+
+const delPlan = W.mcpDispatch({ jsonrpc: "2.0", id: 208, method: "tools/call",
+  params: { name: "delete_plan", arguments: { planId: mcpPid } } }).result.structuredContent;
+ok("delete_plan 删除且列表清空", fake.plans.length === 0 && delPlan.deleted.id === mcpPid);
 
 delete W.Android;
 

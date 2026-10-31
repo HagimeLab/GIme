@@ -4,7 +4,7 @@
 
 这张表是 **P0 的导出面**：把现在暴露出去的东西一次列清楚，标明每个方法的入参形状与信任级别，供 P2 设计 AgentLoop 的工具注册时对照，也供后续安全收口时判断「哪些口子必须先收紧」。
 
-- 生成依据：`app/src/main/java/com/fan/shuatiku/MainActivity.java` 里全部 `@JavascriptInterface` 注解方法（当前 **36 个**）。
+- 生成依据：`app/src/main/java/com/fan/shuatiku/MainActivity.java` 里全部 `@JavascriptInterface` 注解方法（当前 **37 个**）。
 - P0 已加闸的方法在「P0 校验」一列写明；标 `—` 的表示本次未改动（见文末「P0 没做什么」）。
 - 校验规则集中在 `BridgeGuard.java`（纯逻辑、零 Android 依赖），回归用例在 `tools/BridgeTest.java`，由 `tools/check.cmd` 的 `js bridge guard` 段执行。
 
@@ -100,6 +100,7 @@
 | # | 方法 | 入参 | 返回 | 级别 | P0 校验 | 说明 |
 | --- | --- | --- | --- | --- | --- | --- |
 | 36 | `planGet(id)` | `id` | `String`(JSON) | L0 | — | 读一份完整方案：`{plan:{days,adjustments,…}}`；详情页逐日渲染用，摘要列表故意不带 `days` |
+| 37 | `notifyPhone(title, body)` | `title`、`body` | `boolean` | L1 | — | 立即弹一条方案通知（渠道 `gime-plan`）；body 为空或系统没放行时返回 false |
 
 ## P0 加的闸门（`BridgeGuard`）
 

@@ -918,6 +918,13 @@ public class MainActivity extends Activity {
             }
         }
 
+        /** MCP notify_phone / 建方案后的即时通知。返回 false 表示没发出去。 */
+        @JavascriptInterface
+        public boolean notifyPhone(String title, String body) {
+            if (body == null || body.trim().isEmpty()) return false;
+            return com.fan.shuatiku.agent.Notify.show(MainActivity.this, 200, title, body);
+        }
+
         /** 读一份完整方案（详情页要逐日内容）。 */
         @JavascriptInterface
         public String planGet(String id) {

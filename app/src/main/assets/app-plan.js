@@ -505,6 +505,143 @@ function planPlusIcon() {
   return '<svg class="ico" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>';
 }
 
+/* ================= MCP 计划工具（S4） =================
+   schema 就是数据真源：action 枚举直接引用 PLAN_ACTIONS，
+   写操作一律走 planWrite / planCreateCall / planDeleteCall，
+   与页面按钮共享同一套 rev 校验与重试。 */
+function planProp(type, desc) {
+  return { type: type, description: desc };
+}
+function planSchema(required, props) {
+  var s = { type: "object", properties: props, additionalProperties: false };
+  if (required && required.length) s.required = required;
+  return s;
+}
+function mcpPlanTools() {
+  var act = planProp("string",
+    "pause 暂停 / resume 恢复 / rename 改名 / remind_on 开提醒 / remind_off 关提醒 / " +
+    "add_item 加一条 / remove_item 删一条 / toggle_item 勾选 / set_days 整体重排");
+  act.enum = PLAN_ACTIONS.slice();
+  return [
+    { name: "create_plan",
+      description: "为用户建立一个执行方案。可以只给目标和天数（按模板拆解），也可以直接给逐日内容；建立后可给手机发通知。",
+      inputSchema: planSchema(["goal"], {
+        goal: planProp("string", "目标描述，例如：三个月跑完半程马拉松"),
+        totalDays: planProp("integer", "天数 1-60，默认 7"),
+        title: planProp("string", "方案标题，默认取目标前 14 字"),
+        days: planProp("array", "逐日内容，给了就不按模板拆解。元素形如 {\"date\":\"2026-10-28\",\"items\":[\"写周报\",{\"text\":\"跑 5 公里\",\"done\":false}]}"),
+        notify: planProp("boolean", "建立后是否推送手机通知，默认 true"),
+        note: planProp("string", "通知正文，默认用方案标题")
+      }) },
+    { name: "update_plan",
+      description: "调整已有方案：暂停/恢复、改名、开关提醒、给某天加删执行项、勾选完成、或整体重排逐日内容。",
+      inputSchema: planSchema(["planId", "action"], {
+        planId: planProp("string", "方案 id，可用 list_plans 查"),
+        action: act,
+        date: planProp("string", "日期 YYYY-MM-DD，add_item / remove_item / toggle_item 需要"),
+        text: planProp("string", "执行项文本，add_item / remove_item / toggle_item 需要"),
+        done: planProp("boolean", "toggle_item 时指定目标状态，不填则取反"),
+        title: planProp("string", "rename 时的新标题"),
+        days: planProp("array", "set_days 时的新逐日内容，形同 create_plan 的 days"),
+        notify: planProp("boolean", "改完是否推送手机通知，默认 false"),
+        note: planProp("string", "通知正文")
+      }) },
+    { name: "delete_plan",
+      description: "删除一个方案及其执行记录，不能恢复。",
+      inputSchema: planSchema(["planId"], {
+        planId: planProp("string", "方案 id，可用 list_plans 查")
+      }) },
+    { name: "list_plans",
+      description: "列出所有方案及其进度、今天要做的项，用来决定下一步调整。",
+      inputSchema: planSchema(null, {}) },
+    { name: "notify_phone",
+      description: "给用户手机发一条通知。App 运行时立即弹出；App 没开就发不出来。",
+      inputSchema: planSchema(["body"], {
+        title: planProp("string", "通知标题，默认「方案提醒」"),
+        body: planProp("string", "通知正文")
+      }) }
+  ];
+}
+
+function mcpPlanNotify(title, body) {
+  try {
+    if (window.Android && Android.notifyPhone) return Android.notifyPhone(title, body) === true;
+  } catch (e) { }
+  return false;
+}
+
+/* 与页面按钮同一套写操作；抛错由 mcpDispatch 统一包成工具错误。 */
+function mcpPlanTool(name, a) {
+  a = a || {};
+  planLoad();
+  if (name === "list_plans") {
+    return { rev: PLAN.rev, plans: PLAN.list };
+  }
+  if (name === "create_plan") {
+    var goal = String(a.goal == null ? "" : a.goal).trim();
+    if (!goal) throw new Error("goal 不能为空");
+    var days = parseInt(a.totalDays, 10);
+    if (!(days >= 1)) days = 7;
+    if (days > 60) days = 60;
+    var title = String(a.title == null ? "" : a.title).trim();
+    var daysJson = "";
+    if (a.days !== undefined) {
+      if (!Array.isArray(a.days)) throw new Error("days 必须是数组");
+      daysJson = JSON.stringify(a.days);
+    }
+    var out = planCreateCall(goal, days, title, daysJson);
+    if (out.error) throw new Error(out.error);
+    var p = out.plan;
+    var notified = false;
+    if (a.notify !== false) {
+      var note = String(a.note == null ? "" : a.note).trim() ||
+                 "「" + p.title + "」共 " + p.totalDays + " 天，今天开始执行。";
+      notified = mcpPlanNotify("新方案已建立", note);
+    }
+    return { plan: p, rev: out.rev, notified: notified };
+  }
+  if (name === "update_plan") {
+    var id = String(a.planId == null ? "" : a.planId).trim();
+    if (!id) throw new Error("planId 不能为空");
+    var action = String(a.action == null ? "" : a.action);
+    if (PLAN_ACTIONS.indexOf(action) < 0) {
+      throw new Error("未知 action：" + action + "（可用：" + PLAN_ACTIONS.join(" / ") + "）");
+    }
+    var args = {};
+    if (a.date !== undefined) args.date = String(a.date);
+    if (a.text !== undefined) args.text = String(a.text);
+    if (a.title !== undefined) args.title = String(a.title);
+    if (a.done !== undefined) args.done = !!a.done;
+    if (a.days !== undefined) {
+      if (!Array.isArray(a.days)) throw new Error("days 必须是数组");
+      args.days = a.days;
+    }
+    var up = planWrite(id, action, args);
+    if (up.error) throw new Error(up.error);
+    var notifiedU = false;
+    if (a.notify === true) {
+      var noteU = String(a.note == null ? "" : a.note).trim() ||
+                  "「" + ((up.plan && up.plan.title) || id) + "」已经调整。";
+      notifiedU = mcpPlanNotify("方案已更新", noteU);
+    }
+    return { plan: up.plan, rev: up.rev, notified: notifiedU };
+  }
+  if (name === "delete_plan") {
+    var did = String(a.planId == null ? "" : a.planId).trim();
+    if (!did) throw new Error("planId 不能为空");
+    var del = planDeleteCall(did);
+    if (del.error) throw new Error(del.error);
+    return { deleted: del.plan, rev: del.rev };
+  }
+  if (name === "notify_phone") {
+    var body = String(a.body == null ? "" : a.body).trim();
+    if (!body) throw new Error("body 不能为空");
+    var t = String(a.title == null ? "" : a.title).trim() || "方案提醒";
+    return { posted: mcpPlanNotify(t, body) };
+  }
+  throw new Error("未知工具：" + name);
+}
+
 function planAdjustSheet(id) {
   var p = planFull(id);
   if (!p) return;
