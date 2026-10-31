@@ -601,6 +601,31 @@ function mdInline(s) {
   t = t.replace(/\u0000H(\d+)\u0000/g, function (_, i) { return holds[+i] || ""; });
   return t;
 }
+/* 模型很爱用 Markdown 表格；不认就会把 | 表格原样亮给用户。 */
+function mdCells(line) {
+  var s = String(line == null ? "" : line).trim();
+  if (s.charAt(0) === "|") s = s.slice(1);
+  if (s.charAt(s.length - 1) === "|") s = s.slice(0, -1);
+  return s.split("|").map(function (x) { return x.trim(); });
+}
+function mdTableAt(lines, i) {
+  if (i + 1 >= lines.length || String(lines[i]).indexOf("|") < 0) return null;
+  if (!/^\s*\|?\s*:?-{2,}:?\s*(\|\s*:?-{2,}:?\s*)+\|?\s*$/.test(lines[i + 1])) return null;
+  var head = mdCells(lines[i]), rows = [], j = i + 2;
+  while (j < lines.length && lines[j].trim() && String(lines[j]).indexOf("|") >= 0) {
+    rows.push(mdCells(lines[j]));
+    j++;
+  }
+  var h = '<div class="md-table"><table><thead><tr>';
+  for (var k = 0; k < head.length; k++) h += "<th>" + mdInline(head[k]) + "</th>";
+  h += "</tr></thead><tbody>";
+  for (var r = 0; r < rows.length; r++) {
+    h += "<tr>";
+    for (var c = 0; c < head.length; c++) h += "<td>" + mdInline(rows[r][c] == null ? "" : rows[r][c]) + "</td>";
+    h += "</tr>";
+  }
+  return { html: h + "</tbody></table></div>", next: j };
+}
 function mdToHtml(src) {
   var lines = String(src == null ? "" : src).replace(/\r\n?/g, "\n").split("\n");
   var out = [];
@@ -621,6 +646,13 @@ function mdToHtml(src) {
       while (i < lines.length && !/^\s*```\s*$/.test(lines[i])) { code.push(lines[i]); i++; }
       if (i < lines.length) i++;   /* 跳过结束围栏 */
       out.push('<pre class="md-pre"><code>' + esc(code.join("\n")) + "</code></pre>");
+      continue;
+    }
+    var tbl = mdTableAt(lines, i);
+    if (tbl) {
+      flushP();
+      out.push(tbl.html);
+      i = tbl.next;
       continue;
     }
     var h = line.match(/^(#{1,6})\s+(.*)$/);
@@ -717,6 +749,74 @@ function ouiSplit(m) {
   if (Object.keys(OUI_CACHE).length > 60) OUI_CACHE = {};
   OUI_CACHE[id] = out;
   return out;
+}
+/* 模型常把 OpenUI 写成 Card { Text(...) ... } 这种块语法，官方解析器只认 root = ...。
+   这里做一个窄归一：只处理单层 Card 块，组件参数里的 name= 值转成位置参数；
+   认不出的行直接跳过，归一失败就原样交给 renderOpenUI（它会安全失败，不留空框）。 */
+function ouiQuote(s) {
+  var t = String(s == null ? "" : s);
+  return '"' + t.replace(/["\\]/g, function (c) { return "\\" + c; }) + '"';
+}
+function ouiNormalizeCall(line) {
+  var m = String(line || "").trim().match(/^([A-Za-z][A-Za-z0-9]*)\s*\(([\s\S]*)\)$/);
+  if (!m) return "";
+  var name = m[1], args = m[2].trim();
+  var first = args.match(/^\s*"([^"]*)"/);
+  var quoted = first ? first[1] : "";
+  if (name === "Button") {
+    var act = args.match(/action\s*=\s*"([^"]*)"/);
+    var second = args.slice(first ? first[0].length : 0).match(/^\s*,\s*"([^"]*)"/);
+    var action = act ? act[1] : (second ? second[1] : "");
+    return "Button(" + ouiQuote(quoted) + ", " + ouiQuote(action) + ")";
+  }
+  if (name === "Text") {
+    return /variant\s*=\s*"(title|heading|h[1-3])"/i.test(args)
+      ? "Title(" + ouiQuote(quoted) + ", 2)"
+      : "Text(" + ouiQuote(quoted) + ")";
+  }
+  if (name === "Title" || name === "Badge") {
+    return name + "(" + ouiQuote(quoted) + (name === "Title" ? ", 2" : "") + ")";
+  }
+  if (name === "Progress") {
+    var val = args.match(/value\s*=\s*(-?\d+(?:\.\d+)?)/);
+    var lab = args.match(/label\s*=\s*"([^"]*)"/);
+    if (val) {
+      var label = lab ? lab[1].trim() : "";
+      /* 模型常把 label 写成 "50%"，渲染器会再接一次 value → "50% 50%" */
+      if (label && (label === val[1] || label === val[1] + "%" || label === val[1] + " %")) label = "";
+      return "Progress(" + ouiQuote(label) + ", " + val[1] + ")";
+    }
+    /* Progress 的 schema 是 {label?, value}，模型只写一个数字时会被当成 label、
+       value 缺失，官方解析器整节点丢弃（卡片里就少一条进度）。补成 ("", n)。 */
+    if (!first && /^-?\d+(?:\.\d+)?$/.test(args)) return "Progress(\"\", " + args + ")";
+    if (first && args.slice(first[0].length).match(/^\s*,\s*-?\d/)) return name + "(" + args + ")";
+    return "";
+  }
+  /* 没有具名参数时，原样保留（让官方解析器自己判断） */
+  return args.indexOf("=") >= 0 ? "" : name + "(" + args + ")";
+}
+function ouiNormalize(src) {
+  var s = String(src || "").trim();
+  /* Card 的第一个参数是标题字符串、第二个才是 children；模型常写成 Card([...])，
+     数组被当标题，卡片就只剩一个空壳。这种无标题单数组一律降成 Stack。 */
+  s = s.replace(/\bCard\s*\(\s*\[/g, "Stack([");
+  /* root = ... 形式同样要过一遍：Progress(50) 只有一个位置参数，官方解析器会丢节点。 */
+  s = s.replace(/\bProgress\s*\(\s*(-?\d+(?:\.\d+)?)\s*\)/g, "Progress(\"\", $1)");
+  if (/^\s*root\s*=/.test(s)) return s;
+  var m = s.match(/^Card\s*(?:\("([^"]*)"\))?\s*\{\s*([\s\S]*)\}\s*$/);
+  if (!m) return s;
+  var lines = String(m[2] || "").split(/\r?\n/), vars = [], defs = [], i;
+  for (i = 0; i < lines.length; i++) {
+    var line = lines[i].trim();
+    if (!line) continue;
+    var call = ouiNormalizeCall(line);
+    if (!call) continue;
+    var v = "o" + vars.length;
+    vars.push(v);
+    defs.push(v + " = " + call);
+  }
+  if (!vars.length) return s;
+  return "root = Stack([" + vars.join(", ") + "])\n" + defs.join("\n");
 }
 /* 流式阶段围栏还没收尾：先把它后面的内容藏起来，免得源码在气泡里闪一下再消失 */
 function stripUIFence(s) {
@@ -915,7 +1015,7 @@ function chatOuiMount(root) {
       if (chatMsgs[j] && chatMsgs[j].id === id) { m = chatMsgs[j]; break; }
     }
     if (!m) continue;
-    var src = ouiSplit(m).src;
+    var src = ouiNormalize(ouiSplit(m).src);
     if (!src) continue;
     if (!m.formValues) m.formValues = {};
     try {
@@ -1696,6 +1796,7 @@ async function chatRun(cfg, attachMeta) {
      本地工具不花钱，但轮次是硬预算，第二次不再重复执行、只把话挑明。 */
   var seenCall = {};
   var budgetStop = "";
+  var badToolRetry = 0;
   chatLastImported = 0;   /* 本轮真的新增了多少题：自动续轮靠它判断 */
   var dig = [];   /* 这一轮做过的工具动作，收口时挂到回答气泡上 */
   /* 一条流式气泡 + 它的增量回调。收口那一轮也要用，所以抽出来。 */
@@ -1766,6 +1867,7 @@ async function chatRun(cfg, attachMeta) {
       break;
     }
     var calls = msg.tool_calls || [];
+    var badToolBlock = false;
     /* 上游把调用写成了正文（或者只是想照样模仿）：摘出来执行，
        别把那坨标记甩给用户。摘不动的原样留着。 */
     if (!calls.length && String(msg.content || "").indexOf(TOOL_BLOCK_OPEN) >= 0) {
@@ -1774,12 +1876,45 @@ async function chatRun(cfg, attachMeta) {
         sp = splitToolBlocks(live.text);
       }
       if (sp.calls.length) { calls = sp.calls; msg.content = sp.text; live.text = sp.text; }
+      else {
+        var cleaned = stripToolMarkup(String(live.text || msg.content || ""));
+        msg.content = cleaned;
+        live.text = cleaned;
+        badToolBlock = true;
+      }
     }
     /* DSML 是另一套标记：能解析就执行，解析不了也先把标记从正文里剥掉 */
     if (!calls.length && String(msg.content || "").indexOf("DSML") >= 0) {
       var sd = splitDsmlBlocks(msg.content);
       if (sd.calls.length) calls = sd.calls;
       if (sd.text !== String(msg.content || "")) { msg.content = sd.text; live.text = sd.text; }
+      if (sd.found && !sd.calls.length) badToolBlock = true;
+    }
+    if (!calls.length) {
+      var bc = bareToolCall(msg.content);
+      if (bc) { calls = [bc]; msg.content = ""; live.text = ""; badToolBlock = false; }
+    }
+    if (!calls.length && badToolBlock) {
+      /* 模型偶发把调用写成半截 JSON 或别的标记。以前这里直接结束整轮，
+         用户只看到一条报错；现在先在同一轮里让它按合法格式重发一次。 */
+      if (!String(msg.content || "").trim() && badToolRetry < 1) {
+        badToolRetry++;
+        chatDrop(live);
+        messages.push({ role: "system", content: "刚才那次工具调用不是合法 JSON，已丢弃。" +
+          "请重新调用：只输出一个 <tool_call>{\"name\":\"工具名\",\"arguments\":{...}}</tool_call>，" +
+          "arguments 必须是 JSON 对象；不要用其它标记格式。" });
+        chatPush({ role: "step", hidden: true, text: "工具调用格式不对，已让模型重试一次" }, true);
+        chatRender();
+        continue;
+      }
+      chatPush({ role: "step", hidden: true, text: "工具调用格式不完整，已忽略" }, true);
+      if (!String(msg.content || "").trim()) {
+        chatDrop(live);
+        chatPush({ role: "error", text: "这次工具调用格式没解析出来，已忽略；请再发一次，或把任务拆小一点。" });
+        chatSave();
+        chatRender();
+        return;
+      }
     }
     if (calls.length) {
       /* 这一轮只是在调工具，不是给用户看的回答：把流式气泡收掉，别留一串工具 JSON。 */
@@ -1914,7 +2049,9 @@ async function chatRun(cfg, attachMeta) {
 }
 var CHAT_ROUNDS = 8;
 var CHAT_MAX_TOKENS = 4096;      /* 普通聊天/工具轮的单轮输出上限，工具调用 JSON 别被截断 */
-var CHAT_TOKEN_BUDGET = 120000;   /* 可被 window.__agentTokenBudget 覆盖 */
+/* 真机实测：4 次工具调用的计划任务 5 轮就用掉 142k（每轮都重发全部上下文），
+   120k 会在写日程前提前收口；放到 300k 仍由 8 轮硬上限兜底。 */
+var CHAT_TOKEN_BUDGET = 300000;   /* 可被 window.__agentTokenBudget 覆盖 */
 function chatSysBase() {
   return "你是一只乐于助人的蓝色大肥鱼，用中文回答：先给结论，再讲依据；" +
          "简洁但把关键步骤说清，不要编造题库里没有的内容。" +
@@ -1942,7 +2079,14 @@ function chatAgentRules() {
   return "Agent 执行规则：需要题库数据时先读（建计划只要 id 时用 compact:true）；" +
          "建计划先 create_plan，拿到返回的 plan.id 后再用 update_plan 填日程；" +
          "用户要求提醒或通知时，最后调用 notify_phone。write_answers / write_explanations / " +
-         "delete_plan 会先弹预览卡，未批准不要重复调用。";
+         "delete_plan 会先弹预览卡，未批准不要重复调用。" +
+         "需要交互卡片时只用 ```openui-lang：首行 root = Stack([...])，参数按位置；" +
+         "组件 Card/Title/Text/Progress/Button/Row；Button(文字, \"动作\")；" +
+         "Progress(标签, 0-100 的数值)，两个参数都要有；" +
+         "动作 send:/value:/nav:/approve:/adjust:/toggle:/insight:。" +
+         "Card 第一个参数是标题字符串、第二个才是子组件数组；没有标题就直接用 Stack。" +
+         "示例：root = Stack([Card(\"标题\", [Text(\"正文\"), Progress(\"完成度\", 50), Button(\"继续\", \"send:继续\")])])。" +
+         "不要用 Card { ... } 块语法，也不要在正文重复卡片内容。";
 }
 /* 合起来的一份仍保留：单测和「没人问题时」的旧调用点都用它。 */
 function chatSystem(ctx) { return chatSysBase() + chatCtxMsg(ctx); }
@@ -2010,6 +2154,32 @@ function splitToolBlocks(text) {
   }
   return { text: out.trim(), calls: calls };
 }
+/* 有的方言把调用写成裸 JSON（外面只套一层 DSML 壳，剥完就剩对象）。
+   只有「整段就是一个已知工具的对象」才认，避免把普通回答里的 JSON 当调用执行。 */
+function bareToolCall(text) {
+  var s = String(text == null ? "" : text).trim();
+  var f = s.match(/^```(?:json)?\s*([\s\S]*?)\s*```$/i);
+  if (f) s = f[1].trim();
+  if (s.charAt(0) !== "{" || s.charAt(s.length - 1) !== "}") return null;
+  try {
+    var obj = JSON.parse(s), fn = obj.function || obj;
+    var name = String(fn.name || obj.name || "");
+    if (!name || !(name in TOOL_LABELS)) return null;
+    var args = fn.arguments != null ? fn.arguments : obj.arguments;
+    if (args == null) args = {};
+    if (typeof args === "string") args = JSON.parse(args);
+    if (!args || typeof args !== "object") return null;
+    return { id: "bare_" + (++toolBlockSeq), type: "function",
+             function: { name: name, arguments: JSON.stringify(args) } };
+  } catch (e) { return null; }
+}
+/* 解析不出来的调用块也要剥掉：源码/半截 JSON 绝不能亮给用户。 */
+function stripToolMarkup(s) {
+  return String(s == null ? "" : s)
+    .replace(/<tool_call>[\s\S]*?(?:<\/tool_call>|<\/call_call>|$)/gi, "")
+    .replace(/<\/?tool_call>/gi, "")
+    .trim();
+}
 /* DeepSeek 网页版偶尔不用约定的 <tool_call>，而是它自家的 DSML 标记：
    <｜｜DSML｜｜tool_calls> / <｜｜DSML｜｜invoke name="x"> / <｜｜DSML｜｜parameter name="k">…
    真机在「停止」截断时把这坨原样亮在了聊天里。这里既解析也兜底剥离：
@@ -2060,19 +2230,30 @@ function splitDsmlBlocks(text) {
 var TOOL_BLOCK_OPEN = "<" + "tool_call" + ">";
 var TOOL_BLOCK_CLOSE = "<" + "/tool_call" + ">";
 var toolBlockSeq = 0;
-var TOOL_LABELS = { get_current_question: "读了当前题目", list_questions: "查了题库",
-  write_explanations: "写回解析", write_answers: "改了答案", import_attachment: "认了附件里的题" };
+var TOOL_LABELS = { get_current_question: "读了当前题目", list_banks: "看了题库",
+  import_bank: "导入了题库", list_questions: "查了题库",
+  write_explanations: "写回解析", write_answers: "改了答案",
+  create_plan: "建了方案", update_plan: "调整了方案", delete_plan: "删了方案",
+  list_plans: "看了方案", notify_phone: "发了通知", import_attachment: "认了附件里的题" };
 /* 给用户看的一行「这一步干了什么」。工具轮次以前是把气泡整个丢掉的，
    多步查题期间用户只看到转圈，不知道它在做什么、也没法判断它跑偏了。 */
 function toolStepText(name, out, err) {
   var label = TOOL_LABELS[name] || name;
   if (err) return "× " + label + "没成：" + err;
   if (!out) return label;
+  if (name === "list_banks") return label + "：" + ((out.banks || []).length) + " 个";
+  if (name === "import_bank") return label + "：" + ((out.count || 0)) + " 题";
+  if (name === "list_plans") return label + "：" + ((out.plans || []).length) + " 个";
   if (name === "list_questions") {
-    var g = out.truncated ? out.truncated.given : (out.questions || []).length;
-    return label + "「" + ((out.bank && out.bank.name) || "?") + "」：给回 " + g + " 题" +
+    var g = out.truncated ? out.truncated.given : (out.ids ? out.ids.length : (out.questions || []).length);
+    return label + "「" + ((out.bank && out.bank.name) || "?") + "」：给回 " + g +
+      (out.ids ? " 个 id" : " 题") +
       (out.truncated ? "（共 " + out.truncated.total + " 题，半页）" : "");
   }
+  if (name === "create_plan") return label + "「" + ((out.plan && out.plan.title) || "") + "」";
+  if (name === "update_plan") return label + "「" + ((out.plan && out.plan.title) || "") + "」";
+  if (name === "delete_plan") return label + "「" + ((out.deleted && out.deleted.title) || "") + "」";
+  if (name === "notify_phone") return label;
   if (name === "write_explanations") return label + " " + (out.updated || 0) + " 条";
   if (name === "write_answers") return label + " " + (out.updated || 0) + " 题";
   if (name === "import_attachment")
@@ -2090,7 +2271,18 @@ function digestIds(list, cap) {
 }
 function toolDigestLine(name, args, out, errText) {
   if (errText) return "× " + (TOOL_LABELS[name] || name) + "没成：" + errText.slice(0, 80);
+  if (name === "list_banks") return "看了题库：" + ((out && out.banks) || []).length + " 个";
+  if (name === "list_plans") return "看了方案：" + ((out && out.plans) || []).length + " 个";
+  if (name === "create_plan") return "建了方案「" + ((out && out.plan && out.plan.title) || "") + "」";
+  if (name === "update_plan") return "调整了方案「" + ((out && out.plan && out.plan.title) || "") + "」";
+  if (name === "delete_plan") return "删了方案「" + ((out && out.deleted && out.deleted.title) || "") + "」";
+  if (name === "notify_phone") return "发了通知：" + ((args && args.body) || "").slice(0, 40);
   if (name === "list_questions") {
+    if (out && out.ids) {
+      return "查了题库「" + ((out.bank && out.bank.name) || args.bank || "?") + "」" +
+        (typeof out.offset === "number" ? " offset " + out.offset : "") +
+        "：给回 " + out.ids.length + " 个 id" + (out.truncated ? "，半页" : "");
+    }
     var qs = (out && out.questions) || [];
     return "查了题库「" + ((out.bank && out.bank.name) || args.bank || "?") + "」" +
       (typeof out.offset === "number" ? " offset " + out.offset : "") + "：给回 " + qs.length +
@@ -2195,7 +2387,7 @@ function agentSummaryLocal() {
 }
 function agentBeginLocal(rounds, tokens) {
   chatAgentLocal = { runId: "local" + Date.now(), maxRounds: rounds || 8,
-    maxTokens: tokens || 24000, rounds: 0, tokens: 0, stopped: false, stopReason: "",
+    maxTokens: tokens || 300000, rounds: 0, tokens: 0, stopped: false, stopReason: "",
     seen: {}, approved: {}, denied: {}, toolCalls: 0, repeats: 0, previews: 0 };
   return agentSummaryLocal();
 }

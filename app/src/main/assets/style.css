@@ -449,6 +449,13 @@ button.rec:active { opacity: .62; }
 .bubble.md blockquote { margin: 8px 0; padding: 2px 0 2px 10px;
                         border-left: 3px solid var(--line); color: var(--ink-2); }
 .bubble.md hr { border: 0; border-top: 1px solid var(--line); margin: 10px 0; }
+/* Markdown 表格：气泡里横滚，别撑破 max-width */
+.bubble.md .md-table { margin: 8px 0; overflow-x: auto; -webkit-overflow-scrolling: touch; }
+.bubble.md table { width: 100%; border-collapse: collapse; font-size: .85em; line-height: 1.55; }
+.bubble.md th, .bubble.md td { padding: 6px 8px; border-bottom: 1px solid var(--line);
+                               text-align: left; vertical-align: top; }
+.bubble.md th { font-weight: 700; background: var(--surface); }
+.bubble.md tr:last-child td { border-bottom: none; }
 .bubble.md .md-link { color: inherit; text-decoration: underline; text-underline-offset: 2px; cursor: pointer; }
 /* 流式回答：思考链在上、正文在下，同一个气泡列里长出来 */
 .msg .live { flex: 1; min-width: 0; max-width: 78%; display: flex; flex-direction: column;

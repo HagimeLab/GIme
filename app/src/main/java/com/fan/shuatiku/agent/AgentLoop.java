@@ -30,7 +30,8 @@ import java.util.TreeMap;
 public final class AgentLoop {
 
     public static final int DEFAULT_MAX_ROUNDS = 8;
-    public static final int DEFAULT_MAX_TOKENS = 120000;
+    /* 真机实测 4 次工具调用用了 142k（每轮重发全部上下文），120k 会在任务中途收口。 */
+    public static final int DEFAULT_MAX_TOKENS = 300000;
 
     /** 改数据前必须让用户看一眼的工具。 */
     public static final String[] WRITE_TOOLS = {"write_answers", "write_explanations", "delete_plan"};

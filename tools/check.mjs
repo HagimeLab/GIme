@@ -2100,7 +2100,9 @@ ok("方案进度作为独立 system 消息追加，固定段不掺方案",
 
 /* ③ 省 token：窗口、轮次、schema、输出、工具结果 */
 ok("历史窗口缩到 8 条", /chatMsgs\.slice\(-8\)/.test(html));
-ok("工具轮次上限 8 轮", /var CHAT_ROUNDS = 8;/.test(html) && /var CHAT_TOKEN_BUDGET = 120000;/.test(html));
+ok("工具轮次上限 8 轮", /var CHAT_ROUNDS = 8;/.test(html) && /var CHAT_TOKEN_BUDGET = 300000;/.test(html));
+ok("工具调用格式坏掉先让模型重试一次",
+   /badToolRetry < 1/.test(html) && /已让模型重试一次/.test(html));
 ok("带附件识别那一轮单独放宽轮次与输出",
    /var rounds = fileRun \? CHAT_FILE_ROUNDS : CHAT_ROUNDS;/.test(html) &&
    /max_tokens: fileRun \? CHAT_FILE_MAX_TOKENS : CHAT_MAX_TOKENS/.test(html), "带附件那轮没走独立额度");
@@ -2386,6 +2388,41 @@ const bareAmb = W.ouiSplit({ id: "ui_bare_4", text: '```\nroot = foo()\n```' });
 ok("裸围栏：root= 但没有组件调用仍按代码块", bareAmb.src === "", JSON.stringify(bareAmb));
 ok("流式期裸围栏也先藏起来",
    W.stripUIFence('abc\n```\nroot = Stack([') === "abc" && W.stripUIFence('abc\n```js\nx') === 'abc\n```js\nx');
+/* 渲染与工具进度的三个真实现场：Markdown 表格、Card{} 块语法、半截工具调用。 */
+const mdTbl = W.mdToHtml("|题库|题量|\n|---|---:|\n|甲库|7|\n|乙库|3|");
+ok("Markdown 表格渲染成 table",
+   mdTbl.indexOf("<table>") >= 0 && mdTbl.indexOf("</table>") >= 0 &&
+   mdTbl.indexOf("|---") < 0 && mdTbl.indexOf("甲库") >= 0, mdTbl.slice(0, 200));
+const ouiNorm = W.ouiNormalize('Card {\n  Text("今日进度", variant="title")\n  Progress(value=50, label="50%")\n  Button("继续刷题", action="send:继续刷题")\n}');
+ok("Card{} 块语法归一成 root = Stack",
+   ouiNorm.indexOf("root = Stack") === 0 && ouiNorm.indexOf('Progress("", 50)') >= 0 &&
+   ouiNorm.indexOf('Title("今日进度", 2)') >= 0 && ouiNorm.indexOf('Button("继续刷题", "send:继续刷题")') >= 0, ouiNorm.slice(0, 200));
+ok("合法 root= 源不被归一器改动",
+   W.ouiNormalize('root = Title("x")') === 'root = Title("x")');
+ok("Card(单个数组) 降成 Stack，避免空壳卡",
+   W.ouiNormalize('root = Stack([Card([Title("x"), Button("b", "send:b")])])')
+     .indexOf("Card(") < 0);
+ok("Progress(单数字) 补成 (\"\", n)，避免进度条整条丢失",
+   W.ouiNormalize('root = Stack([Progress(50)])').indexOf('Progress("", 50)') >= 0);
+ok("合法的两参数 Progress 不被改写",
+   W.ouiNormalize('root = Stack([Progress("进度", 50)])') === 'root = Stack([Progress("进度", 50)])');
+ok("解析不出的 tool_call 不亮给用户",
+   W.stripToolMarkup('<tool_call>{"name": broken</call_call> 后文') === "后文");
+ok("裸 JSON 工具调用能被识别",
+   (function () { var c = W.bareToolCall('{"name":"list_plans","arguments":{}}'); return !!(c && c.function.name === "list_plans"); })());
+ok("普通 JSON 回答不会被当调用", W.bareToolCall('{"name":"张三","age":20}') === null);
+ok("未知工具名的裸 JSON 不执行", W.bareToolCall('{"name":"rm_rf","arguments":{}}') === null);
+ok("compact 列表步骤显示 id 数",
+   W.toolStepText("list_questions", { bank: { name: "甲" }, ids: ["a", "b"] }, "").indexOf("2 个 id") >= 0);
+ok("方案工具步骤用中文标签",
+   W.toolStepText("create_plan", { plan: { title: "七天计划" } }, "") === "建了方案「七天计划」");
+ok("Agent 规则明确 OpenUI 语法与动作",
+   W.chatAgentRules().indexOf("root = Stack") >= 0 &&
+   W.chatAgentRules().indexOf("openui-lang") >= 0 &&
+   W.chatAgentRules().indexOf("Card { ... }") >= 0);
+ok("题库/通知工具也有中文步骤",
+   W.toolStepText("notify_phone", {}, "") === "发了通知" &&
+   W.toolStepText("list_banks", { banks: [{}, {}] }, "").indexOf("2 个") >= 0);
 ok("只有收尾后的回答才挂卡片占位", (() => {
   /* 占位只在「不是我的、不在流式」两条都成立时拼进去；
      innerHTML 落地后再由 chatOuiMount 挂真 DOM（字符串里塞不了节点）。
