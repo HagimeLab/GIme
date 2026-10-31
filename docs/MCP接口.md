@@ -37,7 +37,7 @@ adb forward tcp:8765 tcp:8765
 | `update_plan` | 改方案：暂停/恢复、改名、开关提醒、加删项、勾选、整体重排 | `planId`、`action`、`date`、`text`、`done`、`title`、`days`、`notify`、`note` |
 | `delete_plan` | 删除方案及其执行记录（不可恢复） | `planId` |
 | `list_plans` | 列出方案进度与今天要做的项 | 无 |
-| `notify_phone` | 给手机发一条通知（App 运行时立即弹出） | `title`、`body`（必填） |
+| `notify_phone` | 给手机发一条**即时**通知（App 运行时立即弹出，不做定时） | `body`（必填）、`title`（可选，默认「方案提醒」） |
 
 题库用 id 或显示名指定；重名时会报错让你改用 id。
 `import_bank` 的文本格式与 App 内导入一致（参见 App 里的「格式说明」举例）；
