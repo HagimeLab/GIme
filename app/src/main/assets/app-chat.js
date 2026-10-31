@@ -2075,16 +2075,47 @@ function chatMemoryMsg() {
   if (!parts.length) return "";
   return "记忆（仅作背景，不要主动改动）：" + parts.join("；") + "。";
 }
+/* 组件签名从 bundle 的 schema 来，别再手写一份：模型看不到参数顺序时
+   会写出 Card([...])、Progress(50) 这类必然被解析器丢掉的形式。 */
+var OUI_SIG_CACHE = "";
+function ouiSignatureLines() {
+  if (OUI_SIG_CACHE) return OUI_SIG_CACHE;
+  var lines = [], i;
+  try {
+    var sigs = window.OpenUI && OpenUI.signatures;
+    if (sigs && sigs.length) {
+      for (i = 0; i < sigs.length; i++) {
+        lines.push("- " + sigs[i].signature + (sigs[i].description ? " — " + sigs[i].description : ""));
+      }
+    }
+  } catch (e) { }
+  if (!lines.length) {
+    /* 旧 bundle 没有 signatures 时的兜底：直接从 JSON Schema 拼 */
+    try {
+      var defs = (window.OpenUI && OpenUI.schema && OpenUI.schema.$defs) || {};
+      for (var name in defs) {
+        var d = defs[name] || {}, props = d.properties || {}, req = d.required || [], ps = [];
+        for (var k in props) {
+          var p = props[k] || {}, t = p.type || "any";
+          if (p.enum) t = p.enum.map(function (v) { return "\"" + v + "\""; }).join(" | ");
+          ps.push(k + (req.indexOf(k) >= 0 ? "" : "?") + ": " + t);
+        }
+        lines.push("- " + name + "(" + ps.join(", ") + ")" + (d.description ? " — " + d.description : ""));
+      }
+    } catch (e) { }
+  }
+  OUI_SIG_CACHE = lines.join("\n");
+  return OUI_SIG_CACHE;
+}
 function chatAgentRules() {
   return "Agent 执行规则：需要题库数据时先读（建计划只要 id 时用 compact:true）；" +
          "建计划先 create_plan，拿到返回的 plan.id 后再用 update_plan 填日程；" +
          "用户要求提醒或通知时，最后调用 notify_phone。write_answers / write_explanations / " +
          "delete_plan 会先弹预览卡，未批准不要重复调用。" +
-         "需要交互卡片时只用 ```openui-lang：首行 root = Stack([...])，参数按位置；" +
-         "组件 Card/Title/Text/Progress/Button/Row；Button(文字, \"动作\")；" +
-         "Progress(标签, 0-100 的数值)，两个参数都要有；" +
-         "动作 send:/value:/nav:/approve:/adjust:/toggle:/insight:。" +
-         "Card 第一个参数是标题字符串、第二个才是子组件数组；没有标题就直接用 Stack。" +
+         "需要交互卡片时只用 ```openui-lang：首行 root = Stack([...])，参数按位置，带 ? 的可省略；" +
+         "组件签名（由官方 schema 生成）：\n" + ouiSignatureLines() + "\n" +
+         "Button 的 action 取 send:/value:/nav:/approve:/adjust:/toggle:/insight:。" +
+         "Card 第一个参数是标题字符串、第二个才是子组件数组；没有标题就直接用 Stack，不要写 Card([...])。" +
          "示例：root = Stack([Card(\"标题\", [Text(\"正文\"), Progress(\"完成度\", 50), Button(\"继续\", \"send:继续\")])])。" +
          "不要用 Card { ... } 块语法，也不要在正文重复卡片内容。";
 }

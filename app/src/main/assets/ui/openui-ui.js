@@ -244,6 +244,7 @@ function renderOpenUI(source, opts) {
     return null;
   }
   if (!res || !res.root) return null;
+  const errors = (res.meta && res.meta.errors) || [];
   const box = make('div', 'oui');
   const node = renderNode(res.root, {
     onAction: (action, node, form) => opts && opts.onAction && opts.onAction(action, node, form),
@@ -251,9 +252,18 @@ function renderOpenUI(source, opts) {
     values: (opts && opts.values) || {},
     onChange: (now) => opts && opts.onChange && opts.onChange(now),
   });
-  if (!node) return null;
-  box.append(node);
-  return box;
+  if (node) box.append(node);
+  /* 官方解析器会把不合法的 prop/节点直接丢掉，只剩一个空壳。
+     把 meta.errors 亮出来，别让用户对着一张空白卡猜。 */
+  if (errors.length) {
+    const warn = make('div', 'oui-warn');
+    warn.textContent = '卡片有 ' + errors.length + ' 处格式问题，已跳过无法识别的部分';
+    box.append(warn);
+    box.setAttribute('data-oui-errors', String(errors.length));
+    try { if (window.console && console.warn) console.warn('[OpenUI]', errors); } catch (e) { }
+    if (opts && opts.onError) { try { opts.onError(errors); } catch (e) { } }
+  }
+  return node || errors.length ? box : null;
 }
 
 // —— 非 module 版的出口（GIme 以 classic script 从 file:///android_asset/ 加载，不能用 import/export）——

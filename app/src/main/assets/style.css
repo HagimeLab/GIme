@@ -852,6 +852,13 @@ html.swap, html.swap * { transition: none !important; }
   color: var(--text);
   font-size: 14px;
 }
+.oui-warn {
+  margin-top: 10px;
+  padding-top: 8px;
+  border-top: 1px dashed var(--stroke);
+  color: var(--muted);
+  font-size: 12px;
+}
 
 /* 卡片在气泡里的落点：innerHTML 塞不进 DOM，先占位、挂载完成后再画进去 */
 /* 带卡片的回答外面多包一层纵向容器：.msg 是横向 flex（头像 + 内容），

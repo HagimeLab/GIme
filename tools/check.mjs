@@ -2358,6 +2358,24 @@ ok("OpenUI 解析器能解析一段界面源码", (() => {
     return !!r && !!r.root && r.root.typeName === "Stack";
   } catch (e) { return false; }
 })());
+ok("非法 Progress 会被解析器点名报错", (() => {
+  const r = W.OpenUI.parse('root = Stack([Progress(50)])');
+  const e = (r && r.meta && r.meta.errors) || [];
+  return e.some((x) => x.path === "/value");
+})());
+ok("OpenUI 组件签名来自 schema（参数顺序正确）", (() => {
+  try {
+    const sigs = W.OpenUI.signatures || [];
+    const card = sigs.find((x) => x.name === "Card") || {};
+    const prog = sigs.find((x) => x.name === "Progress") || {};
+    return sigs.length >= 15 &&
+      String(card.signature).indexOf("title?") >= 0 &&
+      String(card.signature).indexOf("children") >= 0 &&
+      String(prog.signature).indexOf("label?") >= 0 &&
+      String(prog.signature).indexOf("value") >= 0 &&
+      W.OpenUI.prompt().indexOf("undefined —") < 0;
+  } catch (e) { return false; }
+})());
 
 /* 三条：正文与围栏分开、源码不进正文、流式期把没收尾的围栏藏起来 */
 const uiMsg = W.chatPush({
@@ -2419,7 +2437,9 @@ ok("方案工具步骤用中文标签",
 ok("Agent 规则明确 OpenUI 语法与动作",
    W.chatAgentRules().indexOf("root = Stack") >= 0 &&
    W.chatAgentRules().indexOf("openui-lang") >= 0 &&
-   W.chatAgentRules().indexOf("Card { ... }") >= 0);
+   W.chatAgentRules().indexOf("Card { ... }") >= 0 &&
+   W.chatAgentRules().indexOf("Card(title?: string, children: any[])") >= 0 &&
+   W.chatAgentRules().indexOf("undefined —") < 0);
 ok("题库/通知工具也有中文步骤",
    W.toolStepText("notify_phone", {}, "") === "发了通知" &&
    W.toolStepText("list_banks", { banks: [{}, {}] }, "").indexOf("2 个") >= 0);
