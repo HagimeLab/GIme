@@ -1209,6 +1209,18 @@ html.swap, html.swap * { transition: none !important; }
 .oui-tablewrap { max-width: 100%; overflow-x: auto; -webkit-overflow-scrolling: touch; }
 .oui-tablewrap::-webkit-scrollbar { display: none; }
 
+/* 表格默认折成一行「表格 · N 列 M 行」，点开才占版面 */
+.oui-fold { max-width: 100%; }
+.oui-fold > summary { cursor: pointer; list-style: none; display: flex; align-items: center;
+                      min-height: 44px; font-size: 13px; color: var(--muted);
+                      border-bottom: 1px solid var(--stroke); outline: none;
+                      -webkit-tap-highlight-color: transparent; }
+.oui-fold > summary::-webkit-details-marker { display: none; }
+.oui-fold > summary::before { content: "▸"; margin-right: 7px; }
+.oui-fold[open] > summary::before { content: "▾"; }
+.oui-fold[open] > summary { border-bottom-color: transparent; }
+.oui-fold .oui-tablewrap { margin-top: 4px; }
+
 .oui-table {
   width: 100%;
   border-collapse: collapse;

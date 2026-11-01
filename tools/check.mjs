@@ -2451,7 +2451,12 @@ ok("首页有学习资料卡", /id="studyCard"/.test(html)
 ok("OpenUI 渲染器与表单读取器都已就位", typeof W.renderOpenUI === "function" && typeof W.readForm === "function");
 ok("OpenUI 表格包在横滑容器里（列排不下时滑，不被卡片裁掉）",
    /make\('div', 'oui-tablewrap'\)/.test(jsSources[1]) && /wrap\.append\(t\)/.test(jsSources[1])
-   && /return wrap;/.test(jsSources[1]));
+   && /fold\.append\(sum, wrap\)/.test(jsSources[1]) && /return fold;/.test(jsSources[1]));
+ok("OpenUI 表格默认折叠成「表格 · N 列 M 行」",
+   /make\('details', 'oui-fold'\)/.test(jsSources[1]) &&
+   /表格 · /.test(jsSources[1]) && /nCol \+ ' 列 '/.test(jsSources[1]) &&
+   !/make\('details', 'oui-fold'\);[\s\S]{0,200}fold\.setAttribute\('open'/.test(jsSources[1]) &&
+   /\.oui-fold > summary\s*\{[^}]*min-height:\s*44px/.test(cssSource));
 ok("表格单元格可折行且顶对齐",
    /\.oui-tablewrap\s*\{[^}]*overflow-x:\s*auto/.test(cssSource) &&
    /\.oui-table th,\s*\.oui-table td\s*\{[^}]*word-break:\s*break-word/.test(cssSource) &&

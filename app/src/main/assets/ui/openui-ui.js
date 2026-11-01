@@ -259,7 +259,14 @@ function renderNode(node, ctx) {
          多出来的列可以滑出来看，而不是被卡片裁掉（360dp 上很常见）。 */
       const wrap = make('div', 'oui-tablewrap');
       wrap.append(t);
-      return wrap;
+      /* 表格默认折成一行摘要（和「思考过程 / 执行过程」同一套折叠），
+         点开才占版面；列数取表头，没给表头就取第一行的格子数。 */
+      const nCol = cols.length || listOf(listOf(p.rows)[0]).length;
+      const fold = make('details', 'oui-fold');
+      const sum = make('summary');
+      sum.textContent = '表格 · ' + nCol + ' 列 ' + listOf(p.rows).length + ' 行';
+      fold.append(sum, wrap);
+      return fold;
     }
     case 'Form': {
       const f = make('div', 'oui-form');
