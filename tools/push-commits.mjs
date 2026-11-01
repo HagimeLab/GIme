@@ -5,8 +5,11 @@
  * push 直接 Connection reset，只能走 api.github.com。而 tools/push-via-api.mjs 是
  * "把若干文件压成一笔提交"，搬不动一段历史。
  *
- * 用法：node tools/push-commits.mjs <owner/repo> <branch> <baseSha>
+ * 用法：node tools/push-commits.mjs <owner/repo> <branch> <baseSha> [listBaseSha]
  *   baseSha = 远端当前头（脚本会先核对，不一致就停手，绝不覆盖别人的提交）。
+ *   listBaseSha = 可选：本地用来算待推清单的祖先。远端头是 GitHub 网页提交时（带 gpgsig，
+ *     本地 git 拉不到、也无法重建出同一个对象），只能拿本地已有的祖先做 rev-list；
+ *     每笔提交的 tree 仍以远端父提交的 tree 为 base_tree，所以内容不会丢。
  *
  * 凭据不落命令行：脚本自己调 git credential fill 取，全程不打印。
  *
@@ -18,9 +21,9 @@ import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 
-const [repo, branch, base] = process.argv.slice(2);
+const [repo, branch, base, listBase] = process.argv.slice(2);
 if (!repo || !branch || !base) {
-  console.error("用法: node push-commits.mjs <owner/repo> <branch> <baseSha>");
+  console.error("用法: node push-commits.mjs <owner/repo> <branch> <baseSha> [listBaseSha]");
   process.exit(2);
 }
 const ROOT = path.resolve(process.cwd());
@@ -91,7 +94,7 @@ console.log(`远端 ${branch} = ${base.slice(0, 8)}，与本地记录一致`);
 
 /* ---- 逐笔重建 ---- */
 /* rev-list 用换行分隔，不是 NUL —— 拿 gitZ 切会把整串 SHA 当成一笔提交（第一版就在这翻车） */
-const commits = git(["rev-list", "--reverse", `${base}..HEAD`]).split("\n").filter(Boolean);
+const commits = git(["rev-list", "--reverse", `${listBase || base}..HEAD`]).split("\n").filter(Boolean);
 let parentSha = base;
 if (!commits.length) console.log("没有要推的提交，直接做核对。");
 else console.log(`要重建 ${commits.length} 笔提交`);
