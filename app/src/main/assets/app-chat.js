@@ -1197,7 +1197,17 @@ function chatLivePaint(m) {
   m._html = html;
   /* 先读后写：读一次布局决定要不要跟到底，免得 innerHTML 之后又强制重排 */
   var near = list.scrollHeight - list.scrollTop - list.clientHeight < 160;
+  /* 思考链每次都是整块重建；新 DOM 的 scrollTop 会回到 0，导致内容看着停住/跳回开头。
+     重建前记下用户是否在看底部，重建后还原或继续贴底。 */
+  var oldThink = live.querySelector ? live.querySelector(".think-body") : null;
+  var oldScroll = oldThink ? oldThink.scrollTop : 0;
+  var atThinkBottom = !oldThink ||
+    (oldThink.scrollHeight - oldScroll - oldThink.clientHeight < 8);
   live.innerHTML = html;
+  var newThink = live.querySelector ? live.querySelector(".think-body") : null;
+  if (newThink) {
+    newThink.scrollTop = atThinkBottom ? newThink.scrollHeight : oldScroll;
+  }
   var now = Date.now();
   if (near && now - _liveScrollAt > 120) {
     _liveScrollAt = now;
