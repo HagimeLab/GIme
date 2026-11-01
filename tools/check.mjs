@@ -2719,6 +2719,15 @@ ok("窗口压在对话（990）之上、面板（1000）之下，主体自己滚
    /\.oui-win\.max \{[^}]*top: 0[^}]*bottom: 0/.test(cssText) &&
    /* 浮起来后窗口本身就是外框，卡再带一层边框就是套娃 */
    /\.oui-win-body \.oui \{[^}]*border: 0/.test(cssText));
+/* 整屏态的头部靠 --st 让开状态栏，所以原生那条回灌链不能断在页面重载上：
+   实测冷启动 --sat=27px，一 reload 就掉回 0px（document 换了，Activity 不再走 insets 回调）。 */
+ok("整屏态吃的是原生回灌的 --st，不是自己兜的死值",
+   /\.oui-win\.max \.oui-win-head \{ padding-top: calc\(var\(--st\)/.test(cssText));
+ok("页面重载后原生补灌一次安全区（--sat/--sab 不靠运气管）",
+   /insetTopPx = insets\.getSystemWindowInsetTop\(\)/.test(mainSrc) &&
+   /pageReady = true;[\s\S]{0,120}pushInsets\(\)/.test(mainSrc) &&
+   /window\.__insets&&window\.__insets\(/.test(mainSrc));
+/* 展开/收回的入口就是卡片本体和窗口外那一片，不再摆一条展开按钮 */
 ok("点卡片本体展开、点窗口外收回（没有多余的展开条）",
    /function bindOuiOpen/.test(html) && /slot\.appendChild\(card\); bindOuiOpen\(card, id\)/.test(html) &&
    /onclick="chatOuiScrimTap\(\)"/.test(skeletonHtml) &&

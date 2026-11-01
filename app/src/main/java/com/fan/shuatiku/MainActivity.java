@@ -67,6 +67,10 @@ public class MainActivity extends Activity {
     private final ArrayDeque<PendingFile> pendingImports = new ArrayDeque<PendingFile>();
     private volatile boolean pageReady;
     private boolean importing;
+    /* 最后一次量到的系统栏高度（物理像素）。页面重载时 document 连同 window.__insets
+       一起没掉，而 Activity 不会重新走一遍 onApplyWindowInsets——不在 pageReady 时
+       补灌一次，整页安全区就归零：底部 tab 被导航栏盖住，整屏层的头部压进状态栏。 */
+    private int insetTopPx, insetBottomPx;
     /** 用户刚去系统里改过通知权限，回来时通知页面刷新一次状态。 */
     private boolean remindCheckPending;
 
@@ -229,8 +233,14 @@ public class MainActivity extends Activity {
 
     private void sendInsets(WindowInsets insets) {
         if (insets == null || web == null) return;
-        final int top = insets.getSystemWindowInsetTop();
-        final int bottom = insets.getSystemWindowInsetBottom();
+        insetTopPx = insets.getSystemWindowInsetTop();
+        insetBottomPx = insets.getSystemWindowInsetBottom();
+        pushInsets();
+    }
+
+    /** 把量到的高度灌给页面；页面还没跑起来时 window.__insets 不存在，那一次就白丢，靠 pageReady 补。 */
+    private void pushInsets() {
+        final int top = insetTopPx, bottom = insetBottomPx;
         runOnUiThread(new Runnable() {
             @Override public void run() {
                 js("window.__insets&&window.__insets(" + top + "," + bottom + ")");
@@ -633,6 +643,7 @@ public class MainActivity extends Activity {
             runOnUiThread(new Runnable() {
                 @Override public void run() {
                     pageReady = true;
+                    pushInsets();          /* 页面（含重载后的）刚把 __insets 挂上，补灌一次安全区 */
                     pumpImports();
                     mcpStart();
                 }
