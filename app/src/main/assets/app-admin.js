@@ -453,18 +453,31 @@ function startPaper() {
 }
 
 /* ================= 弹层 ================= */
+/* 遮罩只服务面板/弹窗，不服务整页：.fs 自己就是全屏。
+   方案页的 z-index 950 在遮罩 960 之下，从它上面开对话再退出时，
+   遮罩如果按「还有层」留着，整页会一直发灰（2026-11-01 用户反馈）。
+   所以按最上层判断：只有最上层是 sheet/glass 才亮遮罩。 */
+function layerNeedsScrim(el) {
+  return !!el && !el.classList.contains("fs");
+}
+function syncLayerScrim() {
+  var ov = document.getElementById("overlay");
+  if (!ov) return;
+  var top = openLayers[openLayers.length - 1];
+  ov.className = "overlay" + (layerNeedsScrim(top) ? " on" : "");
+}
 function openLayer(el) {
-  document.getElementById("overlay").className = "overlay on";
   el.classList.add("on");
   /* 面板重绘会再次调用本函数，同一元素只算一层，否则返回键弹不完、遮罩会留在屏上挡住点击 */
   if (openLayers.indexOf(el) < 0) openLayers.push(el);
+  syncLayerScrim();
 }
 function closeLayer(el) {
   el.classList.remove("on");
   var i = openLayers.indexOf(el);
   if (i >= 0) openLayers.splice(i, 1);
   if (el.id === "planPage" && typeof planPageClosed === "function") planPageClosed();
-  if (!openLayers.length) document.getElementById("overlay").className = "overlay";
+  syncLayerScrim();
 }
 function closeTop() {
   if (openLayers.length) { closeLayer(openLayers[openLayers.length - 1]); return true; }
@@ -661,6 +674,7 @@ function openFS(which) {
     '<div class="fs-body">' + body + "</div>";
   fs.classList.add("on");
   if (openLayers.indexOf(fs) < 0) openLayers.push(fs);
+  if (typeof syncLayerScrim === "function") syncLayerScrim();
   if (which === "search") setTimeout(function () { var b = document.getElementById("srchBox"); if (b) b.focus(); }, 320);
 }
 function closeFS() {
@@ -668,6 +682,7 @@ function closeFS() {
   fs.classList.remove("on");
   var i = openLayers.indexOf(fs);
   if (i >= 0) openLayers.splice(i, 1);
+  if (typeof syncLayerScrim === "function") syncLayerScrim();
 }
 function doSearch(v) {
   v = (v || "").trim();

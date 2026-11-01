@@ -207,6 +207,8 @@ function planShow(html, mode, id) {
   pg.classList.add("on");
   if (keepTop) pg.scrollTop = keepTop;
   if (openLayers.indexOf(pg) < 0) openLayers.push(pg);
+  /* 方案页自己不是遮罩层：重画时顺手把上一层遗留的遮罩收掉 */
+  if (typeof syncLayerScrim === "function") syncLayerScrim();
   planView = { mode: mode, id: id || "" };
   planHash(mode, id);
 }

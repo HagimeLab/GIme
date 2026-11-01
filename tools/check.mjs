@@ -2763,6 +2763,29 @@ ok("新建后进入空会话界面",
    W.chatMsgs.length === 0 && W.document.getElementById("chatHero").hidden === false);
 while (W.openLayers.length) W.closeTop();
 
+/* 方案页是 .fs（z-index 950），遮罩 960 在它上面：从方案页开对话/面板再退出，
+   遮罩必须跟着最上层收掉，否则退出后整页一直发灰（2026-11-01 用户反馈）。 */
+ok("方案页上关掉对话后遮罩不残留", (() => {
+  const ov = W.document.getElementById("overlay");
+  const isOn = () => String(ov.className).split(/\s+/).indexOf("on") >= 0;
+  /* DOM 桩的 classList 与 className 是两套存储：两边都写上，逻辑按 classList 判断 */
+  const pg = W.document.createElement("div");
+  pg.id = "planPage"; pg.className = "fs on"; pg.classList.add("fs");
+  const sh = W.document.createElement("div");
+  sh.className = "sheet on"; sh.classList.add("sheet");
+  W.openLayers.length = 0;
+  W.openLayers.push(pg);
+  W.syncLayerScrim();
+  const pageOnly = !isOn();
+  W.openLayer(sh);
+  const overSheet = isOn();
+  W.closeLayer(sh);
+  const back = !isOn();
+  W.openLayers.length = 0;
+  W.syncLayerScrim();
+  return pageOnly && overSheet && back && !isOn();
+})());
+
 /* ---------- 29d. v1.1.1：大肥鱼的附件导入（模型识别那一条） ----------
    契约：只收 pdf/docx/md/txt；正文随请求上行（上限 CHAT_FILE_SEND_MAX，超出明说）；
    模型按导入格式逐题交回 questions，本地只校验不补答案；落库前必过确认卡。 */
