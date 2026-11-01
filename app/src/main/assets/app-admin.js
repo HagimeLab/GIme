@@ -477,6 +477,8 @@ function closeLayer(el) {
   var i = openLayers.indexOf(el);
   if (i >= 0) openLayers.splice(i, 1);
   if (el.id === "planPage" && typeof planPageClosed === "function") planPageClosed();
+  /* 对话收掉了，浮在上面的那张卡要跟着回它的槽位：窗口留在主页上既点不到也收不回 */
+  if (el.id === "chat" && typeof chatOuiCollapse === "function") chatOuiCollapse();
   syncLayerScrim();
 }
 function closeTop() {
@@ -491,6 +493,8 @@ window.onBack = function () {
     if (typeof planBack === "function" && planBack()) return true;
     return closeTop();
   }
+  /* 卡片悬浮窗压在对话上：先把它收回气泡，不能一按返回把整个对话关掉 */
+  if (typeof chatOuiBack === "function" && chatOuiBack()) return true;
   if (closeTop()) return true;
   var fs = document.getElementById("fs");
   if (fs.classList.contains("on")) { closeFS(); return true; }

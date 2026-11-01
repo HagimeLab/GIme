@@ -957,6 +957,46 @@ html.swap, html.swap * { transition: none !important; }
 .oui-slot { display: block; width: 100%; margin: 10px 0; }
 .oui-slot:empty { display: none; }   /* 画不出来就当没这张卡，不留空框 */
 
+/* 卡片本体就是展开的点击区（不再有单独的展开条）。
+   按下去给一点边框反馈，不然用户不知道这张卡可以点。
+   注：这里的类名别再叫 .oui-bar —— 那是 Chart 柱子已经占用的类（会被压成一整列）。 */
+.oui-slot > .oui:active { border-color: var(--ink-3); }
+/* 悬浮窗背后的拦截层：薄薄一层暗，既提示「卡浮起来了」，也接住窗口外的点击 */
+.oui-scrim { position: fixed; top: 0; left: 0; right: 0; bottom: 0; z-index: 994;
+             background: rgba(20,22,26,.18); visibility: hidden; opacity: 0;
+             transition: opacity .22s var(--ease), visibility .25s; }
+.oui-scrim.on { visibility: visible; opacity: 1; }
+
+/* 卡片悬浮窗：压在对话（990）之上、面板（1000）之下；底部留出输入条的高度 */
+.oui-win { position: fixed; left: 4vw; right: 4vw; bottom: calc(var(--sb) + 112px);
+           max-height: 68vh; z-index: 995;
+           display: flex; flex-direction: column;
+           background: var(--paper); border: 1px solid var(--line); border-radius: var(--r-card);
+           box-shadow: 0 16px 40px rgba(20,22,26,.28);
+           transform: translateY(14px); opacity: 0; visibility: hidden;
+           transition: transform .22s var(--ease), opacity .22s var(--ease), visibility .25s; }
+.oui-win.on { transform: translateY(0); opacity: 1; visibility: visible; }
+.oui-win.max { left: 0; right: 0; top: 0; bottom: 0; max-height: none;
+               border-radius: 0; border-left: 0; border-right: 0; }
+.oui-win.max .oui-win-head { padding-top: calc(var(--st) + 11px); }
+.oui-win-head { flex: 0 0 auto; display: flex; align-items: center; padding: 11px 12px 11px 18px;
+                border-bottom: 1px solid var(--line); }
+.oui-win-t { flex: 1; min-width: 0; font-size: .8125rem; font-weight: 700; color: var(--ink);
+             white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.oui-win-btn { flex: 0 0 auto; min-height: 44px; margin-left: 8px; padding: 0 14px;
+               border: 1px solid var(--line); border-radius: 14px; background: var(--raise);
+               color: var(--ink); font-size: .75rem; font-weight: 600;
+               -webkit-tap-highlight-color: transparent; }
+.oui-win-btn.primary { background: var(--ink); border-color: var(--ink); color: var(--paper); }
+.oui-win-btn:active { opacity: .72; }
+.oui-win-body { flex: 1 1 auto; min-height: 0; overflow-y: auto; -webkit-overflow-scrolling: touch;
+                padding: 14px 16px calc(var(--sb) + 18px); }
+.oui-win-body::-webkit-scrollbar { display: none; }
+/* 浮起来的那张卡不再自带边框：窗口本身就是它的外框 */
+.oui-win-body .oui { padding: 0; border: 0; border-radius: 0; background: transparent; }
+/* 已经被搬到头部的那一行标题，在窗口里不重复出现（收起回对话后照常显示） */
+.oui-win-body .oui-in-head { display: none; }
+
 .oui-stack {
   display: flex;
   flex-direction: column;

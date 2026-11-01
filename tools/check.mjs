@@ -2704,6 +2704,152 @@ ok("选中当前值有标记，点一行就写回并收面板", (() => {
       && pick.indexOf("fn(v)") >= 0 && pick.indexOf("closeTop()") >= 0;
 })());
 
+/* ---------- 30d. OpenUI 卡片悬浮窗：展开搬进窗口，收回搬回原槽位 ---------- */
+section("[30d] OpenUI 卡片悬浮窗");
+
+ok("对话页备好了悬浮窗：标题 + 全屏 + 收回，主体单独一个容器",
+   /class="oui-win" id="ouiWin"/.test(skeletonHtml) &&
+   /id="ouiWinTitle"/.test(skeletonHtml) &&
+   /onclick="chatOuiMax\(\)"/.test(skeletonHtml) &&
+   /onclick="chatOuiCollapse\(\)"/.test(skeletonHtml) &&
+   /class="oui-win-body" id="ouiWinBody"/.test(skeletonHtml));
+ok("窗口压在对话（990）之上、面板（1000）之下，主体自己滚、整屏态铺满",
+   /\.oui-win \{[^}]*z-index: 995/.test(cssText) &&
+   /\.oui-win-body \{[^}]*overflow-y: auto/.test(cssText) &&
+   /\.oui-win\.max \{[^}]*top: 0[^}]*bottom: 0/.test(cssText) &&
+   /* 浮起来后窗口本身就是外框，卡再带一层边框就是套娃 */
+   /\.oui-win-body \.oui \{[^}]*border: 0/.test(cssText));
+ok("点卡片本体展开、点窗口外收回（没有多余的展开条）",
+   /function bindOuiOpen/.test(html) && /slot\.appendChild\(card\); bindOuiOpen\(card, id\)/.test(html) &&
+   /onclick="chatOuiScrimTap\(\)"/.test(skeletonHtml) &&
+   !/ouiWinBar|展开成悬浮窗/.test(html));
+ok("拦截层压在对话（990）之上、窗口（995）之下，卡片按下去有边框反馈",
+   /\.oui-scrim \{[^}]*z-index: 994/.test(cssText) &&
+   /\.oui-scrim\.on \{[^}]*visibility: visible/.test(cssText) &&
+   /\.oui-slot > \.oui:active \{[^}]*border-color/.test(cssText));
+/* 撞名踩过一次：展开条本来叫 .oui-bar，正好是 Chart 柱子的类，
+   被 `flex:1 / flex-direction:column` 压成一整列，按钮掉到卡片中间。 */
+ok("悬浮窗的类名不占用 OpenUI 组件已有的类", (() => {
+  const used = (jsSources[1].match(/['`]oui-[a-z0-9 -]+/g) || []).map((s) => s.slice(1));
+  const mine = ["oui-scrim", "oui-win", "oui-win-head", "oui-win-body", "oui-win-t", "oui-win-btn"];
+  return mine.every((c) => used.indexOf(c) < 0) &&
+     used.indexOf("oui-bar") >= 0;
+})());
+
+/* 桩里的 querySelector 恒返回 null：只给被测到的选择器补上真语义，验「搬动」本身 */
+const ouiWinMove = (() => {
+  const d = W.document;
+  const slot = makeElement("oui_win_slot");
+  const card = makeElement("oui_win_card"), title = makeElement("oui_win_title");
+  const scrim = d.getElementById("ouiScrim");
+  title.textContent = "今日进度";
+  card.appendChild(title);
+  slot.setAttribute("data-oui", "win_m1");
+  slot.appendChild(card);
+  const body = d.getElementById("ouiWinBody");
+  card.querySelector = (s) => (s === ".oui-card-t" ? title : null);
+  slot.querySelector = (s) => (s === ".oui" && card.parentNode === slot ? card : null);
+  body.querySelector = () => (card.parentNode === body ? card : null);
+  const oldAll = d.querySelectorAll;
+  d.querySelectorAll = () => [slot];
+  const out = {};
+  try {
+    W.chatOuiExpand("win_m1");
+    out.expanded = card.parentNode === body && W._ouiWinMid === "win_m1" &&
+      d.getElementById("ouiWin").classList.contains("on") &&
+      d.getElementById("ouiWinTitle").textContent === "今日进度" &&
+      scrim.classList.contains("on");
+    /* 浮着的时候来新消息 → 整页重画：槽位保持空着，不许就地重画第二张卡 */
+    W.chatOuiMount({ querySelectorAll: () => [slot], scrollHeight: 0, scrollTop: 0, clientHeight: 0 });
+    out.noSecondCard = card.parentNode === body && !slot.querySelector(".oui");
+    W.chatOuiMax();
+    out.maxed = d.getElementById("ouiWin").classList.contains("max") &&
+      d.getElementById("ouiWinMaxBtn").textContent === "还原";
+    W.chatOuiCollapse();
+    out.back = card.parentNode === slot && W._ouiWinMid === "" &&
+      !d.getElementById("ouiWin").classList.contains("on") &&
+      !d.getElementById("ouiWin").classList.contains("max") &&
+      !scrim.classList.contains("on");
+    /* 返回键：窗口开着时先收卡，不能把整个对话一起关掉 */
+    out.backNoWin = W.chatOuiBack() === false;
+    W.chatOuiExpand("win_m1");
+    d.getElementById("chat").classList.add("on");
+    W.openLayers.push(d.getElementById("chat"));
+    out.backFirst = W.chatOuiBack() === true && W._ouiWinMid === "";
+    while (W.openLayers.length) W.closeTop();
+    /* 卡片浮着的时候关对话 → 卡跟着回槽位，不许留在窗口里 */
+    W.chatOuiExpand("win_m1");
+    W.openLayers.push(d.getElementById("chat"));
+    W.closeTop();
+    out.closedWithChat = card.parentNode === slot && W._ouiWinMid === "";
+  } catch (e) { out.err = e.stack; }
+  d.querySelectorAll = oldAll;
+  W._ouiWinMid = "";
+  return out;
+})();
+ok("展开：卡片搬进窗口，标题跟着走，拦截层亮起", ouiWinMove.expanded === true, ouiWinMove.err || JSON.stringify(ouiWinMove));
+ok("重画列表不产生第二张卡", ouiWinMove.noSecondCard === true, ouiWinMove.err || JSON.stringify(ouiWinMove));
+ok("整屏态能切进切出，按钮文案跟着变", ouiWinMove.maxed === true, JSON.stringify(ouiWinMove));
+ok("收回：卡片原路搬回槽位，窗口关掉、整屏态复位", ouiWinMove.back === true, JSON.stringify(ouiWinMove));
+ok("返回键先收卡片再关对话", ouiWinMove.backNoWin === true && ouiWinMove.backFirst === true, JSON.stringify(ouiWinMove));
+ok("关对话时悬浮窗里的卡一起收回位", ouiWinMove.closedWithChat === true, JSON.stringify(ouiWinMove));
+
+/* 点开的判定自己写（不能用 bindTap，它 preventDefault 会吃掉从卡片起手的滚动）：
+   这里直接驱动挂上去的监听器，验「空白处算点、交互件和滑动不算」。 */
+const ouiTap = (() => {
+  const d = W.document;
+  const slot = makeElement("oui_tap_slot"), card = makeElement("oui_tap_card");
+  const scrim = d.getElementById("ouiScrim"), body = d.getElementById("ouiWinBody");
+  slot.setAttribute("data-oui", "tap_m1");
+  slot.appendChild(card);
+  slot.querySelector = (s) => (s === ".oui" && card.parentNode === slot ? card : null);
+  body.querySelector = () => (card.parentNode === body ? card : null);
+  const oldAll = d.querySelectorAll;
+  d.querySelectorAll = () => [slot];
+  W.openLayers.length = 0;
+  const h = {};
+  card.addEventListener = (t, fn) => { h[t] = fn; };
+  const blank = { closest: () => null };
+  const inner = { closest: (s) => (s === W.OUI_INNER ? card : null) };
+  const press = (target, x, y) => h.touchstart({ touches: [{ clientX: x, clientY: y }], target: target });
+  const lift = (x, y) => h.touchend({ changedTouches: [{ clientX: x, clientY: y }] });
+  const out = {};
+  try {
+    W.bindOuiOpen(card, "tap_m1");
+    /* 鼠标路径先测：这条分支要求「最近没走过 touch*」，touch 一跑就会把它挡掉 */
+    h.mousedown({ clientX: 100, clientY: 100 });
+    h.click({ target: blank, clientX: 100, clientY: 100 });
+    out.mouseWorks = card.parentNode === body && W._ouiWinMid === "tap_m1";
+    W.chatOuiScrimTap();
+    out.scrimCloses = card.parentNode === slot && W._ouiWinMid === "" && !scrim.classList.contains("on");
+    press(blank, 100, 100); lift(101, 101);
+    out.tapOpens = card.parentNode === body && W._ouiWinMid === "tap_m1" && scrim.classList.contains("on");
+    /* 窗口外那一击先还给压在上面的面板（选择列表），不许隔着面板收卡 */
+    d.getElementById("sheet3").classList.add("on");
+    W.openLayers.push(d.getElementById("sheet3"));
+    W.chatOuiScrimTap();
+    out.yieldsToPanel = W._ouiWinMid === "tap_m1" && card.parentNode === body &&
+      !d.getElementById("sheet3").classList.contains("on");
+    W.chatOuiScrimTap();
+    press(inner, 100, 100); lift(100, 100);
+    out.innerIgnored = W._ouiWinMid === "";
+    press(blank, 10, 10); lift(10, 220);
+    out.dragIgnored = W._ouiWinMid === "";
+    press(blank, 100, 100); lift(100, 100);
+    out.reopens = W._ouiWinMid === "tap_m1";
+    W.chatOuiScrimTap();
+  } catch (e) { out.err = e.stack; }
+  d.querySelectorAll = oldAll;
+  W._ouiWinMid = "";
+  return out;
+})();
+ok("点卡片空白处就展开（可反复）", ouiTap.tapOpens === true && ouiTap.reopens === true, ouiTap.err || JSON.stringify(ouiTap));
+ok("点窗口外任意处收回", ouiTap.scrimCloses === true, JSON.stringify(ouiTap));
+ok("选择面板压在窗口上时，窗口外那一击先关面板不隔层收卡", ouiTap.yieldsToPanel === true, JSON.stringify(ouiTap));
+ok("按在按钮/输入/下拉/折叠行上不展开", ouiTap.innerIgnored === true, JSON.stringify(ouiTap));
+ok("从卡片上起手滑动是滚动，不展开", ouiTap.dragIgnored === true, JSON.stringify(ouiTap));
+ok("鼠标点击（桌面调试页）同样能展开", ouiTap.mouseWorks === true, JSON.stringify(ouiTap));
+
 /* ---------- 31. 会话规则与空会话界面 ---------- */
 section("[31] 会话规则与空会话界面");
 

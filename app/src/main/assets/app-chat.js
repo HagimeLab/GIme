@@ -1051,6 +1051,8 @@ function chatOuiMount(root) {
     if (!m) continue;
     var src = ouiNormalize(ouiSplit(m).src);
     if (!src) continue;
+    /* 这张卡正浮在悬浮窗里：节点还活在窗口里，槽位空着（CSS 会收起来），别在这儿重画 */
+    if (id === _ouiWinMid) continue;
     if (!m.formValues) m.formValues = {};
     try {
       var card = window.renderOpenUI(src, {
@@ -1065,10 +1067,125 @@ function chatOuiMount(root) {
       });
       /* 卡片是挂载后才撑高的；用户原本在底部时跟着它走，别让最后一张卡被截掉半截 */
       var near = root.scrollHeight - root.scrollTop - root.clientHeight < 160;
-      if (card) slot.appendChild(card);
+      if (card) { slot.appendChild(card); bindOuiOpen(card, id); }
       if (card && near) root.scrollTop = root.scrollHeight;
     } catch (e) { /* 画不出来就当没有这张卡：正文那段 Markdown 还在 */ }
   }
+}
+/* ---- OpenUI 卡片悬浮窗 ----
+   展开时把渲染好的那个节点搬进窗口，收回时搬回它自己的槽位。
+   搬节点而不是重画：输入到一半的值、按钮回调、打卡后的文案都跟着节点走，
+   重画只会把它们冲掉。 */
+var _ouiWinMid = "";
+function ouiWinSlot(mid) {
+  if (!mid) return null;
+  var slots = document.querySelectorAll("[data-oui]");
+  for (var i = 0; i < slots.length; i++) {
+    if (slots[i].getAttribute("data-oui") === mid) return slots[i];
+  }
+  return null;
+}
+/* 点卡片本体就展开。不能用 openui-ui 的 bindTap：它 preventDefault，会把从卡片上
+   起手的滚动手势一起吃掉（卡片很高，用户正是从卡片上往下滑）。这里按「按下到抬起
+   位移小且快」判点，滚动和长按都不算；卡里的交互件（按钮/输入/下拉/折叠行）另算。 */
+var OUI_INNER = "button,input,textarea,select,label,summary,a";
+function bindOuiOpen(node, mid) {
+  var sx = 0, sy = 0, st = 0, lastTouch = 0;
+  function down(x, y) { sx = x; sy = y; st = Date.now(); }
+  function up(x, y) {
+    if (!st) return;
+    var moved = Math.abs(x - sx) + Math.abs(y - sy), dt = Date.now() - st;
+    st = 0;
+    if (moved < 12 && dt < 600) chatOuiExpand(mid);
+  }
+  node.addEventListener("touchstart", function (e) {
+    lastTouch = Date.now();
+    var p = e.touches && e.touches[0];
+    if (!p) return;
+    /* 按在交互件上就不算开卡的一击（事件照旧传给控件，这里只不记按下点）。
+       卡里的按钮/下拉自己会 stopPropagation，走不到这条。 */
+    if (e.target && e.target.closest && e.target.closest(OUI_INNER)) { st = 0; return; }
+    down(p.clientX, p.clientY);
+  }, { passive: true });
+  node.addEventListener("touchend", function (e) {
+    var p = e.changedTouches && e.changedTouches[0];
+    if (p) up(p.clientX, p.clientY);
+  }, { passive: true });
+  node.addEventListener("mousedown", function (e) { down(e.clientX, e.clientY); }, { passive: true });
+  node.addEventListener("click", function (e) {
+    /* 触屏已经走过一遍 touch*，这里只兜鼠标（桌面调试页） */
+    if (Date.now() - lastTouch < 700) return;
+    if (e.target && e.target.closest && e.target.closest(OUI_INNER)) return;
+    up(e.clientX, e.clientY);
+  });
+}
+/* 悬浮窗背后的拦截层：点窗口外任意处收回。
+   选择面板压在窗口上时，这一击先还给面板，不能隔着面板把卡收走。 */
+function chatOuiScrimTap() {
+  var top = openLayers.length ? openLayers[openLayers.length - 1] : null;
+  if (top && top.id !== "chat") { closeTop(); return; }
+  chatOuiCollapse();
+}
+/* 一次只浮一张：展开新的之前先把手上这张收回原位 */
+function chatOuiExpand(mid) {
+  if (_ouiWinMid && _ouiWinMid !== mid) chatOuiCollapse();
+  var win = document.getElementById("ouiWin");
+  var body = document.getElementById("ouiWinBody");
+  var slot = ouiWinSlot(mid);
+  var card = slot && slot.querySelector(".oui");
+  if (!win || !body || !card) return;
+  /* 标题拿这张卡自己的 Card 标题/Title，认不出就叫「卡片」。
+     被拿到头部的那一行在窗口里不再重复出现（标记只在 .oui-win-body 里生效）。 */
+  var t = card.querySelector(".oui-card-t") || card.querySelector(".oui-title");
+  var head = document.getElementById("ouiWinTitle");
+  if (head) head.textContent = t && t.textContent ? String(t.textContent).slice(0, 24) : "卡片";
+  if (t && t.textContent) t.classList.add("oui-in-head");
+  body.appendChild(card);              /* 移动节点，不重建 */
+  _ouiWinMid = mid;
+  chatOuiScrim(true);
+  chatOuiMaxSet(false);
+  win.classList.add("on");
+}
+/* 拦截层：窗口开着时铺满整屏（压在窗口下面），点它=收回 */
+function chatOuiScrim(on) {
+  var s = document.getElementById("ouiScrim");
+  if (!s) return;
+  if (on) s.classList.add("on"); else s.classList.remove("on");
+}
+function chatOuiCollapse() {
+  var win = document.getElementById("ouiWin");
+  var body = document.getElementById("ouiWinBody");
+  var card = body && body.querySelector(".oui");
+  var slot = ouiWinSlot(_ouiWinMid);
+  _ouiWinMid = "";
+  if (card) {
+    /* 那条消息还在就原路放回去；已经不在了（切了会话）就丢掉，
+       不然它会一直浮在窗口里，下次展开另一张时叠成两张卡 */
+    if (slot) slot.appendChild(card);
+    else card.remove();
+  }
+  chatOuiScrim(false);
+  if (win) win.classList.remove("on");
+  chatOuiMaxSet(false);
+}
+function chatOuiMax() {
+  var win = document.getElementById("ouiWin");
+  if (win) chatOuiMaxSet(!win.classList.contains("max"));
+}
+function chatOuiMaxSet(on) {
+  var win = document.getElementById("ouiWin"), b = document.getElementById("ouiWinMaxBtn");
+  if (!win) return;
+  if (on) win.classList.add("max"); else win.classList.remove("max");
+  if (b) b.textContent = on ? "还原" : "全屏";
+}
+/* 悬浮窗压在对话上面：返回键要先把它收回气泡，不能连带把整个对话关掉。
+   选择面板（#sheet3）还压在窗口上面时让给它，否则面板关不掉。 */
+function chatOuiBack() {
+  if (!_ouiWinMid) return false;
+  var top = openLayers.length ? openLayers[openLayers.length - 1] : null;
+  if (top && top.id !== "chat") return false;
+  chatOuiCollapse();
+  return true;
 }
 /* 已落盘的回答不会变，按 id 缓存；换文字或超量就重算/清空 */
 function mdFor(m) {
