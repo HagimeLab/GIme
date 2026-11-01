@@ -428,15 +428,20 @@ function planRemindToggle(id) {
   else toast(p.remind ? "已关闭每日提醒" : "已开启每日提醒（8:30 / 21:00）");
 }
 
+/* 「问大肥鱼」只把方案进度放进输入框，不替用户开口：
+   要不要问、怎么问由用户自己按发送决定。 */
 function planInsight(id) {
   var p = planFull(id);
   if (!p) return;
-  if (chatBusy) { toast("大肥鱼还在回上一条，等它说完再问"); return; }
   var st = planStatsOf(p);
   chatOuiOpenPanel();
-  chatAsk("看看我的方案「" + p.title + "」：目标 " + p.goal + "；进度 " + st.done + "/" + st.total +
-          " 项（" + st.pct + "%），今天 " + st.todayDone + "/" + st.todayTotal +
-          " 项已完成。结合现在的情况，下一阶段最该先做什么？");
+  var box = document.getElementById("chatText");
+  if (!box) return;
+  box.value = "看看我的方案「" + p.title + "」：目标 " + p.goal + "；进度 " + st.done + "/" + st.total +
+              " 项（" + st.pct + "%），今天 " + st.todayDone + "/" + st.todayTotal +
+              " 项已完成。结合现在的情况，下一阶段最该先做什么？";
+  if (typeof chatAutoGrow === "function") chatAutoGrow(box);
+  try { box.focus(); } catch (e) { }
 }
 
 /* ================= 新建 / 调整 ================= */

@@ -3975,11 +3975,16 @@ let insightAsked = "";
 const realAsk = W.chatAsk;
 W.chatAsk = function (q) { insightAsked = String(q); };
 W.chatBusy = false;
+const insightMsgsBefore = (W.chatMsgs || []).length;
 W.openPlan(plId);
 W.planInsight(plId);
 W.chatAsk = realAsk;
-ok("insight:<id> 带着方案进度追问大肥鱼",
-   insightAsked.indexOf("新标题") >= 0 && insightAsked.indexOf("进度") >= 0, insightAsked.slice(0, 120));
+const insightBox = String(W.document.getElementById("chatText").value || "");
+ok("方案里点「问大肥鱼」不发送任何信息，只把进度填进输入框",
+   insightAsked === "" && (W.chatMsgs || []).length === insightMsgsBefore &&
+   insightBox.indexOf("新标题") >= 0 && insightBox.indexOf("进度") >= 0,
+   JSON.stringify({ asked: insightAsked, box: insightBox.slice(0, 80) }));
+W.document.getElementById("chatText").value = "";
 
 /* 返回键顺序：面板 > 详情回列表 > 关整页。不能从面板底下偷偷换页 */
 while (W.openLayers.length) W.closeTop();   /* insight 打开了会话面板，先收掉 */
