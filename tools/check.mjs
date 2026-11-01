@@ -1446,9 +1446,8 @@ ok("思考完成后默认收起",
 ok("思维链增量走帧节流，不再每个 chunk 重排一次",
    /if \(kind === "think"\) \{ m\.reasoning \+= chunk; chatLivePaintSoon\(m\); \}/.test(html) &&
    /function chatLivePaintSoon\(m\)/.test(html));
-ok("流式期间思考链只画尾部（整段每帧重排是卡顿主因）",
-   /var THINK_LIVE_MAX = 900;/.test(html) && /if \(m\.live && think\.length > THINK_LIVE_MAX\)/.test(html) &&
-   /esc\(thinkView\)/.test(html));
+ok("思考流追加文本节点，避免整块重建", /tb\.firstChild\.appendData/.test(html)
+   && /_thinkScrollAt/.test(html) && /var fast = p\.hasThink/.test(html));
 ok("同样的内容不重复写 DOM，滚动也节流",
    /if \(m\._html === html\) return;/.test(html) && /now - _liveScrollAt > 120/.test(html));
 ok("被丢掉的气泡不再触发重画",

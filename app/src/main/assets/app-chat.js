@@ -1137,13 +1137,9 @@ function pokeLive(m, done) {
 }
 /* 流式期间只画思考链最后这一截：整段（几千字）每帧重新转义 + 重排，
    手机上就是持续掉帧；答完再一次性渲染全文（默认收起，不占屏）。 */
-var THINK_LIVE_MAX = 900;
-function chatLiveHtml(m) {
+function chatLiveParts(m) {
   var think = String((m && m.reasoning) || "");
   var thinkView = think;
-  if (m.live && think.length > THINK_LIVE_MAX) {
-    thinkView = "…（前 " + (think.length - THINK_LIVE_MAX) + " 字略）\n" + think.slice(-THINK_LIVE_MAX);
-  }
   var text = liveText(m);
   /* 工具轮次里上游吐的是 <tool_call>{...}，那是给解析器看的，别亮给用户。
      这一轮的气泡最后会被丢掉，但流式期间不能闪一串 JSON。 */
@@ -1151,53 +1147,143 @@ function chatLiveHtml(m) {
   if (tooling) text = "";
   /* OpenUI 围栏还没收完就先藏起来：半截源码在气泡里闪一下再变成卡片很扎眼 */
   if (m.live) text = stripUIFence(text);
-  var out = "";
-  if (think) {
-    /* 默认展开（「把思考链显示出来」），用户点一下就收起，收起后记住不再自动弹开。
+  /* 默认展开（「把思考链显示出来」），用户点一下就收起，收起后记住不再自动弹开。
        .think-body 有 190px 上限 + 内部滚动，长思维链不会把回答挤到屏幕外。 */
-    /* 思考时展开（看得到它在想什么），答完收起（结果在前，过程退到折子里）；
-       用户自己点过就按他的选择来。 */
-    var open = m.live ? (m.thinkOpen !== false) : (m.thinkOpen === true);
-    var label = m.live ? (text ? "思考过程" : "正在思考…")
-                       : "思考过程 · " + think.length + " 字";
+  /* 思考时展开（看得到它在想什么），答完收起（结果在前，过程退到折子里）；
+     用户自己点过就按他的选择来。 */
+  var open = m.live ? (m.thinkOpen !== false) : (m.thinkOpen === true);
+  var label = m.live ? (text ? "思考过程" : "正在思考…")
+                     : "思考过程 · " + think.length + " 字";
+  var wait = tooling ? "正在调用工具…"
+                     : (chatBusy && chatWork && chatWork.title ? chatWork.title : "大肥鱼正在想…");
+  return { think: thinkView, hasThink: !!think, text: text, tooling: tooling,
+           open: open, label: label, wait: wait };
+}
+function chatLiveHtml(m) {
+  var p = chatLiveParts(m);
+  var out = "";
+  if (p.hasThink) {
     /* 用 click 而不是 ontoggle：details 插入时若带 open，浏览器也会派发 toggle，
        那会把「用户没点过」误记成「用户点开了」，导致答完还是展开的。
        click 时父节点的 open 还是点击前的值，取反就是点击后的状态。 */
-    out += '<details class="think"' + (open ? " open" : "") + ">" +
+    out += '<details class="think"' + (p.open ? " open" : "") + ">" +
            '<summary onclick="chatThinkToggle(\'' + m.id + '\', !this.parentNode.open)">' +
-           label + "</summary>" +
-           '<div class="think-body">' + esc(thinkView).replace(/\n/g, "<br>") + "</div></details>";
+           p.label + "</summary>" +
+           '<div class="think-body">' + esc(p.think) + "</div></details>";
   }
-  if (text) {
+  if (p.text) {
     /* 流式期间保持纯文本（每 40ms 重排一次 Markdown 又慢又闪）；
        答完后一次性按 Markdown 渲染。思考链永远不解析。 */
     var live = !!m.live;
     out += '<div class="bubble' + (live ? "" : " md") + '">' +
-           (live ? esc(text).replace(/\n/g, "<br>") : mdFor(m)) + "</div>";
+           (live ? esc(p.text).replace(/\n/g, "<br>") : mdFor(m)) + "</div>";
   }
   if (!out) {
     /* 续段/续批时这里要显示「正在识别 · 第 2/2 段」，而不是笼统的「正在想」 */
-    var wait = tooling ? "正在调用工具…"
-                       : (chatBusy && chatWork && chatWork.title ? chatWork.title : "大肥鱼正在想…");
-    out = '<div class="bubble typing">' + esc(wait) + "</div>";
+    out = '<div class="bubble typing">' + esc(p.wait) + "</div>";
   }
   return out;
 }
 /* 只重画这一条流式气泡：整列表重画会丢滚动位置，也太费。 */
-var _liveScrollAt = 0;
+var _liveScrollAt = 0, _thinkScrollAt = 0;
 function chatLivePaint(m) {
   if (!m || !m.id || m._dead) return;
+  var thinkFull = String((m && m.reasoning) || "");
+  var textRaw = String((m && m.text) || "");
+  /* 最热路径：只有思考在增长、正文没变。直接追加文本节点，
+     不查 DOM、不读 list/think 布局、不算 parts。 */
+  var hot = m._liveNodes;
+  if (hot && hot.live && hot.live.parentNode && hot.tb && hot.tb.parentNode &&
+      m._liveTextRaw === textRaw && thinkFull !== m._liveThinkRaw) {
+    var tbHot = hot.tb;
+    var prev = m._liveThinkRaw;
+    if (prev != null && tbHot.firstChild && tbHot.firstChild.nodeType === 3 &&
+        thinkFull.indexOf(prev) === 0) {
+      var dHot = thinkFull.slice(prev.length);
+      if (dHot) tbHot.firstChild.appendData(dHot);
+    } else {
+      tbHot.textContent = thinkFull;
+    }
+    m._liveThinkRaw = thinkFull;
+    m._liveThink = thinkFull;
+    if (hot.sum) {
+      var labHot = textRaw ? "思考过程" : "正在思考…";
+      if (hot.sum.textContent !== labHot) hot.sum.textContent = labHot;
+    }
+    var nowHot = Date.now();
+    if (nowHot - _thinkScrollAt > 100) {
+      _thinkScrollAt = nowHot;
+      tbHot.scrollTop = tbHot.scrollHeight;
+    }
+    if (!m._thinkScrollTimer) {
+      m._thinkScrollTimer = setTimeout(function () {
+        m._thinkScrollTimer = 0;
+        var el = m._liveNodes && m._liveNodes.tb;
+        if (el && el.parentNode) el.scrollTop = el.scrollHeight;
+      }, 120);
+    }
+    m._html = "";
+    return;
+  }
   var list = document.getElementById("chatList");
   if (!list || !list.querySelector) { chatRender(); return; }
   var box = list.querySelector('.msg[data-mid="' + m.id + '"]');
   var live = box && box.querySelector ? box.querySelector(".live") : null;
   if (!live) { chatRender(); return; }
+  var near = list.scrollHeight - list.scrollTop - list.clientHeight < 160;
+  /* 节点缓存：流式期间结构不变，别每个 chunk 都 querySelector */
+  var nodes = m._liveNodes;
+  if (!nodes || nodes.live !== live || !nodes.tb || !nodes.tb.parentNode) {
+    nodes = {
+      live: live,
+      tb: live.querySelector ? live.querySelector(".think-body") : null,
+      bubble: live.querySelector ? live.querySelector(".bubble") : null,
+      sum: live.querySelector ? live.querySelector(".think > summary") : null
+    };
+    m._liveNodes = nodes;
+  }
+  var tb = nodes.tb, bubble = nodes.bubble, sum = nodes.sum;
+  var p = chatLiveParts(m);
+  /* 结构已经就位时只改文本节点：不再重建 details / think-body / 气泡。
+     结构变化（思考第一次出现、正文第一次出现、正文被工具轮清空）才走整块重建。 */
+  var fast = p.hasThink && tb && (p.text ? bubble : !bubble);
+  if (fast) {
+    if (sum && sum.textContent !== p.label) sum.textContent = p.label;
+    if (m._liveThink !== p.think) {
+      var raw = m._liveThinkRaw;
+      if (raw != null && tb.firstChild && tb.firstChild.nodeType === 3 &&
+          p.think.indexOf(raw) === 0) {
+        var delta = p.think.slice(raw.length);
+        if (delta) tb.firstChild.appendData(delta);
+      } else {
+        tb.textContent = p.think;
+      }
+      m._liveThinkRaw = p.think;
+      m._liveThink = p.think;
+      /* 滚动/布局读取节流：文本追加本身不强制重排 */
+      var nowT = Date.now();
+      if (nowT - _thinkScrollAt > 100) {
+        _thinkScrollAt = nowT;
+        tb.scrollTop = tb.scrollHeight;
+      }
+    }
+    if (p.text && bubble && m._liveText !== p.text) {
+      bubble.innerHTML = esc(p.text).replace(/\n/g, "<br>");
+      m._liveText = p.text;
+    }
+    m._liveTextRaw = p.text === textRaw ? textRaw : null;
+    m._html = "";                 /* DOM 已变，后续若需整块重建必须重算 */
+    var now = Date.now();
+    if (near && now - _liveScrollAt > 120) {
+      _liveScrollAt = now;
+      list.scrollTop = list.scrollHeight;
+    }
+    return;
+  }
   var html = chatLiveHtml(m);
   if (m._html === html) return;      /* 内容没变就别重排 */
   m._html = html;
-  /* 先读后写：读一次布局决定要不要跟到底，免得 innerHTML 之后又强制重排 */
-  var near = list.scrollHeight - list.scrollTop - list.clientHeight < 160;
-  /* 思考链每次都是整块重建；新 DOM 的 scrollTop 会回到 0，导致内容看着停住/跳回开头。
+  /* 思考链整块重建；新 DOM 的 scrollTop 会回到 0，导致内容看着停住/跳回开头。
      重建前记下用户是否在看底部，重建后还原或继续贴底。 */
   var oldThink = live.querySelector ? live.querySelector(".think-body") : null;
   var oldScroll = oldThink ? oldThink.scrollTop : 0;
@@ -1208,9 +1294,19 @@ function chatLivePaint(m) {
   if (newThink) {
     newThink.scrollTop = atThinkBottom ? newThink.scrollHeight : oldScroll;
   }
-  var now = Date.now();
-  if (near && now - _liveScrollAt > 120) {
-    _liveScrollAt = now;
+  m._liveThink = p.think;
+  m._liveThinkRaw = p.think;
+  m._liveText = p.text;
+  m._liveTextRaw = p.text === textRaw ? textRaw : null;
+  m._liveNodes = {
+    live: live,
+    tb: newThink,
+    bubble: live.querySelector(".bubble"),
+    sum: live.querySelector(".think > summary")
+  };
+  var now2 = Date.now();
+  if (near && now2 - _liveScrollAt > 120) {
+    _liveScrollAt = now2;
     list.scrollTop = list.scrollHeight;
   }
 }
