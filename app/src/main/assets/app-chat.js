@@ -473,7 +473,7 @@ function openAgentCfg() {
     var line = !st ? '<div class="sl-hint">仅手机版可用。</div>'
       : st.loggedIn
         ? '<div class="ag-ok">已登录 DeepSeek' + (st.mobile ? " · " + esc(st.mobile) : "") +
-          " ✔ 不用填 Key，直接问就行。</div>" +
+          " · 不用填 Key，直接问就行。</div>" +
           '<button class="sheet-act2" style="width:100%;margin:10px 0 0" onclick="dsLogoutNow()">退出登录</button>'
         : '<div class="sl-hint" style="margin:0 0 10px">还没登录。用手机号登录一次，之后就能直接用，不需要 API Key。</div>' +
           '<button class="sheet-act" style="margin:0" onclick="dsLoginNow()">用手机号登录 DeepSeek</button>';
@@ -1449,7 +1449,7 @@ function chatRender() {
     var me = m.role === "user";
     if (me && m.file) {
       h += '<div class="msg me"><div class="bubble">' + esc(m.text) +
-           '<span class="ub-file">📎 ' + esc(m.file) + " 已随这条消息发给大肥鱼</span></div></div>";
+           '<span class="ub-file">附件：' + esc(m.file) + " 已随这条消息发给大肥鱼</span></div></div>";
       return;
     }
     var inner;

@@ -786,6 +786,34 @@ W.S = null;
 W.goTab("me");
 const meSetHtml = String(W.document.getElementById("meSet").innerHTML);
 ok("「我的」页没有搜索题目行", meSetHtml.indexOf('data-k="search"') < 0);
+ok("首页标题用 h1", /<h1 id="hiName">/.test(html));
+ok("学习资料卡去重阴影与图标底", /\.study-card\s*\{[^}]*border:\s*1px solid[^}]*\}/.test(cssSource) &&
+   !/\.study-card\s*\{[^}]*box-shadow/.test(cssSource) &&
+   !/\.study-card \.sc-ic\s*\{[^}]*background/.test(cssSource) &&
+   /\.study-card \.sc-go\s*\{[^}]*min-height:\s*44px/.test(cssSource));
+ok("回答卡只用边框、标签≥12px", !/\.msg\.ai \.blk\s*\{[^}]*box-shadow/.test(cssSource) &&
+   /\.blk-tag\s*\{[^}]*font-size:\s*\.75rem/.test(cssSource) &&
+   /\.blk-copy\s*\{[^}]*font-size:\s*\.75rem/.test(cssSource));
+ok("次要文字用 ink-2 对比", /\.sec-title span\s*\{[^}]*var\(--ink-2\)/.test(cssSource) &&
+   /\.study-card \.sc-copy em\s*\{[^}]*var\(--ink-2\)/.test(cssSource));
+ok("输入框展开触控点 44px", /\.chat-more\s*\{[^}]*width:\s*44px[^}]*height:\s*44px/.test(cssSource));
+ok("学习资料动作降为次操作（通栏/描边/非实心）",
+   /\.study-card \.sc-go\s*\{[^}]*width:\s*100%/.test(cssSource) &&
+   /\.study-card \.sc-go\s*\{[^}]*border:\s*1px solid/.test(cssSource) &&
+   !/\.study-card \.sc-go\s*\{[^}]*background:\s*var\(--ink\)/.test(cssSource));
+ok("学习资料动作带方向箭头", /class="sc-go"[\s\S]{0,200}<svg/.test(jsSources[2]));
+ok("对话头部按钮热区补到 44px", /\.chat-head \.chat-cfg::before\s*\{[^}]*top:\s*-7px[^}]*bottom:\s*-7px/.test(cssSource));
+ok("联网开关用描边表示开启（不再是一颗实心块）",
+   /\.chat-head \.chat-cfg\.chat-ico\.on\s*\{[^}]*border-color:\s*var\(--ink\)/.test(cssSource) &&
+   !/\.chat-head \.chat-cfg\.chat-ico\.on\s*\{[^}]*background:\s*var\(--ink\)/.test(cssSource));
+ok("思考过程行高不低于 12px 且可收起", /\.think > summary\s*\{[^}]*font-size:\s*\.75rem/.test(cssSource) &&
+   /\.think > summary\s*\{[^}]*border-bottom:\s*1px solid/.test(cssSource));
+ok("hidden 不会被按钮的 display 覆盖", /\[hidden\]\s*\{\s*display:\s*none\s*!important/.test(cssSource));
+ok("卡片统一用边框，不再自带投影", /\.card\s*\{[^}]*border:\s*1px solid var\(--line\)/.test(cssSource) &&
+   !/\.card\s*\{[^}]*box-shadow/.test(cssSource));
+ok("OpenUI 指标不再包色块", !/\.oui-metric\s*\{[^}]*background/.test(cssSource));
+ok("对话免责声明用 12px ink-2", /\.chat-note\s*\{[^}]*font-size:\s*\.75rem[^}]*var\(--ink-2\)/.test(cssSource));
+ok("底部导航未选中项用 ink-2", /\.tab\s*\{[^}]*color:\s*var\(--ink-2\)/.test(cssSource));
 ok("「检查更新」行还在", meSetHtml.indexOf('data-k="update"') >= 0);
 ok("「我的」页有 MCP 连接行", meSetHtml.indexOf('data-k="mcp"') >= 0);
 ok("MCP 重置入口有二次确认", /askMcpReset/.test(html) && /确认重置/.test(html));
@@ -2404,6 +2432,19 @@ section("[30b] OpenUI 卡片渲染");
 
 ok("联网搜索默认开、可手动关", /function webSearchOn/.test(html)
    && /set\.webSearch !== false/.test(html) && /function toggleWebSearch/.test(html));
+ok("Key 模式下联网按钮隐藏，登录模式显示", (() => {
+  const old = W.set.agent;
+  const b = W.document.getElementById("chatWeb");
+  W.set.agent = { mode: "key", base: "https://api.deepseek.com/v1", model: "deepseek-chat", key: "sk-x" };
+  W.syncWebBtn();
+  const keyHidden = b.hidden === true;
+  W.set.agent = { mode: "login", model: "deepseek-web" };
+  W.syncWebBtn();
+  const loginShown = b.hidden === false;
+  W.set.agent = old;
+  W.syncWebBtn();
+  return keyHidden && loginShown;
+})());
 ok("内置请求透传 search 开关", /body\.search = webSearchOn\(\)/.test(html));
 ok("首页有学习资料卡", /id="studyCard"/.test(html)
    && /function renderStudyCard/.test(html) && /function studyMaterials/.test(html));
@@ -3397,7 +3438,7 @@ ok("文档挂在发出的那条消息上",
 W.chatRender();
 const carryDom = String(W.document.getElementById("chatList").innerHTML);
 ok("用户气泡上标出文档随行",
-   carryDom.indexOf("📎 文档同行.txt") >= 0 && carryDom.indexOf("已随这条消息发给大肥鱼") >= 0,
+   carryDom.indexOf("附件：文档同行.txt") >= 0 && carryDom.indexOf("已随这条消息发给大肥鱼") >= 0,
    carryDom.slice(-260));
 
 /* 追问不带文件：正文从那条消息里取，照样上行 */

@@ -27,3 +27,6 @@ dist/
 
 # 本地周期方案：只在本机维护，不进 Git、不参与 GitHub 推送
 /plan/
+
+# taste-skill 的本地截图与报告：只在本机复查时生成，不入库
+.taste-skill/
