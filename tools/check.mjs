@@ -2449,6 +2449,14 @@ ok("内置请求透传 search 开关", /body\.search = webSearchOn\(\)/.test(htm
 ok("首页有学习资料卡", /id="studyCard"/.test(html)
    && /function renderStudyCard/.test(html) && /function studyMaterials/.test(html));
 ok("OpenUI 渲染器与表单读取器都已就位", typeof W.renderOpenUI === "function" && typeof W.readForm === "function");
+ok("OpenUI 表格包在横滑容器里（列排不下时滑，不被卡片裁掉）",
+   /make\('div', 'oui-tablewrap'\)/.test(jsSources[1]) && /wrap\.append\(t\)/.test(jsSources[1])
+   && /return wrap;/.test(jsSources[1]));
+ok("表格单元格可折行且顶对齐",
+   /\.oui-tablewrap\s*\{[^}]*overflow-x:\s*auto/.test(cssSource) &&
+   /\.oui-table th,\s*\.oui-table td\s*\{[^}]*word-break:\s*break-word/.test(cssSource) &&
+   /\.oui-table th,\s*\.oui-table td\s*\{[^}]*vertical-align:\s*top/.test(cssSource) &&
+   /\.oui-table th,\s*\.oui-table td\s*\{[^}]*min-width:\s*48px/.test(cssSource));
 ok("OpenUI 解析器能解析一段界面源码", (() => {
   try {
     const r = W.OpenUI.parse('root = Stack([Title("进度", {level: 1}), Progress({value: 60, label: "完成"}), Button("继续", {action: "send:继续"})])');

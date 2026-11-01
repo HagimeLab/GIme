@@ -1204,6 +1204,11 @@ html.swap, html.swap * { transition: none !important; }
   margin-left: 8px;
 }
 
+/* 表格：先尽量在卡片宽度内排下（长词断行 + 顶对齐），
+   列真的多到排不下时由外层容器横滑，而不是把列裁到卡片外面 */
+.oui-tablewrap { max-width: 100%; overflow-x: auto; -webkit-overflow-scrolling: touch; }
+.oui-tablewrap::-webkit-scrollbar { display: none; }
+
 .oui-table {
   width: 100%;
   border-collapse: collapse;
@@ -1212,9 +1217,15 @@ html.swap, html.swap * { transition: none !important; }
 
 .oui-table th,
 .oui-table td {
+  min-width: 48px;
   padding: 6px 8px;
   border-bottom: 1px solid var(--stroke);
   text-align: left;
+  vertical-align: top;
+  /* break-word 让长串（openGauss/FusionSphere…）能折进卡片里；
+     只写 overflow-wrap 时整列按不可断处理，三列的表也会撑到 460px 变横滑。 */
+  word-break: break-word;
+  overflow-wrap: break-word;
 }
 
 .oui-table th {

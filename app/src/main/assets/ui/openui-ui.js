@@ -255,7 +255,11 @@ function renderNode(node, ctx) {
         tb.append(tr);
       }
       t.append(tb);
-      return t;
+      /* 列多或某列文字长时，表格的固有宽度会超过卡片：包一层横向滚动容器，
+         多出来的列可以滑出来看，而不是被卡片裁掉（360dp 上很常见）。 */
+      const wrap = make('div', 'oui-tablewrap');
+      wrap.append(t);
+      return wrap;
     }
     case 'Form': {
       const f = make('div', 'oui-form');
