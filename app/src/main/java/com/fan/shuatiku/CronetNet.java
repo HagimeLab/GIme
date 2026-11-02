@@ -163,7 +163,36 @@ public final class CronetNet implements HttpNet.Impl {
             }
         }
         if (req.body != null) {
-            rb.setUploadDataProvider(UploadDataProviders.create(req.body), CALLBACK_POOL);
+            if (req.progress == null) {
+                rb.setUploadDataProvider(UploadDataProviders.create(req.body), CALLBACK_POOL);
+            } else {
+                /* 带进度的上传：自己实现 Provider，每读一段把「已经出去多少」报给页面 */
+                final byte[] data = req.body;
+                final HttpNet.Progress pg = req.progress;
+                rb.setUploadDataProvider(new org.chromium.net.UploadDataProvider() {
+                    private int pos = 0;
+
+                    @Override public long getLength() { return data.length; }
+
+                    @Override public void rewind(org.chromium.net.UploadDataSink sink) {
+                        pos = 0;
+                        sink.onRewindSucceeded();
+                    }
+
+                    @Override public void read(org.chromium.net.UploadDataSink sink, ByteBuffer buf) {
+                        int n = Math.min(buf.remaining(), data.length - pos);
+                        if (n <= 0) { sink.onReadSucceeded(false); return; }
+                        buf.put(data, pos, n);
+                        pos += n;
+                        /* 定长上传（getLength 给了总数）时 Cronet 不接受 lastChunk=true：
+                           传完没有，靠长度判定 —— 传 true 会抛 Non-chunked upload can't have last chunk。 */
+                        sink.onReadSucceeded(false);
+                        pg.onProgress(pos, data.length);
+                    }
+
+                    @Override public void close() { }
+                }, CALLBACK_POOL);
+            }
         }
         UrlRequest request = rb.build();
         if (BuildConfig.DEBUG) {

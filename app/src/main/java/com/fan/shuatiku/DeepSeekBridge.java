@@ -283,13 +283,18 @@ public final class DeepSeekBridge {
      * 被 {@code ref_file_ids} 引用。PENDING/PARSING 每 1.5s 看一次，最多等 20s。
      */
     String uploadImage(byte[] data, String name, String mime) throws Exception {
+        return uploadImage(data, name, mime, null);
+    }
+
+    /** @param progress 上传进度（可为 null）：一路透传给 HTTP 层 */
+    String uploadImage(byte[] data, String name, String mime, HttpNet.Progress progress) throws Exception {
         String token = token();
         if (token.isEmpty()) {
             throw new DeepSeekWeb.DeepSeekException(40003, "还没登录 DeepSeek，请先在设置里用手机号登录");
         }
         DeepSeekWeb web = openWeb(token);
         throttle.acquire(null);
-        JSONObject biz = web.uploadBytes(data, name, mime, true, "default");
+        JSONObject biz = web.uploadBytes(data, name, mime, true, "default", progress);
         String id = biz.optString("id", "");
         if (id.isEmpty()) throw new DeepSeekWeb.DeepSeekException(-1, "上传成功但没拿到 file id");
         long deadline = System.currentTimeMillis() + 20000;

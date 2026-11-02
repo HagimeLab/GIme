@@ -1686,14 +1686,7 @@ function chatRender() {
   list.innerHTML = h;
   chatOuiMount(list);
   var send = document.getElementById("chatSend");
-  if (send) {
-    /* 忙的时候「发送」变成「停止」：网络卡住时用户至少能自己脱身，
-       不用干等看门狗。 */
-    send.disabled = false;
-    send.textContent = chatBusy ? "停止" : "发送";
-    send.className = "chat-send" + (chatBusy ? " stop" : "");
-    send.onclick = chatBusy ? chatStop : chatSend;
-  }
+  syncChatSend();
   var hint = document.getElementById("chatHint");
   if (hint) {
     hint.textContent = agentCfg()
@@ -1867,47 +1860,94 @@ window.onChatImages = function (json) {
        但它最终会进 innerHTML 的 src，别给别的协议留门。 */
     if (String(list[i].thumb).indexOf("data:image/") !== 0) continue;
     if (chatImages.length >= CHAT_IMG_MAX) { toast("最多带 " + CHAT_IMG_MAX + " 张图"); break; }
-    chatImages.push({ name: String(list[i].name || "图片"), thumb: String(list[i].thumb) });
+    chatImages.push({
+      name: String(list[i].name || "图片"),
+      thumb: String(list[i].thumb),
+      idx: Number(list[i].idx) || 0,
+      state: "up",      /* up=上传中（上半截清晰、下半截还模糊） ok=已就绪 err=失败 */
+      p: 0,             /* 上传进度 0-99，清晰的那一层从上往下露出来 */
+      id: ""
+    });
     added++;
   }
   renderChatImages();
-  if (added) toast("已放入 " + chatImages.length + " 张图，配一句话再发");
+  if (added) { toast("已放入 " + chatImages.length + " 张图，正在上传…"); chatImagePump(); }
 };
 window.onChatImagesError = function (msg) { toast(msg || "选图失败"); };
-/* 网页版通道能把图真的送上去：原图（压缩后）传给原生 → 上传拿 file id → 完成请求里带 refFileIds。
-   这条路只有登录通道有；API Key 那条没有网页会话，只能退到「只带文件名」。 */
-var _imgUpDone = null;
-window.onChatImageIds = function (json, err) {
-  var fn = _imgUpDone;
-  _imgUpDone = null;
-  if (!fn) return;
-  var list = [];
-  try { list = JSON.parse(String(json == null ? "[]" : json)); } catch (e) { list = []; }
-  var ids = [];
-  for (var i = 0; i < list.length; i++) {
-    if (list[i] && list[i].id) ids.push(String(list[i].id));
-  }
-  fn(ids, String(err || ""));
-};
-function chatUploadImages(timeoutMs) {
-  return new Promise(function (resolve) {
-    if (!window.Android || !Android.uploadChatImages) {
-      resolve({ ids: [], err: "请在手机上使用这个功能" });
+/* 一张一张传（先后，不并发）：放进输入区就开始，传完一张模糊就变清晰。
+   只有登录通道有这条路；API Key 那条没有网页会话，会停在 err，发送时按纯文字走。 */
+var _imgUpBusy = false;
+function chatImagePump() {
+  if (_imgUpBusy) return;
+  for (var i = 0; i < chatImages.length; i++) {
+    if (chatImages[i].state !== "up") continue;
+    if (!window.Android || !Android.uploadChatImage) {
+      chatImages[i].state = "err";
+      renderChatImages();
       return;
     }
-    var done = function (ids, err) { resolve({ ids: ids || [], err: err || "" }); };
-    _imgUpDone = done;
-    setTimeout(function () {
-      if (_imgUpDone === done) { _imgUpDone = null; done([], "上传超时"); }
-    }, timeoutMs || 45000);
+    _imgUpBusy = true;
     try {
-      Android.uploadChatImages();
+      Android.uploadChatImage(chatImages[i].idx);
     } catch (e) {
-      if (_imgUpDone === done) { _imgUpDone = null; done([], String(e)); }
+      _imgUpBusy = false;
+      chatImages[i].state = "err";
+      renderChatImages();
     }
-  });
+    return;
+  }
 }
-function chatImageDrop(i) { chatImages.splice(i, 1); renderChatImages(); }
+/* 原生每写出一段就报一次（已节流）：只改那一张的遮罩位置，不整块重画 */
+window.onChatImageProg = function (idx, pct) {
+  var n = Math.max(0, Math.min(99, Number(pct) || 0));
+  for (var i = 0; i < chatImages.length; i++) {
+    if (chatImages[i].idx !== Number(idx) || chatImages[i].state !== "up") continue;
+    chatImages[i].p = Math.max(chatImages[i].p || 0, n);
+    var box = document.querySelector('#chatImgs .ci[data-idx="' + Number(idx) + '"]');
+    var el = box && box.querySelector(".f");
+    if (el) el.style.setProperty("--p", chatImages[i].p + "%");
+    return;
+  }
+};
+window.onChatImageUp = function (idx, id, err) {
+  _imgUpBusy = false;
+  for (var i = 0; i < chatImages.length; i++) {
+    if (chatImages[i].idx !== Number(idx) || chatImages[i].state !== "up") continue;
+    if (id) {
+      chatImages[i].id = String(id);
+      chatImages[i].state = "ok";
+    } else {
+      chatImages[i].state = "err";
+      if (err) toast("这张图没传上去：" + err);
+    }
+    break;
+  }
+  renderChatImages();
+  chatImagePump();
+};
+/* 还有图在传：这时候不能发（图会缺），但可以点 × 撤掉 —— 撤掉的正好是在传的那张时，
+   chatImageDrop 会把下一张接上。 */
+function chatAnyImgUp() {
+  for (var i = 0; i < chatImages.length; i++) {
+    if (chatImages[i].state === "up") return true;
+  }
+  return false;
+}
+function syncChatSend() {
+  var send = document.getElementById("chatSend");
+  if (!send) return;
+  var up = !chatBusy && chatAnyImgUp();
+  send.disabled = up;
+  /* 忙的时候「发送」变成「停止」：网络卡住时用户至少能自己脱身，不用干等看门狗 */
+  send.textContent = chatBusy ? "停止" : (up ? "上传中" : "发送");
+  send.className = "chat-send" + (chatBusy ? " stop" : "");
+  send.onclick = chatBusy ? chatStop : chatSend;
+}
+function chatImageDrop(i) {
+  chatImages.splice(i, 1);
+  renderChatImages();
+  chatImagePump();          /* 撤掉的正好是在传的那张时，把下一张接上 */
+}
 function chatImagesClear() { chatImages = []; renderChatImages(); }
 function renderChatImages() {
   var box = document.getElementById("chatImgs");
@@ -1915,11 +1955,17 @@ function renderChatImages() {
   if (!chatImages.length) { box.hidden = true; box.innerHTML = ""; return; }
   var h = "";
   for (var i = 0; i < chatImages.length; i++) {
-    h += '<span class="ci"><img src="' + chatImages[i].thumb + '" alt="">' +
+    var st = chatImages[i].state || "up";
+    var p = st === "ok" ? 100 : (chatImages[i].p || 0);
+    h += '<span class="ci ' + st + '" data-idx="' + chatImages[i].idx + '">' +
+         '<img class="b" src="' + chatImages[i].thumb + '" alt="">' +
+         '<img class="f" src="' + chatImages[i].thumb + '" alt="" style="--p:' + p + '%">' +
+         (st === "err" ? '<i class="ci-err">!</i>' : "") +
          '<button class="cix" onclick="chatImageDrop(' + i + ')" aria-label="移除这张图">×</button></span>';
   }
   box.hidden = false;
   box.innerHTML = h;
+  syncChatSend();          /* 传完/撤完，按钮跟着回来 */
 }
 function chatFileClear() { chatFile = null; renderChatFile(); }
 
@@ -2183,6 +2229,8 @@ function chatRenamePending() {
 
 async function chatSend() {
   chatAutoRounds = 0;   /* 用户自己开口 = 重新开一条导入链 */
+  /* 图还在传：不许发（会缺图）。想撤就点缩略图右上角的 ×。 */
+  if (chatAnyImgUp()) { toast("图片还在上传，等它变清晰再发"); return; }
   var el = document.getElementById("chatText");
   var text = String(el && el.value || "").trim();
   /* 只带图不写字也能发：图本身就在输入区摆着，用户点发送就是要发出去 */
@@ -2249,12 +2297,16 @@ async function chatSendText(text, silent) {
   if (withImgs) {
     chatImages = []; renderChatImages();
     chatRunImgs = withImgs;
-    /* 登录通道才传得上去：页面把「选过哪几张」交给原生，原生压图 → 上传 → 等解析 → 回 file id */
+    /* 图一放进输入区就开传了，能点发送就说明都传完了（上传中按钮是禁用的） */
     if (cfg.builtin) {
-      if (!silent) toast("正在上传 " + withImgs.length + " 张图…");
-      var up = await chatUploadImages();
-      if (up.ids.length) chatRunImgIds = up.ids;
-      else if (up.err) toast("图片没传上去（" + up.err + "），这条按纯文字发");
+      var ids = [];
+      for (var wi = 0; wi < withImgs.length; wi++) {
+        if (withImgs[wi].state === "ok" && withImgs[wi].id) ids.push(withImgs[wi].id);
+      }
+      if (ids.length) chatRunImgIds = ids;
+      if (ids.length < withImgs.length && !silent) {
+        toast((withImgs.length - ids.length) + " 张图没传上去，这条按纯文字发");
+      }
     }
   }
   if (withFile) {

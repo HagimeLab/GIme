@@ -300,11 +300,17 @@ public final class DeepSeekWeb {
      */
     private HttpNet.Conn open(String path, String method, String accept, String referer,
                               byte[] body, Map<String, String> extra) throws Exception {
+        return open(path, method, accept, referer, body, extra, null);
+    }
+
+    private HttpNet.Conn open(String path, String method, String accept, String referer,
+                              byte[] body, Map<String, String> extra,
+                              HttpNet.Progress progress) throws Exception {
         boolean post = !"GET".equalsIgnoreCase(method);
         Map<String, String> h = headers(accept, referer, post);
         if (extra != null) h.putAll(extra);
         HttpNet.Conn c = HttpNet.open(new HttpNet.Request(ORIGIN + path, method, h, body,
-                CONNECT_TIMEOUT, READ_TIMEOUT));
+                CONNECT_TIMEOUT, READ_TIMEOUT, progress));
         active = c;
         return c;
     }
@@ -579,6 +585,15 @@ public final class DeepSeekWeb {
      */
     public JSONObject uploadBytes(byte[] data, String fileName, String mime,
                                   boolean thinking, String modelType) throws Exception {
+        return uploadBytes(data, fileName, mime, thinking, modelType, null);
+    }
+
+    /**
+     * @param progress 上传进度（可为 null）：页面拿它把缩略图从上到下由模糊变清晰
+     */
+    public JSONObject uploadBytes(byte[] data, String fileName, String mime,
+                                  boolean thinking, String modelType,
+                                  HttpNet.Progress progress) throws Exception {
         String boundary = "----Gime" + Long.toHexString(System.currentTimeMillis());
         ByteArrayOutputStream body = new ByteArrayOutputStream();
         String head = "--" + boundary + "\r\n"
@@ -595,7 +610,7 @@ public final class DeepSeekWeb {
         extra.put("x-model-type", modelType == null || modelType.isEmpty() ? "default" : modelType);
         extra.put("x-file-size", String.valueOf(data.length));
 
-        HttpNet.Conn c = open(UPLOAD_PATH, "POST", "*/*", ORIGIN + "/", body.toByteArray(), extra);
+        HttpNet.Conn c = open(UPLOAD_PATH, "POST", "*/*", ORIGIN + "/", body.toByteArray(), extra, progress);
         try {
             harvest(c);
             String raw = readAll(c.body());

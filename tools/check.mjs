@@ -3249,7 +3249,38 @@ ok("完成请求带 ref_file_ids（登录通道、只第一轮）",
    upWebSrc.indexOf('body.put("ref_file_ids", refs)') >= 0
    && upBridgeSrc.indexOf("refFileIds") >= 0
    && /if \(round === 0 && isBuiltin && imgIds && imgIds\.length\) body\.refFileIds = imgIds;/.test(html)
-   && /if \(cfg\.builtin\) \{\s*\n\s*if \(!silent\) toast\("正在上传/.test(html));
+   && /if \(cfg\.builtin\) \{\s*\n\s*var ids = \[\];/.test(html));
+/* 一放进输入区就开传：上传中的缩略图是模糊的，传完变清晰；多选是一张一张来 */
+ok("图一放进输入区就开传，清晰从上往下露出来当进度",
+   /state: "up",/.test(html) && /p: 0,/.test(html)
+   && /if \(added\) \{ toast\("已放入 "/.test(html) && /function chatImagePump\(\)/.test(html)
+   && /\.chat-imgs \.ci \.f \{ -webkit-mask-image: linear-gradient\(to bottom/.test(cssText)
+   && /\.chat-imgs \.ci \.b \{ filter: blur\(4px\)/.test(cssText));
+/* 进度必须是真字节数：HTTP 层分块写 / Cronet Provider 每读一段回报，不是定时器估的 */
+const httpSrc2 = fs.readFileSync(path.join(ROOT, "app/src/main/java/com/fan/shuatiku/HttpNet.java"), "utf8");
+const cronetSrc2 = fs.readFileSync(path.join(ROOT, "app/src/main/java/com/fan/shuatiku/CronetNet.java"), "utf8");
+ok("上传进度来自字节数（两条传输层都回报）",
+   httpSrc2.indexOf("req.progress.onProgress(off + n, req.body.length)") >= 0
+   && cronetSrc2.indexOf("pg.onProgress(pos, data.length)") >= 0
+   && mainSrc.indexOf("window.onChatImageProg") >= 0
+   && /window\.onChatImageProg = function \(idx, pct\)/.test(html));
+/* 踩过一次：getLength 给了定长，Cronet 就按非分块走，onReadSucceeded(true) 直接抛
+   「Non-chunked upload can't have last chunk」—— 上传必失败。 */
+ok("定长上传不许报 lastChunk", /sink\.onReadSucceeded\(false\)/.test(cronetSrc2)
+   && cronetSrc2.indexOf("onReadSucceeded(pos >= data.length)") < 0);
+ok("多选一张一张传（先后），上一张回来才走下一张",
+   /_imgUpBusy = true;[\s\S]{0,160}Android\.uploadChatImage\(chatImages\[i\]\.idx\);/.test(html)
+   && /window\.onChatImageUp = function \(idx, id, err\) \{\s*\n\s*_imgUpBusy = false;/.test(html)
+   && /renderChatImages\(\);\s*\n\s*chatImagePump\(\);/.test(html));
+/* 上传中不许发（会缺图），但允许撤图：× 按钮不跟着禁用 */
+ok("上传中发送被拦住，按钮变「上传中」并禁用",
+   /if \(chatAnyImgUp\(\)\) \{ toast\("图片还在上传，等它变清晰再发"\); return; \}/.test(html)
+   && /var up = !chatBusy && chatAnyImgUp\(\);/.test(html)
+   && /send\.disabled = up;/.test(html)
+   && /send\.textContent = chatBusy \? "停止" : \(up \? "上传中" : "发送"\);/.test(html));
+ok("撤图不受上传限制（× 一直在）", /onclick="chatImageDrop\(/.test(html)
+   && /function chatImageDrop\(i\) \{\s*\n\s*chatImages\.splice\(i, 1\);/.test(html)
+   && !/chatImageDrop[^;]{0,80}disabled/.test(html));
 
 /* ---------- 29e. 题库名上限：超长先改名，不静默截断 ---------- */
 section("[29e] 题库名上限：超长先改名，不静默截断");

@@ -553,9 +553,20 @@ button.rec:active { opacity: .62; }
    WebView 80 上不用 flex gap，靠 -4px 外边距配 4px 子边距铺间距。 */
 .chat-imgs { display: flex; flex-wrap: wrap; margin: 0 2px 2px -4px; }
 .chat-imgs[hidden] { display: none; }
-.chat-imgs .ci { position: relative; display: block; margin: 0 0 4px 4px; }
-.chat-imgs .ci img { display: block; width: 56px; height: 56px; object-fit: cover;
+.chat-imgs .ci { position: relative; display: block; width: 56px; height: 56px; margin: 0 0 4px 4px; }
+.chat-imgs .ci img { position: absolute; left: 0; top: 0; width: 56px; height: 56px; object-fit: cover;
                      border-radius: 10px; border: 1.5px solid var(--line); background: var(--raise); }
+/* 下层始终模糊；上层清晰，按 --p 从上往下露出来 —— 露到哪儿就是传到哪儿 */
+.chat-imgs .ci .b { filter: blur(4px); opacity: .7; }
+.chat-imgs .ci .f { -webkit-mask-image: linear-gradient(to bottom, #000 calc(var(--p, 0%) - 10%), rgba(0,0,0,0) var(--p, 0%));
+                    mask-image: linear-gradient(to bottom, #000 calc(var(--p, 0%) - 10%), rgba(0,0,0,0) var(--p, 0%)); }
+.chat-imgs .ci.ok .b { display: none; }
+.chat-imgs .ci.ok .f { -webkit-mask-image: none; mask-image: none; }
+.chat-imgs .ci.err .f { display: none; }
+.chat-imgs .ci.err .b { border-color: #D14343; opacity: .55; }
+.chat-imgs .ci-err { position: absolute; left: 50%; top: 50%; margin: -10px 0 0 -10px;
+                     width: 20px; height: 20px; border-radius: 50%; background: #D14343; color: #fff;
+                     font-style: normal; font-size: 13px; line-height: 20px; text-align: center; }
 .chat-imgs .cix { position: absolute; top: -6px; right: -6px; width: 22px; height: 22px; padding: 0;
                   border-radius: 50%; border: none; background: var(--ink); color: var(--paper);
                   font-size: 13px; line-height: 22px; text-align: center; }

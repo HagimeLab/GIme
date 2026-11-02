@@ -34,16 +34,29 @@ public final class HttpNet {
         public final byte[] body;
         public final int connectTimeoutMs;
         public final int readTimeoutMs;
+        /** 上传进度（可为 null）：只有上传大文件（图片）才需要。 */
+        public final Progress progress;
 
         public Request(String url, String method, Map<String, String> headers, byte[] body,
                        int connectTimeoutMs, int readTimeoutMs) {
+            this(url, method, headers, body, connectTimeoutMs, readTimeoutMs, null);
+        }
+
+        public Request(String url, String method, Map<String, String> headers, byte[] body,
+                       int connectTimeoutMs, int readTimeoutMs, Progress progress) {
             this.url = url;
             this.method = method == null ? "GET" : method;
             this.headers = headers == null ? new LinkedHashMap<String, String>() : headers;
             this.body = body;
             this.connectTimeoutMs = connectTimeoutMs;
             this.readTimeoutMs = readTimeoutMs;
+            this.progress = progress;
         }
+    }
+
+    /** 上传进度：已写 / 总字节。回调在写 body 的线程上跑，别在里面做重活。 */
+    public interface Progress {
+        void onProgress(long done, long total);
     }
 
     public interface Conn extends Closeable {
@@ -91,7 +104,16 @@ public final class HttpNet {
             c.setDoOutput(true);
             c.setFixedLengthStreamingMode(req.body.length);
             OutputStream os = c.getOutputStream();
-            try { os.write(req.body); } finally { os.close(); }
+            try {
+                /* 分块写：上传图片时要把「已经出去多少」报上去，页面拿它做进度显示 */
+                final int step = 32 * 1024;
+                for (int off = 0; off < req.body.length; off += step) {
+                    int n = Math.min(step, req.body.length - off);
+                    os.write(req.body, off, n);
+                    if (req.progress != null) req.progress.onProgress(off + n, req.body.length);
+                }
+                os.flush();
+            } finally { os.close(); }
         }
         int code = c.getResponseCode();
         Map<String, List<String>> hdrs = new LinkedHashMap<String, List<String>>();

@@ -450,9 +450,12 @@ public class MainActivity extends Activity {
             @Override
             public void run() {
                 JSONArray out = new JSONArray();
-                for (Uri u : list) {
-                    JSONObject o = thumbOf(u);
-                    if (o != null) out.put(o);
+                for (int k = 0; k < list.size(); k++) {
+                    JSONObject o = thumbOf(list.get(k));
+                    if (o == null) continue;
+                    /* idx 是这张图在 pickedImageUris 里的位置：页面之后按它来要上传 */
+                    try { o.put("idx", k); } catch (Exception ignored) { }
+                    out.put(o);
                 }
                 js("window.onChatImages&&window.onChatImages(" + quote(out.toString()) + ")");
             }
@@ -461,7 +464,7 @@ public class MainActivity extends Activity {
 
     /* 上传用的是压缩后的图（最长边 1600、JPEG 85）：网页版移动端自己也会压，
        原图动辄几 MB，不值得整张搬。文件名必须带图片扩展名——上游按扩展名判类型。 */
-    private JSONObject uploadOne(Uri uri) throws Exception {
+    private JSONObject uploadOne(Uri uri, final int idx) throws Exception {
         BitmapFactory.Options probe = new BitmapFactory.Options();
         probe.inJustDecodeBounds = true;
         InputStream in0 = getContentResolver().openInputStream(uri);
@@ -496,7 +499,22 @@ public class MainActivity extends Activity {
             nm = nm + ".jpg";
         }
         if (dsBridge == null) throw new Exception("登录通道还没准备好");
-        String id = dsBridge.uploadImage(bos.toByteArray(), nm, "image/jpeg");
+        /* 上传进度往页面报：最多 99%，100% 由「解析完成」那条回调给（图从上到下变清晰） */
+        final long[] lastPct = { -10 };
+        final long[] lastAt = { 0 };
+        HttpNet.Progress prog = new HttpNet.Progress() {
+            @Override
+            public void onProgress(long done, long total) {
+                if (total <= 0) return;
+                int pct = (int) Math.min(99, Math.max(1, done * 100 / total));
+                long now = System.currentTimeMillis();
+                if (pct < 100 && pct - lastPct[0] < 4 && now - lastAt[0] < 150) return;
+                lastPct[0] = pct;
+                lastAt[0] = now;
+                js("window.onChatImageProg&&window.onChatImageProg(" + idx + "," + pct + ")");
+            }
+        };
+        String id = dsBridge.uploadImage(bos.toByteArray(), nm, "image/jpeg", prog);
         JSONObject o = new JSONObject();
         o.put("name", nm);
         o.put("id", id);
@@ -1444,7 +1462,7 @@ public class MainActivity extends Activity {
             });
         }
 
-        /** 大肥鱼的图片附件：相册多选。只回缩略图给页面摆着看，原图不读、不上行。 */
+        /** 大肥鱼的图片附件：相册多选。先回缩略图（界面摆着看），原图在页面按张要上传时才读、才压。 */
         @JavascriptInterface
         public void pickChatImages() {
             runOnUiThread(new Runnable() {
@@ -1463,35 +1481,29 @@ public class MainActivity extends Activity {
             });
         }
 
-        /** 把这批图传到网页版，回一串 file id；页面拿到后塞进完成请求的 ref_file_ids。 */
+        /** 页面按 idx 一张一张来要：传完回 onChatImageUp(idx, id, err)。一张一回调才能显示每张的进度。 */
         @JavascriptInterface
-        public void uploadChatImages() {
-            final java.util.ArrayList<Uri> uris;
+        public void uploadChatImage(final int idx) {
+            final Uri uri;
             synchronized (pickedImageUris) {
-                uris = new java.util.ArrayList<Uri>(pickedImageUris);
+                uri = (idx >= 0 && idx < pickedImageUris.size()) ? pickedImageUris.get(idx) : null;
             }
-            if (uris.isEmpty()) {
-                js("window.onChatImageIds&&window.onChatImageIds(\"[]\",\"没有可上传的图片\")");
+            if (uri == null) {
+                js("window.onChatImageUp&&window.onChatImageUp(" + idx + ",\"\",\"这张图不在了，重选一次\")");
                 return;
             }
             new Thread(new Runnable() {
                 @Override
                 public void run() {
-                    JSONArray ok = new JSONArray();
-                    String err = "";
-                    for (int i = 0; i < uris.size() && i < 6; i++) {
-                        try {
-                            JSONObject one = uploadOne(uris.get(i));
-                            if (one != null) ok.put(one);
-                        } catch (Exception e) {
-                            /* 第一张就失败就别一张张慢慢磨：整批按失败处理，页面回退到「只带文件名」 */
-                            err = readable(e);
-                            ok = new JSONArray();
-                            break;
-                        }
+                    String id = "", err = "";
+                    try {
+                        JSONObject o = uploadOne(uri, idx);
+                        id = o.optString("id", "");
+                    } catch (Exception e) {
+                        err = readable(e);
                     }
-                    js("window.onChatImageIds&&window.onChatImageIds(" + quote(ok.toString())
-                            + "," + quote(err) + ")");
+                    js("window.onChatImageUp&&window.onChatImageUp(" + idx + ","
+                            + quote(id) + "," + quote(err) + ")");
                 }
             }).start();
         }
@@ -1512,7 +1524,7 @@ public class MainActivity extends Activity {
                 public void run() {
                     String out;
                     try {
-                        JSONObject o = uploadOne(Uri.fromFile(new File(file)));
+                        JSONObject o = uploadOne(Uri.fromFile(new File(file)), 0);
                         out = o.toString();
                     } catch (Exception e) {
                         out = "{\"error\":\"" + readable(e).replace("\"", "'") + "\"}";

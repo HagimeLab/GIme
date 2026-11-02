@@ -107,7 +107,7 @@
 | 41 | `exportTrace()` | — | `String` | L1 | — | 把最近 20 次 Agent 运行的三级 trace + 指标（脱敏）写成 JSON 到系统「下载」目录 |
 | 42 | `memoryCall(op, json)` | `op`、`json` | `String`(JSON) | L1 | — | 记忆库：snapshot / save / clear；长期画像与会话摘要落在 filesDir/memory/memory.json |
 | 43 | `pickChatImages()` | — | `void`（回调带缩略图清单） | L2 | — | 拉起相册多选（大肥鱼图片附件）：只回缩略图，原图不上行 |
-| 44 | `uploadChatImages()` | — | `void`（回调带 file id 清单） | L2 | — | 把相册选的图传到 DeepSeek 网页版换 file id，供完成请求的 ref_file_ids 引用 |
+| 44 | `uploadChatImage(idx)` | `idx` | `void`（回 `window.onChatImageUp`） | L2 | **idx 越界即拒** | 把相册选的第 idx 张图传到 DeepSeek 网页版换 file id（一张一回调，页面据此显示上传进度） |
 | 45 | `dsUploadProbe(path)` | `path` | `void`（回 `window.onDsUploadProbe`） | L2 | **只认 /sdcard/ 与 /data/local/tmp/** | 仅 debug 生效；把指定图片按图片附件上传一次，回报 file id（验网页版上传链路用） |
 
 ## P0 加的闸门（`BridgeGuard`）
