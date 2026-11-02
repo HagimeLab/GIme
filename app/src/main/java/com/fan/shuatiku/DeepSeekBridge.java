@@ -277,6 +277,35 @@ public final class DeepSeekBridge {
     }
 
     /**
+     * 上传一张图片，返回网页版的 file id（阻塞，调用方放后台线程）。
+     *
+     * <p>上传完还要等解析：网页端的文件是异步解析的，只有 {@code SUCCESS} 才能在完成请求里
+     * 被 {@code ref_file_ids} 引用。PENDING/PARSING 每 1.5s 看一次，最多等 20s。
+     */
+    String uploadImage(byte[] data, String name, String mime) throws Exception {
+        String token = token();
+        if (token.isEmpty()) {
+            throw new DeepSeekWeb.DeepSeekException(40003, "还没登录 DeepSeek，请先在设置里用手机号登录");
+        }
+        DeepSeekWeb web = openWeb(token);
+        throttle.acquire(null);
+        JSONObject biz = web.uploadBytes(data, name, mime, true, "default");
+        String id = biz.optString("id", "");
+        if (id.isEmpty()) throw new DeepSeekWeb.DeepSeekException(-1, "上传成功但没拿到 file id");
+        long deadline = System.currentTimeMillis() + 20000;
+        String last = biz.optString("status", "");
+        while (System.currentTimeMillis() < deadline) {
+            if ("SUCCESS".equals(last)) return id;
+            if (!last.isEmpty() && !"PENDING".equals(last) && !"PARSING".equals(last)) {
+                throw new DeepSeekWeb.DeepSeekException(-1, "图片解析失败（" + last + "）");
+            }
+            Thread.sleep(1500);
+            last = web.fileStatus(id);
+        }
+        throw new DeepSeekWeb.DeepSeekException(-1, "图片解析超时，换一张再试");
+    }
+
+    /**
      * 页面删掉一个会话时，把网页侧那条会话也删掉。
      *
      * <p>映射先移除再发请求：本地删除不该等网络；删失败就留在网页侧，下一次不会再找它。
@@ -476,6 +505,18 @@ public final class DeepSeekBridge {
         if (messages == null) messages = new JSONArray();
         JSONArray tools = req.optJSONArray("tools");
         boolean search = req.optBoolean("search", true);
+        /* 带图的一轮：页面先把图传上来拿到 id，这里原样转给完成请求。
+           只有解析状态是 SUCCESS 的 id 才有效，页面侧已经替我们等过了。 */
+        java.util.List<String> refFileIds = null;
+        JSONArray refs = req.optJSONArray("refFileIds");
+        if (refs != null && refs.length() > 0) {
+            refFileIds = new java.util.ArrayList<String>();
+            for (int i = 0; i < refs.length(); i++) {
+                String one = refs.optString(i, "");
+                if (!one.isEmpty()) refFileIds.add(one);
+            }
+            if (refFileIds.isEmpty()) refFileIds = null;
+        }
 
         // 页面传的 user 当会话键；没有就退化成一个固定值（单用户 App 足够）
         String convKey = req.optString("user", "");
@@ -538,7 +579,7 @@ public final class DeepSeekBridge {
                 content.setLength(0);
                 reasoning.setLength(0);
                 throttle.acquire(ms -> sink.toJs("window.onChatThrottle(" + quote(id) + "," + ms + ")"));
-                web.stream(prompt, sid, parent, true, search, new DeepSeekWeb.Listener() {
+                web.stream(prompt, sid, parent, true, search, refFileIds, new DeepSeekWeb.Listener() {
                     @Override public void onThinking(String t) {
                         reasoning.append(t);
                         thinkOut.feed(t);

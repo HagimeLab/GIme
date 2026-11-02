@@ -52,6 +52,8 @@ public class MainActivity extends Activity {
     private static final int REQ_NOTIFY = 4713;
     /** 大肥鱼的图片附件：相册多选，只回缩略图（图片内容不上行）。 */
     private static final int PICK_IMAGES = 4714;
+    /** 上一次从相册选的图：上传拿 file id 时要回来读原图（页面只有缩略图）。 */
+    private final java.util.ArrayList<Uri> pickedImageUris = new java.util.ArrayList<Uri>();
     /** 导入格式举例：assets 里那一份是唯一来源，页面看的和下载的都是它。 */
     private static final String SAMPLE_ASSET = "import-sample.md";
     private static final String SAMPLE_NAME = "GIme导入格式举例.md";
@@ -442,6 +444,8 @@ public class MainActivity extends Activity {
             if (one != null) list.add(one);
         }
         if (list.isEmpty()) return;
+        pickedImageUris.clear();
+        pickedImageUris.addAll(list);
         new Thread(new Runnable() {
             @Override
             public void run() {
@@ -453,6 +457,50 @@ public class MainActivity extends Activity {
                 js("window.onChatImages&&window.onChatImages(" + quote(out.toString()) + ")");
             }
         }).start();
+    }
+
+    /* 上传用的是压缩后的图（最长边 1600、JPEG 85）：网页版移动端自己也会压，
+       原图动辄几 MB，不值得整张搬。文件名必须带图片扩展名——上游按扩展名判类型。 */
+    private JSONObject uploadOne(Uri uri) throws Exception {
+        BitmapFactory.Options probe = new BitmapFactory.Options();
+        probe.inJustDecodeBounds = true;
+        InputStream in0 = getContentResolver().openInputStream(uri);
+        if (in0 == null) throw new Exception("读不到这张图");
+        try {
+            BitmapFactory.decodeStream(in0, null, probe);
+        } finally {
+            in0.close();
+        }
+        int side = Math.max(probe.outWidth, probe.outHeight);
+        int sample = 1;
+        while (side / sample > 1600) sample *= 2;
+        BitmapFactory.Options opt = new BitmapFactory.Options();
+        opt.inSampleSize = sample;
+        InputStream in = getContentResolver().openInputStream(uri);
+        if (in == null) throw new Exception("读不到这张图");
+        Bitmap bm;
+        try {
+            bm = BitmapFactory.decodeStream(in, null, opt);
+        } finally {
+            in.close();
+        }
+        if (bm == null) throw new Exception("这张图解不出来");
+        ByteArrayOutputStream bos = new ByteArrayOutputStream();
+        bm.compress(Bitmap.CompressFormat.JPEG, 85, bos);
+        bm.recycle();
+        String nm = displayName(uri);
+        if (nm == null || nm.isEmpty()) nm = "图片";
+        String lower = nm.toLowerCase();
+        if (!(lower.endsWith(".jpg") || lower.endsWith(".jpeg") || lower.endsWith(".png")
+                || lower.endsWith(".webp") || lower.endsWith(".bmp") || lower.endsWith(".gif"))) {
+            nm = nm + ".jpg";
+        }
+        if (dsBridge == null) throw new Exception("登录通道还没准备好");
+        String id = dsBridge.uploadImage(bos.toByteArray(), nm, "image/jpeg");
+        JSONObject o = new JSONObject();
+        o.put("name", nm);
+        o.put("id", id);
+        return o;
     }
 
     private JSONObject thumbOf(Uri uri) {
@@ -1413,6 +1461,65 @@ public class MainActivity extends Activity {
                     }
                 }
             });
+        }
+
+        /** 把这批图传到网页版，回一串 file id；页面拿到后塞进完成请求的 ref_file_ids。 */
+        @JavascriptInterface
+        public void uploadChatImages() {
+            final java.util.ArrayList<Uri> uris;
+            synchronized (pickedImageUris) {
+                uris = new java.util.ArrayList<Uri>(pickedImageUris);
+            }
+            if (uris.isEmpty()) {
+                js("window.onChatImageIds&&window.onChatImageIds(\"[]\",\"没有可上传的图片\")");
+                return;
+            }
+            new Thread(new Runnable() {
+                @Override
+                public void run() {
+                    JSONArray ok = new JSONArray();
+                    String err = "";
+                    for (int i = 0; i < uris.size() && i < 6; i++) {
+                        try {
+                            JSONObject one = uploadOne(uris.get(i));
+                            if (one != null) ok.put(one);
+                        } catch (Exception e) {
+                            /* 第一张就失败就别一张张慢慢磨：整批按失败处理，页面回退到「只带文件名」 */
+                            err = readable(e);
+                            ok = new JSONArray();
+                            break;
+                        }
+                    }
+                    js("window.onChatImageIds&&window.onChatImageIds(" + quote(ok.toString())
+                            + "," + quote(err) + ")");
+                }
+            }).start();
+        }
+
+        /** 仅 debug：把指定的图片文件按图片附件上传一次，回报 file id —— 用来验网页版上传链路。 */
+        @JavascriptInterface
+        public void dsUploadProbe(final String path) {
+            if (!BuildConfig.DEBUG) return;
+            /* 只认这两个调试目录：别让它变成任意文件读取的口子 */
+            String p = path == null ? "" : path.trim();
+            if (!p.startsWith("/sdcard/") && !p.startsWith("/data/local/tmp/")) {
+                android.util.Log.w("GImeBridge", "dsUploadProbe 拒绝：" + path);
+                return;
+            }
+            final String file = p;
+            new Thread(new Runnable() {
+                @Override
+                public void run() {
+                    String out;
+                    try {
+                        JSONObject o = uploadOne(Uri.fromFile(new File(file)));
+                        out = o.toString();
+                    } catch (Exception e) {
+                        out = "{\"error\":\"" + readable(e).replace("\"", "'") + "\"}";
+                    }
+                    js("window.onDsUploadProbe&&window.onDsUploadProbe(" + quote(out) + ")");
+                }
+            }).start();
         }
 
         /** 已导入的题库原文，启动时一次性读回。 */

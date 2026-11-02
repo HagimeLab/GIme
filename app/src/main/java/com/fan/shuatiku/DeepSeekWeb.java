@@ -524,7 +524,15 @@ public final class DeepSeekWeb {
      * @param referer 真实页面取挑战时的 Referer：首轮新会话是根路径，后续轮是会话路径
      */
     String powHeader(String referer) throws Exception {
-        String raw = postJson(POW_CHALLENGE_PATH, "{\"target_path\":\"" + CHAT_PATH + "\"}", referer);
+        return powHeader(referer, CHAT_PATH);
+    }
+
+    /**
+     * @param targetPath 挑战与载荷里的 target_path。上传文件用的是 /api/v0/file/upload_file：
+     *                   网页端按「场景」各算各的（{@code cZ("upload_file")}），拿完成请求的码去上传会被拒。
+     */
+    String powHeader(String referer, String targetPath) throws Exception {
+        String raw = postJson(POW_CHALLENGE_PATH, "{\"target_path\":\"" + targetPath + "\"}", referer);
         JSONObject j = new JSONObject(raw);
         if (j.optInt("code", -1) != 0) {
             throw new DeepSeekException(j.optInt("code", -1), j.optString("msg", "取挑战失败"));
@@ -554,9 +562,77 @@ public final class DeepSeekWeb {
         payload.put("salt", salt);
         payload.put("answer", answer);
         payload.put("signature", signature);
-        payload.put("target_path", CHAT_PATH);
+        payload.put("target_path", targetPath);
         byte[] raw2 = payload.toString().getBytes(StandardCharsets.UTF_8);
         return base64(raw2);
+    }
+
+    private static final String UPLOAD_PATH = "/api/v0/file/upload_file";
+    private static final String FETCH_FILES_PATH = "/api/v0/file/fetch_files";
+
+    /**
+     * 上传一个文件（图片走的就是这条），返回 {@code biz_data}——里面有 {@code id} 与 {@code status}。
+     *
+     * <p>网页端形态：multipart 表单、字段名 {@code file}，外加三枚自定义头
+     * {@code x-thinking-enabled / x-model-type / x-file-size}；
+     * PoW 必须按 {@code /api/v0/file/upload_file} 这个 target_path 单独算（PoW 一次性）。
+     */
+    public JSONObject uploadBytes(byte[] data, String fileName, String mime,
+                                  boolean thinking, String modelType) throws Exception {
+        String boundary = "----Gime" + Long.toHexString(System.currentTimeMillis());
+        ByteArrayOutputStream body = new ByteArrayOutputStream();
+        String head = "--" + boundary + "\r\n"
+                + "Content-Disposition: form-data; name=\"file\"; filename=\"" + fileName + "\"\r\n"
+                + "Content-Type: " + mime + "\r\n\r\n";
+        body.write(head.getBytes(StandardCharsets.UTF_8));
+        body.write(data);
+        body.write(("\r\n--" + boundary + "--\r\n").getBytes(StandardCharsets.UTF_8));
+
+        Map<String, String> extra = new HashMap<String, String>();
+        extra.put("Content-Type", "multipart/form-data; boundary=" + boundary);
+        extra.put("x-ds-pow-response", powHeader(ORIGIN + "/", UPLOAD_PATH));
+        extra.put("x-thinking-enabled", thinking ? "1" : "0");
+        extra.put("x-model-type", modelType == null || modelType.isEmpty() ? "default" : modelType);
+        extra.put("x-file-size", String.valueOf(data.length));
+
+        HttpNet.Conn c = open(UPLOAD_PATH, "POST", "*/*", ORIGIN + "/", body.toByteArray(), extra);
+        try {
+            harvest(c);
+            String raw = readAll(c.body());
+            JSONObject j = new JSONObject(raw);
+            if (j.optInt("code", 0) != 0) throw businessError(raw, j.optInt("code"));
+            JSONObject d = j.optJSONObject("data");
+            if (d == null) throw new DeepSeekException(-1, "上传返回里没有 data");
+            if (d.optInt("biz_code", 0) != 0) {
+                throw new DeepSeekException(d.optInt("biz_code", 0), d.optString("biz_msg", "上传失败"));
+            }
+            JSONObject biz = d.optJSONObject("biz_data");
+            if (biz == null) throw new DeepSeekException(-1, "上传返回里没有 biz_data");
+            return biz;
+        } finally {
+            c.close();
+        }
+    }
+
+    /**
+     * 文件的解析进度：{@code PENDING / PARSING / SUCCESS / FAILED / CONTENT_TOO_LONG …}。
+     * 只有 SUCCESS 才能在完成请求里被 {@code ref_file_ids} 引用。
+     */
+    public String fileStatus(String fileId) throws Exception {
+        String q = java.net.URLEncoder.encode(fileId, "UTF-8");
+        HttpNet.Conn c = open(FETCH_FILES_PATH + "?file_ids=" + q, "GET", "*/*", ORIGIN + "/", null, null);
+        try {
+            harvest(c);
+            JSONObject j = new JSONObject(readAll(c.body()));
+            JSONObject d = j.optJSONObject("data");
+            JSONObject biz = d == null ? null : d.optJSONObject("biz_data");
+            JSONArray files = biz == null ? null : biz.optJSONArray("files");
+            if (files == null || files.length() == 0) return "";
+            JSONObject f = files.optJSONObject(0);
+            return f == null ? "" : f.optString("status", "");
+        } finally {
+            c.close();
+        }
     }
 
     /**
@@ -700,13 +776,29 @@ public final class DeepSeekWeb {
     static JSONObject completionBody(String sessionId, Long parentMessageId,
                                      String prompt, boolean thinking, boolean search)
             throws org.json.JSONException {
+        return completionBody(sessionId, parentMessageId, prompt, thinking, search, null);
+    }
+
+    /**
+     * @param refFileIds 引用已上传并解析完成的文件（图片附件走的就是这条）；null/空 = 不带附件
+     */
+    static JSONObject completionBody(String sessionId, Long parentMessageId,
+                                     String prompt, boolean thinking, boolean search,
+                                     java.util.List<String> refFileIds)
+            throws org.json.JSONException {
         JSONObject body = new JSONObject();
         body.put("chat_session_id", sessionId);
         body.put("parent_message_id", parentMessageId == null
                 ? JSONObject.NULL : parentMessageId);
         body.put("model_type", "default");
         body.put("prompt", prompt);
-        body.put("ref_file_ids", new JSONArray());
+        JSONArray refs = new JSONArray();
+        if (refFileIds != null) {
+            for (String one : refFileIds) {
+                if (one != null && !one.isEmpty()) refs.put(one);
+            }
+        }
+        body.put("ref_file_ids", refs);
         body.put("thinking_enabled", thinking);
         body.put("search_enabled", search);
         body.put("action", JSONObject.NULL);
@@ -730,6 +822,13 @@ public final class DeepSeekWeb {
 
     public void stream(String prompt, String sessionId, Long parentMessageId,
                        boolean thinking, boolean search, Listener listener) throws Exception {
+        stream(prompt, sessionId, parentMessageId, thinking, search, null, listener);
+    }
+
+    /** @param refFileIds 带图的轮次：已上传并解析完成的文件 id（null = 不带附件） */
+    public void stream(String prompt, String sessionId, Long parentMessageId,
+                       boolean thinking, boolean search, java.util.List<String> refFileIds,
+                       Listener listener) throws Exception {
         // 先确保两枚 HIF 令牌可用（过期才拉，正常是内存命中）
         ensureHif();
         /* 2026-10-21 实测真实页面：
@@ -738,7 +837,7 @@ public final class DeepSeekWeb {
         String sessionUrl = ORIGIN + "/a/chat/s/" + sessionId;
         String pow = powHeader(parentMessageId == null ? ORIGIN + "/" : sessionUrl);
 
-        JSONObject body = completionBody(sessionId, parentMessageId, prompt, thinking, search);
+        JSONObject body = completionBody(sessionId, parentMessageId, prompt, thinking, search, refFileIds);
 
         // 真实完成请求的 Accept 是 */*，服务端仍回 event-stream
         String leim = hifLeim, dliq = hifDliq;

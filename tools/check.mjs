@@ -3203,16 +3203,21 @@ ok("图片走相册多选桥，原生要求可多选", /function attachChatImage
    && /Android\.pickChatImages\(\)/.test(html)
    && /Intent\.EXTRA_ALLOW_MULTIPLE, true/.test(mainSrc)
    && /i\.setType\("image\/\*"\)/.test(mainSrc));
-ok("图片只回缩略图，原图不上行", /o\.put\("thumb", "data:image\/jpeg;base64,"/.test(mainSrc)
-   && /最长边 160px/.test(mainSrc));
-ok("上游只收到一行图片说明，且明说看不到像素", (() => {
-  const meta = W.chatImgMetaOf([{ name: "a.jpg" }, { name: "b.png" }]);
+ok("界面只拿缩略图（上传另走压缩后的图）", /o\.put\("thumb", "data:image\/jpeg;base64,"/.test(mainSrc)
+   && /最长边 160px/.test(mainSrc)
+   && /while \(side \/ sample > 1600\) sample \*= 2;/.test(mainSrc));
+ok("传上去之后才写图片说明，且让它直接看图", (() => {
+  const meta = W.chatImgMetaOf([{ name: "a.jpg" }, { name: "b.png" }], true);
   return meta.indexOf("a.jpg") >= 0 && meta.indexOf("b.png") >= 0
-      && meta.indexOf("2 张图片") >= 0 && meta.indexOf("看不到图片内容") >= 0;
+      && meta.indexOf("2 张图片") >= 0 && meta.indexOf("可以直接看图回答") >= 0;
 })());
+/* 没传上去就别写「看不到图」：那句话会留在上游会话历史里，后面真带图也还在复读（真机踩过） */
+ok("没传上去时一句话都不写（不污染上游会话）",
+   W.chatImgMetaOf([{ name: "a.jpg" }], false) === ""
+   && W.chatImgMetaOf([{ name: "a.jpg" }]) === "");
 ok("图片说明不并进文档口径（不能触发导入结算）",
    /if \(imgMeta\) messages\.push\(\{ role: "system", content: imgMeta \}\);/.test(html)
-   && /var imgMeta = chatImgMetaOf\(chatRunImgs\)/.test(html));
+   && /var imgMeta = chatImgMetaOf\(chatRunImgs, !!chatRunImgIds\)/.test(html));
 ok("只带图不写字也能发", /if \(!text && !chatImages\.length\) return;/.test(html));
 ok("图片最多 6 张，且只收 data:image 缩略图", (() => {
   W.chatImagesClear();
@@ -3228,6 +3233,23 @@ ok("图片最多 6 张，且只收 data:image 缩略图", (() => {
 ok("用户气泡里带缩略图", /class="ub-imgs"/.test(html) && /m\.imgs\[ii\]\.thumb/.test(html));
 ok("图片随消息记录、发完清空输入区", /if \(withImgs\) um\.imgs = withImgs;/.test(html)
    && /if \(withImgs\) \{\s*chatImages = \[\]; renderChatImages\(\);/.test(html));
+
+/* 网页版真能看到图：上传拿 file id → 完成请求带 ref_file_ids。
+   协议照网页 bundle 复刻（图片扩展名白名单 + /api/v0/file/upload_file + fetch_files 轮询）。 */
+const upWebSrc = fs.readFileSync(path.join(ROOT, "app/src/main/java/com/fan/shuatiku/DeepSeekWeb.java"), "utf8");
+const upBridgeSrc = fs.readFileSync(path.join(ROOT, "app/src/main/java/com/fan/shuatiku/DeepSeekBridge.java"), "utf8");
+ok("上传：multipart 字段 file + 按上传路径单独算 PoW + x-file-size",
+   upWebSrc.indexOf('UPLOAD_PATH = "/api/v0/file/upload_file"') >= 0
+   && upWebSrc.indexOf('name=\\"file\\"; filename=') >= 0
+   && upWebSrc.indexOf('powHeader(ORIGIN + "/", UPLOAD_PATH)') >= 0
+   && upWebSrc.indexOf("x-file-size") >= 0);
+ok("上传后等解析到 SUCCESS 才引用", upBridgeSrc.indexOf('"SUCCESS".equals(') >= 0
+   && upBridgeSrc.indexOf("web.fileStatus(") >= 0);
+ok("完成请求带 ref_file_ids（登录通道、只第一轮）",
+   upWebSrc.indexOf('body.put("ref_file_ids", refs)') >= 0
+   && upBridgeSrc.indexOf("refFileIds") >= 0
+   && /if \(round === 0 && isBuiltin && imgIds && imgIds\.length\) body\.refFileIds = imgIds;/.test(html)
+   && /if \(cfg\.builtin\) \{\s*\n\s*if \(!silent\) toast\("正在上传/.test(html));
 
 /* ---------- 29e. 题库名上限：超长先改名，不静默截断 ---------- */
 section("[29e] 题库名上限：超长先改名，不静默截断");

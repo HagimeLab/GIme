@@ -1874,6 +1874,39 @@ window.onChatImages = function (json) {
   if (added) toast("已放入 " + chatImages.length + " 张图，配一句话再发");
 };
 window.onChatImagesError = function (msg) { toast(msg || "选图失败"); };
+/* 网页版通道能把图真的送上去：原图（压缩后）传给原生 → 上传拿 file id → 完成请求里带 refFileIds。
+   这条路只有登录通道有；API Key 那条没有网页会话，只能退到「只带文件名」。 */
+var _imgUpDone = null;
+window.onChatImageIds = function (json, err) {
+  var fn = _imgUpDone;
+  _imgUpDone = null;
+  if (!fn) return;
+  var list = [];
+  try { list = JSON.parse(String(json == null ? "[]" : json)); } catch (e) { list = []; }
+  var ids = [];
+  for (var i = 0; i < list.length; i++) {
+    if (list[i] && list[i].id) ids.push(String(list[i].id));
+  }
+  fn(ids, String(err || ""));
+};
+function chatUploadImages(timeoutMs) {
+  return new Promise(function (resolve) {
+    if (!window.Android || !Android.uploadChatImages) {
+      resolve({ ids: [], err: "请在手机上使用这个功能" });
+      return;
+    }
+    var done = function (ids, err) { resolve({ ids: ids || [], err: err || "" }); };
+    _imgUpDone = done;
+    setTimeout(function () {
+      if (_imgUpDone === done) { _imgUpDone = null; done([], "上传超时"); }
+    }, timeoutMs || 45000);
+    try {
+      Android.uploadChatImages();
+    } catch (e) {
+      if (_imgUpDone === done) { _imgUpDone = null; done([], String(e)); }
+    }
+  });
+}
 function chatImageDrop(i) { chatImages.splice(i, 1); renderChatImages(); }
 function chatImagesClear() { chatImages = []; renderChatImages(); }
 function renderChatImages() {
@@ -1911,13 +1944,17 @@ function renderChatFile() {
 var chatRunDoc = null;
 /* 本轮随消息带出去的图片（只带名字）。像素不上行，所以只需要告诉模型「附了什么」。 */
 var chatRunImgs = null;
-function chatImgMetaOf(imgs) {
-  if (!imgs || !imgs.length) return "";
+/* 这一轮图片上传拿到的 file id：只有它非空，模型才真的看得到图 */
+var chatRunImgIds = null;
+function chatImgMetaOf(imgs, withIds) {
+  /* 没传上去就一句话都不说：写「你看不到图」进上游会话会一直挂在历史里，
+     后面真带上图的轮次它还在复读「我看不到」。失败只在本地说（toast）。 */
+  if (!imgs || !imgs.length || !withIds) return "";
   var names = [];
   for (var i = 0; i < imgs.length; i++) names.push(imgs[i].name || "图片");
   return "【图片附件】用户随这条消息发了 " + imgs.length + " 张图片：" + names.join("、") + "。\n" +
-    "你只能看到文件名，看不到图片内容（当前通道没有视觉能力）。不要描述、不要猜测、不要编造图里的内容；" +
-    "需要图里的信息时，直接请用户用文字打出来，或者用文件发过来。";
+    "图片已经随消息提供，可以直接看图回答：题目、选项、答案、手写批注、表格都算图里的内容。" +
+    "看不清或需要更大范围的信息时，请用户补拍或直接说。";
 }
 function chatDocOf(msgs) {
   for (var i = msgs.length - 1; i >= 0; i--) {
@@ -2212,6 +2249,13 @@ async function chatSendText(text, silent) {
   if (withImgs) {
     chatImages = []; renderChatImages();
     chatRunImgs = withImgs;
+    /* 登录通道才传得上去：页面把「选过哪几张」交给原生，原生压图 → 上传 → 等解析 → 回 file id */
+    if (cfg.builtin) {
+      if (!silent) toast("正在上传 " + withImgs.length + " 张图…");
+      var up = await chatUploadImages();
+      if (up.ids.length) chatRunImgIds = up.ids;
+      else if (up.err) toast("图片没传上去（" + up.err + "），这条按纯文字发");
+    }
   }
   if (withFile) {
     chatFile = null; renderChatFile();
@@ -2228,15 +2272,17 @@ async function chatSendText(text, silent) {
   }
   var attachMeta = chatFileMeta();
   /* 图片说明算一次就取走：这条消息只带这一轮，后面的追问不再重复 */
-  var imgMeta = chatImgMetaOf(chatRunImgs);
+  var imgMeta = chatImgMetaOf(chatRunImgs, !!chatRunImgIds);
+  var imgIds = chatRunImgIds;
   chatRunImgs = null;
+  chatRunImgIds = null;
   chatBusy = true;
   if (!silent) chatWork = { title: "", steps: [], count: 0 };
   chatRender();
   var ranOk = false;
   var runStatus = "ok";
   try {
-    await chatRun(cfg, attachMeta, imgMeta);
+    await chatRun(cfg, attachMeta, imgMeta, imgIds);
     ranOk = true;
   } catch (e) {
     runStatus = "error";
@@ -2308,7 +2354,7 @@ async function chatSendText(text, silent) {
     }
   }
 }
-async function chatRun(cfg, attachMeta, imgMeta) {
+async function chatRun(cfg, attachMeta, imgMeta, imgIds) {
   var ctx = chatQuestionCtx();
   /* 带附件这一次是「模型识别」：正文要上行、题目要分几批交回来，
      额度比闲聊宽——多给几轮工具调用，也让它一次能写完一批题。 */
@@ -2388,6 +2434,8 @@ async function chatRun(cfg, attachMeta, imgMeta) {
        不会带着上一段历史回答这一问。API Key 模式不加这个字段，别给第三方接口塞它没要的东西。 */
     if (isBuiltin && chatCurId) body.user = chatCurId;
     if (isBuiltin) body.search = webSearchOn();
+    /* 图片只挂第一轮：后续工具轮靠上游会话链就能看到，重复带上反而让上游重复解析 */
+    if (round === 0 && isBuiltin && imgIds && imgIds.length) body.refFileIds = imgIds;
     if (!lastRound) { body.tools = chatTools(); body.tool_choice = "auto"; }
     try {
       data = await chatRequestNet(cfg, body, onDelta, function () {

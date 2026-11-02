@@ -4,7 +4,7 @@
 
 这张表是 **P0 的导出面**：把现在暴露出去的东西一次列清楚，标明每个方法的入参形状与信任级别，供 P2 设计 AgentLoop 的工具注册时对照，也供后续安全收口时判断「哪些口子必须先收紧」。
 
-- 生成依据：`app/src/main/java/com/fan/shuatiku/MainActivity.java` 里全部 `@JavascriptInterface` 注解方法（当前 **43 个**）。
+- 生成依据：`app/src/main/java/com/fan/shuatiku/MainActivity.java` 里全部 `@JavascriptInterface` 注解方法（当前 **45 个**）。
 - P0 已加闸的方法在「P0 校验」一列写明；标 `—` 的表示本次未改动（见文末「P0 没做什么」）。
 - 校验规则集中在 `BridgeGuard.java`（纯逻辑、零 Android 依赖），回归用例在 `tools/BridgeTest.java`，由 `tools/check.cmd` 的 `js bridge guard` 段执行。
 
@@ -107,6 +107,8 @@
 | 41 | `exportTrace()` | — | `String` | L1 | — | 把最近 20 次 Agent 运行的三级 trace + 指标（脱敏）写成 JSON 到系统「下载」目录 |
 | 42 | `memoryCall(op, json)` | `op`、`json` | `String`(JSON) | L1 | — | 记忆库：snapshot / save / clear；长期画像与会话摘要落在 filesDir/memory/memory.json |
 | 43 | `pickChatImages()` | — | `void`（回调带缩略图清单） | L2 | — | 拉起相册多选（大肥鱼图片附件）：只回缩略图，原图不上行 |
+| 44 | `uploadChatImages()` | — | `void`（回调带 file id 清单） | L2 | — | 把相册选的图传到 DeepSeek 网页版换 file id，供完成请求的 ref_file_ids 引用 |
+| 45 | `dsUploadProbe(path)` | `path` | `void`（回 `window.onDsUploadProbe`） | L2 | **只认 /sdcard/ 与 /data/local/tmp/** | 仅 debug 生效；把指定图片按图片附件上传一次，回报 file id（验网页版上传链路用） |
 
 ## P0 加的闸门（`BridgeGuard`）
 
