@@ -1752,17 +1752,22 @@ var CHAT_LONG_INPUT = 60;
 var _bigInOpen = false;
 function chatAutoGrow(el) {
   if (!el) return;
+  /* 先把按钮和它的留白定下来再量高度：反过来的话，刚从长文本删回短文本
+     这一刻还带着 50px 留白，量出来多一行，留白撤了高度却留在上面。 */
+  chatSyncExpandBtn();
   var max = _bigInOpen ? 100000 : 96;
   el.style.height = "auto";
   el.style.height = Math.max(44, Math.min(el.scrollHeight, max)) + "px";
-  chatSyncExpandBtn();
 }
 function chatSyncExpandBtn() {
   var b = document.getElementById("chatExpand");
   var ta = document.getElementById("chatText");
+  var field = document.getElementById("chatField");
   if (!b) return;
   var n = ta ? String(ta.value || "").length : 0;
   b.hidden = _bigInOpen || n < CHAT_LONG_INPUT;
+  /* 按钮在的时候才给最后一行留出它的宽度 */
+  if (field) field.classList.toggle("with-more", !b.hidden);
 }
 function chatBigOpen() {
   var ta = document.getElementById("chatText"), body = document.getElementById("bigInBody");

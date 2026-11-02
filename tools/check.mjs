@@ -2781,6 +2781,12 @@ ok("浮窗无论从哪条路收，输入框都回原位",
 ok("浮窗占大屏、textarea 盖掉行内高度", /\.big-in \{[^}]*z-index: 998/.test(cssText)
    && /\.big-in-body textarea \{[^}]*height: auto !important/.test(cssText)
    && /\.chat-more\[hidden\] \{ display: none; \}/.test(cssText));
+/* 按钮只在长文本时露出来，正是字排到最右边的时候：留白跟着按钮走，不白占宽度 */
+ok("「展开」露出来时给最后一行留出按钮宽度",
+   /\.chat-field\.with-more textarea \{ padding-right: 50px; \}/.test(cssText)
+   && /field\.classList\.toggle\("with-more", !b\.hidden\)/.test(html)
+   /* 先定留白再量高度，否则刚从长文本删回来会多占一行 */
+   && /function chatAutoGrow\(el\) \{[\s\S]{0,200}chatSyncExpandBtn\(\);[\s\S]{0,120}el\.style\.height = "auto"/.test(html));
 /* 输入框下面那行只留「没配好」的提示：那一句免责声明按裁定删掉了，空行不占高 */
 ok("免责声明已从界面删掉，空提示行不占高",
    html.indexOf("内容由大肥鱼生成，可能有误") < 0

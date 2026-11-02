@@ -585,7 +585,10 @@ button.rec:active { opacity: .62; }
             background: transparent; color: var(--ink-2); display: flex; align-items: center; justify-content: center; }
 .chat-att:active { background: var(--raise); }
 .chat-field { position: relative; flex: 1; min-width: 0; display: flex; }
-.chat-field textarea { width: 100%; padding-right: 50px; }
+.chat-field textarea { width: 100%; }
+/* 「展开」那颗按钮露出来时才留 50px：绝对定位的按钮压在最后一行右下角，
+   字排满时正好会被它盖住。没露出来就别白占宽度（同特异度下后面的规则会盖掉前面那条）。 */
+.chat-field.with-more textarea { padding-right: 50px; }
 .chat-more { position: absolute; right: 2px; bottom: 0; width: 44px; height: 44px; padding: 0;
              border: none; border-radius: 50%; background: transparent; color: var(--ink-2);
              display: flex; align-items: center; justify-content: center; }
