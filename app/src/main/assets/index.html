@@ -171,9 +171,10 @@
   <div class="chat-list" id="chatList"></div>
   <div class="chat-hint" id="chatHint"></div>
   <div class="chat-foot" id="chatFoot">
+    <div class="chat-imgs" id="chatImgs" hidden></div>
     <div class="chat-file" id="chatFileChip" hidden></div>
     <div class="chat-in" id="chatIn">
-      <button class="chat-att" id="chatAttach" onclick="attachChatFile()" aria-label="添加附件">
+      <button class="chat-att" id="chatAttach" onclick="chatAttachSheet()" aria-label="添加附件（文件或图片）">
         <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M8.5 12.6l6-6a3 3 0 0 1 4.3 4.3l-7.6 7.6a5 5 0 0 1-7.1-7.1l7.2-7.2"/></svg>
       </button>
       <div class="chat-field">

@@ -3190,6 +3190,46 @@ W.chatPending = null;
 
 /* ---------- 29e. v1.1.1：题库名 30 字上限 ----------
    超长不静默截断：导入与附件都先拦下来改名；MCP 侧 agent 没有人能改名，直接报错。 */
+/* ---------- 29d-2. 附件入口：文件 / 图片两项 ---------- */
+section("[29d-2] 附件入口：文件 / 图片两项");
+
+ok("附件按钮先弹两项浮窗（上传文件 / 上传图片）", (() => {
+  const src = String(W.chatAttachSheet);
+  return /pick-opt/.test(src) && src.indexOf("上传文件") >= 0 && src.indexOf("上传图片") >= 0
+      && src.indexOf("openLayer") >= 0;
+})());
+ok("上传文件仍走原来的抽取链路", /if \(kind === "file"\) attachChatFile\(\);\s*\n\s*else attachChatImages\(\);/.test(html));
+ok("图片走相册多选桥，原生要求可多选", /function attachChatImages/.test(html)
+   && /Android\.pickChatImages\(\)/.test(html)
+   && /Intent\.EXTRA_ALLOW_MULTIPLE, true/.test(mainSrc)
+   && /i\.setType\("image\/\*"\)/.test(mainSrc));
+ok("图片只回缩略图，原图不上行", /o\.put\("thumb", "data:image\/jpeg;base64,"/.test(mainSrc)
+   && /最长边 160px/.test(mainSrc));
+ok("上游只收到一行图片说明，且明说看不到像素", (() => {
+  const meta = W.chatImgMetaOf([{ name: "a.jpg" }, { name: "b.png" }]);
+  return meta.indexOf("a.jpg") >= 0 && meta.indexOf("b.png") >= 0
+      && meta.indexOf("2 张图片") >= 0 && meta.indexOf("看不到图片内容") >= 0;
+})());
+ok("图片说明不并进文档口径（不能触发导入结算）",
+   /if \(imgMeta\) messages\.push\(\{ role: "system", content: imgMeta \}\);/.test(html)
+   && /var imgMeta = chatImgMetaOf\(chatRunImgs\)/.test(html));
+ok("只带图不写字也能发", /if \(!text && !chatImages\.length\) return;/.test(html));
+ok("图片最多 6 张，且只收 data:image 缩略图", (() => {
+  W.chatImagesClear();
+  const many = [];
+  for (let i = 0; i < 9; i++) many.push({ name: "x" + i + ".jpg", thumb: "data:image/jpeg;base64,AAA" });
+  many.push({ name: "evil", thumb: "javascript:alert(1)" });
+  W.onChatImages(JSON.stringify(many));
+  const n = W.chatImages.length;
+  const evil = W.chatImages.some((x) => String(x.thumb).indexOf("data:image/") !== 0);
+  W.chatImagesClear();
+  return n === 6 && !evil;
+})());
+ok("用户气泡里带缩略图", /class="ub-imgs"/.test(html) && /m\.imgs\[ii\]\.thumb/.test(html));
+ok("图片随消息记录、发完清空输入区", /if \(withImgs\) um\.imgs = withImgs;/.test(html)
+   && /if \(withImgs\) \{\s*chatImages = \[\]; renderChatImages\(\);/.test(html));
+
+/* ---------- 29e. 题库名上限：超长先改名，不静默截断 ---------- */
 section("[29e] 题库名上限：超长先改名，不静默截断");
 W.Android = { saveBank: (id, json) => { attSaved.push([id, JSON.parse(json)]); return true; } };
 attSaved.length = 0;

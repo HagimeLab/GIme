@@ -19,6 +19,8 @@ import android.content.ClipboardManager;
 import android.content.ContentValues;
 import android.content.Intent;
 import android.database.Cursor;
+import android.graphics.Bitmap;
+import android.graphics.BitmapFactory;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
@@ -48,6 +50,8 @@ public class MainActivity extends Activity {
     private static final int PICK_CHAT = 4712;
     /** 通知权限（Android 13+ 运行时申请）。 */
     private static final int REQ_NOTIFY = 4713;
+    /** 大肥鱼的图片附件：相册多选，只回缩略图（图片内容不上行）。 */
+    private static final int PICK_IMAGES = 4714;
     /** 导入格式举例：assets 里那一份是唯一来源，页面看的和下载的都是它。 */
     private static final String SAMPLE_ASSET = "import-sample.md";
     private static final String SAMPLE_NAME = "GIme导入格式举例.md";
@@ -336,6 +340,10 @@ public class MainActivity extends Activity {
     @Override
     protected void onActivityResult(int req, int res, Intent data) {
         super.onActivityResult(req, res, data);
+        if (req == PICK_IMAGES) {
+            if (res == RESULT_OK && data != null) collectPickedImages(data);
+            return;
+        }
         if ((req != PICK && req != PICK_CHAT) || res != RESULT_OK || data == null) return;
         Uri uri = data.getData();
         if (uri == null) return;
@@ -416,6 +424,88 @@ public class MainActivity extends Activity {
             return "读取文件失败，请重试或换一个文件";
         }
         return msg;
+    }
+
+    /* 相册多选的结果统一成一份缩略图清单交给页面：最长边 160px、JPEG 60，
+       一张几 KB。页面只拿它摆着看、随消息记录下来——图片内容本身不上行。 */
+    private void collectPickedImages(Intent data) {
+        final java.util.ArrayList<Uri> list = new java.util.ArrayList<Uri>();
+        ClipData clip = data.getClipData();
+        if (clip != null && clip.getItemCount() > 1) {
+            for (int i = 0; i < clip.getItemCount() && list.size() < 6; i++) {
+                Uri u = clip.getItemAt(i).getUri();
+                if (u != null) list.add(u);
+            }
+        } else {
+            Uri one = data.getData();
+            if (one == null && clip != null && clip.getItemCount() > 0) one = clip.getItemAt(0).getUri();
+            if (one != null) list.add(one);
+        }
+        if (list.isEmpty()) return;
+        new Thread(new Runnable() {
+            @Override
+            public void run() {
+                JSONArray out = new JSONArray();
+                for (Uri u : list) {
+                    JSONObject o = thumbOf(u);
+                    if (o != null) out.put(o);
+                }
+                js("window.onChatImages&&window.onChatImages(" + quote(out.toString()) + ")");
+            }
+        }).start();
+    }
+
+    private JSONObject thumbOf(Uri uri) {
+        try {
+            BitmapFactory.Options probe = new BitmapFactory.Options();
+            probe.inJustDecodeBounds = true;
+            InputStream in0 = getContentResolver().openInputStream(uri);
+            if (in0 == null) return null;
+            try {
+                BitmapFactory.decodeStream(in0, null, probe);
+            } finally {
+                in0.close();
+            }
+            int side = Math.max(probe.outWidth, probe.outHeight);
+            int sample = 1;
+            while (side / sample > 320) sample *= 2;
+            BitmapFactory.Options opt = new BitmapFactory.Options();
+            opt.inSampleSize = sample;
+            InputStream in = getContentResolver().openInputStream(uri);
+            if (in == null) return null;
+            Bitmap bm;
+            try {
+                bm = BitmapFactory.decodeStream(in, null, opt);
+            } finally {
+                in.close();
+            }
+            if (bm == null) return null;
+            int w = bm.getWidth(), h = bm.getHeight();
+            float scale = 160f / Math.max(w, h);
+            if (scale < 1f) {
+                Bitmap small = Bitmap.createScaledBitmap(bm, Math.max(1, Math.round(w * scale)),
+                        Math.max(1, Math.round(h * scale)), true);
+                if (small != bm) {
+                    bm.recycle();
+                    bm = small;
+                }
+            }
+            ByteArrayOutputStream bos = new ByteArrayOutputStream();
+            bm.compress(Bitmap.CompressFormat.JPEG, 60, bos);
+            bm.recycle();
+            String nm = displayName(uri);
+            if (nm == null || nm.isEmpty()) nm = "图片";
+            if (nm.length() > 40) nm = nm.substring(0, 40);
+            JSONObject o = new JSONObject();
+            o.put("name", nm);
+            o.put("w", w);
+            o.put("h", h);
+            o.put("thumb", "data:image/jpeg;base64,"
+                    + android.util.Base64.encodeToString(bos.toByteArray(), android.util.Base64.NO_WRAP));
+            return o;
+        } catch (Exception e) {
+            return null;
+        }
     }
 
     private String displayName(Uri uri) {
@@ -1301,6 +1391,25 @@ public class MainActivity extends Activity {
                         startActivityForResult(i, PICK_CHAT);
                     } catch (Exception e) {
                         js("window.onChatFileError&&window.onChatFileError(\"这台机器上没有可用的文件选择器\")");
+                    }
+                }
+            });
+        }
+
+        /** 大肥鱼的图片附件：相册多选。只回缩略图给页面摆着看，原图不读、不上行。 */
+        @JavascriptInterface
+        public void pickChatImages() {
+            runOnUiThread(new Runnable() {
+                @Override
+                public void run() {
+                    Intent i = new Intent(Intent.ACTION_OPEN_DOCUMENT);
+                    i.addCategory(Intent.CATEGORY_OPENABLE);
+                    i.setType("image/*");
+                    i.putExtra(Intent.EXTRA_ALLOW_MULTIPLE, true);
+                    try {
+                        startActivityForResult(i, PICK_IMAGES);
+                    } catch (Exception e) {
+                        js("window.onChatImagesError&&window.onChatImagesError(\"这台机器上没有可用的相册\")");
                     }
                 }
             });

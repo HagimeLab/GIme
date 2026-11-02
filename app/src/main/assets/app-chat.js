@@ -1515,6 +1515,7 @@ function chatLayout() {
   var hint = document.getElementById("chatHint");
   var input = document.getElementById("chatIn");
   var chip = document.getElementById("chatFileChip");
+  var imgs = document.getElementById("chatImgs");
   if (!panel || !hero || !slot || !foot || !input) return;
   var wasEmpty = panel.classList.contains("empty");
   var empty = chatMsgs.length === 0 && !chatBusy;
@@ -1526,12 +1527,15 @@ function chatLayout() {
   /* 附件条跟着输入框走：空态（新建会话）时它挂在 #chatFoot 里会被整块隐藏，
      于是「这份文档会随提示词一起发」在新会话里看不见、也删不掉。 */
   if (empty) {
+    if (imgs && imgs.parentNode !== slot) slot.appendChild(imgs);
     if (chip && chip.parentNode !== slot) slot.appendChild(chip);
     if (input.parentNode !== slot) slot.appendChild(input);
     foot.style.display = "none";
   } else {
-    /* 一起搬回去：先附件条再输入框，顺序才不会反过来 */
-    if ((chip && chip.parentNode !== foot) || input.parentNode !== foot) {
+    /* 一起搬回去：图/附件条/输入框按这个顺序，才不会反过来 */
+    if ((imgs && imgs.parentNode !== foot) || (chip && chip.parentNode !== foot) ||
+        input.parentNode !== foot) {
+      if (imgs) foot.appendChild(imgs);
       if (chip) foot.appendChild(chip);
       foot.appendChild(input);
     }
@@ -1616,9 +1620,20 @@ function chatRender() {
       return;
     }
     var me = m.role === "user";
-    if (me && m.file) {
-      h += '<div class="msg me"><div class="bubble">' + esc(m.text) +
-           '<span class="ub-file">附件：' + esc(m.file) + " 已随这条消息发给大肥鱼</span></div></div>";
+    if (me) {
+      var extra = "";
+      if (m.imgs && m.imgs.length) {
+        extra += '<span class="ub-imgs">';
+        for (var ii = 0; ii < m.imgs.length; ii++) {
+          extra += '<img src="' + m.imgs[ii].thumb + '" alt="">';
+        }
+        extra += "</span>";
+      }
+      if (m.file) {
+        extra += '<span class="ub-file">附件：' + esc(m.file) + " 已随这条消息发给大肥鱼</span>";
+      }
+      h += '<div class="msg me"><div class="bubble">' + esc(m.text).replace(/\n/g, "<br>") +
+           extra + "</div></div>";
       return;
     }
     var inner;
@@ -1815,6 +1830,64 @@ function attachChatFile() {
   if (!window.Android || !Android.pickChatFile) { toast("请在手机上使用这个功能"); return; }
   Android.pickChatFile();
 }
+/* 附件按钮先弹一个小浮窗：文件走原来的抽取链路，图片走相册多选。
+   图片只作附件——页面拿缩略图摆着看、随消息记录，大肥鱼收到的是一行「附了 N 张图」的说明，
+   像素本身不上行（两条通道都没有视觉能力）。 */
+var CHAT_IMG_MAX = 6;
+var chatImages = [];
+function chatAttachSheet() {
+  var sh = document.getElementById("sheet3");
+  if (!sh) return;
+  sh.innerHTML = '<div class="handle"></div><h2>发给大肥鱼</h2><div class="pick-list">' +
+    '<button class="pick-opt" onclick="chatAttachPick(\'file\')">' +
+      '<span class="pick-t">上传文件<span class="pick-sub">PDF / Word / Markdown / txt，读成文字</span></span>' +
+    '</button>' +
+    '<button class="pick-opt" onclick="chatAttachPick(\'image\')">' +
+      '<span class="pick-t">上传图片<span class="pick-sub">从相册选，可多选（最多 ' + CHAT_IMG_MAX + ' 张）</span></span>' +
+    '</button>' +
+    '</div>';
+  openLayer(sh);
+}
+function chatAttachPick(kind) {
+  closeTop();
+  if (kind === "file") attachChatFile();
+  else attachChatImages();
+}
+function attachChatImages() {
+  if (!window.Android || !Android.pickChatImages) { toast("请在手机上使用这个功能"); return; }
+  Android.pickChatImages();
+}
+window.onChatImages = function (json) {
+  var list = [];
+  try { list = JSON.parse(String(json == null ? "[]" : json)); } catch (e) { list = []; }
+  var added = 0;
+  for (var i = 0; i < list.length; i++) {
+    if (!list[i] || !list[i].thumb) continue;
+    /* 只收本机缩略图（data:image/…）。桥上来的串虽然是自己人给的，
+       但它最终会进 innerHTML 的 src，别给别的协议留门。 */
+    if (String(list[i].thumb).indexOf("data:image/") !== 0) continue;
+    if (chatImages.length >= CHAT_IMG_MAX) { toast("最多带 " + CHAT_IMG_MAX + " 张图"); break; }
+    chatImages.push({ name: String(list[i].name || "图片"), thumb: String(list[i].thumb) });
+    added++;
+  }
+  renderChatImages();
+  if (added) toast("已放入 " + chatImages.length + " 张图，配一句话再发");
+};
+window.onChatImagesError = function (msg) { toast(msg || "选图失败"); };
+function chatImageDrop(i) { chatImages.splice(i, 1); renderChatImages(); }
+function chatImagesClear() { chatImages = []; renderChatImages(); }
+function renderChatImages() {
+  var box = document.getElementById("chatImgs");
+  if (!box) return;
+  if (!chatImages.length) { box.hidden = true; box.innerHTML = ""; return; }
+  var h = "";
+  for (var i = 0; i < chatImages.length; i++) {
+    h += '<span class="ci"><img src="' + chatImages[i].thumb + '" alt="">' +
+         '<button class="cix" onclick="chatImageDrop(' + i + ')" aria-label="移除这张图">×</button></span>';
+  }
+  box.hidden = false;
+  box.innerHTML = h;
+}
 function chatFileClear() { chatFile = null; renderChatFile(); }
 
 function renderChatFile() {
@@ -1836,6 +1909,16 @@ function renderChatFile() {
 /* 文档跟着「那条消息」走：发出后输入区就清空，正文存在消息上；
    这一轮要带哪份文档，由 chatRunDoc 决定（发送时解析一次）。 */
 var chatRunDoc = null;
+/* 本轮随消息带出去的图片（只带名字）。像素不上行，所以只需要告诉模型「附了什么」。 */
+var chatRunImgs = null;
+function chatImgMetaOf(imgs) {
+  if (!imgs || !imgs.length) return "";
+  var names = [];
+  for (var i = 0; i < imgs.length; i++) names.push(imgs[i].name || "图片");
+  return "【图片附件】用户随这条消息发了 " + imgs.length + " 张图片：" + names.join("、") + "。\n" +
+    "你只能看到文件名，看不到图片内容（当前通道没有视觉能力）。不要描述、不要猜测、不要编造图里的内容；" +
+    "需要图里的信息时，直接请用户用文字打出来，或者用文件发过来。";
+}
 function chatDocOf(msgs) {
   for (var i = msgs.length - 1; i >= 0; i--) {
     var m = msgs[i];
@@ -2065,7 +2148,8 @@ async function chatSend() {
   chatAutoRounds = 0;   /* 用户自己开口 = 重新开一条导入链 */
   var el = document.getElementById("chatText");
   var text = String(el && el.value || "").trim();
-  if (!text) return;
+  /* 只带图不写字也能发：图本身就在输入区摆着，用户点发送就是要发出去 */
+  if (!text && !chatImages.length) return;
   el.value = "";
   chatAutoGrow(el);
   if (chatBusy) {       /* 新消息抢占当前 run：先掐断，再把这句话接上 */
@@ -2112,16 +2196,23 @@ async function chatSendText(text, silent) {
   /* 文档随这条消息发出去：正文快照进消息本身，输入区的附件条随即清掉；
      追问时只要那条消息还在历史窗口里，正文照样能取到。 */
   var withFile = (!silent && chatFile) ? chatFile : null;
+  var withImgs = (!silent && chatImages.length) ? chatImages.slice() : null;
   var segs = null;
   if (withFile) {
     chatMsgs.forEach(function (m) { if (m && m.fileText) delete m.fileText; });
     segs = splitDocSegments(withFile.text, CHAT_SEG_MAX);
   }
   /* 消息上只留第一段的正文（追问时够用），整份正文留在内存的分段计划里 */
-  chatPush({ role: "user", text: text, ctx: chatQuestionCtx(), hidden: !!silent,
+  var um = { role: "user", text: text, ctx: chatQuestionCtx(), hidden: !!silent,
              file: withFile ? withFile.name : "",
              fileText: withFile ? segs[0] : "",
-             fileChars: withFile ? withFile.chars : 0 });
+             fileChars: withFile ? withFile.chars : 0 };
+  if (withImgs) um.imgs = withImgs;          /* 只存缩略图与文件名，像素不上行 */
+  chatPush(um);
+  if (withImgs) {
+    chatImages = []; renderChatImages();
+    chatRunImgs = withImgs;
+  }
   if (withFile) {
     chatFile = null; renderChatFile();
     chatSeg = segs.length > 1
@@ -2136,13 +2227,16 @@ async function chatSendText(text, silent) {
     if (!withFile) chatSeg = null;
   }
   var attachMeta = chatFileMeta();
+  /* 图片说明算一次就取走：这条消息只带这一轮，后面的追问不再重复 */
+  var imgMeta = chatImgMetaOf(chatRunImgs);
+  chatRunImgs = null;
   chatBusy = true;
   if (!silent) chatWork = { title: "", steps: [], count: 0 };
   chatRender();
   var ranOk = false;
   var runStatus = "ok";
   try {
-    await chatRun(cfg, attachMeta);
+    await chatRun(cfg, attachMeta, imgMeta);
     ranOk = true;
   } catch (e) {
     runStatus = "error";
@@ -2214,7 +2308,7 @@ async function chatSendText(text, silent) {
     }
   }
 }
-async function chatRun(cfg, attachMeta) {
+async function chatRun(cfg, attachMeta, imgMeta) {
   var ctx = chatQuestionCtx();
   /* 带附件这一次是「模型识别」：正文要上行、题目要分几批交回来，
      额度比闲聊宽——多给几轮工具调用，也让它一次能写完一批题。 */
@@ -2236,6 +2330,8 @@ async function chatRun(cfg, attachMeta) {
   messages.push({ role: "system", content: chatAgentRules() });
   /* 附件元信息排在题目之后：它随附件走，不参与那条稳定的前缀。 */
   if (attachMeta) messages.push({ role: "system", content: attachMeta });
+  /* 图片说明单独一条：不能并进 attachMeta，那条一非空就进「导入文档」的结算口径。 */
+  if (imgMeta) messages.push({ role: "system", content: imgMeta });
   /* 历史只带最近 8 条：API Key 模式每轮都要重发，12 条纯属多花钱；
      内置通道复用上游会话时本来也不发历史。 */
   chatMsgs.slice(-8).forEach(function (m) {
