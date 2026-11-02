@@ -892,6 +892,7 @@ function chatOuiRoute(verb, arg, m, node, form) {
     var box = document.getElementById("chatText");
     if (!box) return;
     box.value = arg;
+    chatAutoGrow(box);          /* 程序填的字也要过一遍长度：够了才露「展开」 */
     /* bindTap 会在回调返回后把输入框的焦点收走，除非这个旗标立着。
        value: 的语义就是「把话放进输入框让我改」，焦点必须留住。 */
     window.__ouiKeepFocus = true;
@@ -972,6 +973,7 @@ function chatOuiRoute(verb, arg, m, node, form) {
     var box = document.getElementById("chatText");
     if (box) {
       box.value = adId ? "帮我调整方案：" + adId : "我想调整一下方案：";
+      chatAutoGrow(box);
       window.__ouiKeepFocus = true;
       try { box.focus(); } catch (e) { }
     }
@@ -1314,8 +1316,14 @@ function chatLiveParts(m) {
      这一轮的气泡最后会被丢掉，但流式期间不能闪一串 JSON。 */
   var tooling = /^\s*<tool_call/.test(text);
   if (tooling) text = "";
-  /* OpenUI 围栏还没收完就先藏起来：半截源码在气泡里闪一下再变成卡片很扎眼 */
-  if (m.live) text = stripUIFence(text);
+  /* OpenUI 围栏还没收完就先藏起来：半截源码在气泡里闪一下再变成卡片很扎眼。
+     藏起来的那一段就是「正在生成组件」，用一颗和等待气泡同样式的气泡补上反馈 */
+  var uiGen = false;
+  if (m.live) {
+    var cut = stripUIFence(text);
+    uiGen = cut !== text;
+    text = cut;
+  }
   /* 默认展开（「把思考链显示出来」），用户点一下就收起，收起后记住不再自动弹开。
        .think-body 有 190px 上限 + 内部滚动，长思维链不会把回答挤到屏幕外。 */
   /* 思考时展开（看得到它在想什么），答完收起（结果在前，过程退到折子里）；
@@ -1326,7 +1334,7 @@ function chatLiveParts(m) {
   var wait = tooling ? "正在调用工具…"
                      : (chatBusy && chatWork && chatWork.title ? chatWork.title : "大肥鱼正在想…");
   return { think: thinkView, hasThink: !!thinkView, text: text, tooling: tooling,
-           open: open, label: label, wait: wait };
+           uiGen: uiGen, open: open, label: label, wait: wait };
 }
 function chatLiveHtml(m) {
   var p = chatLiveParts(m);
@@ -1346,6 +1354,11 @@ function chatLiveHtml(m) {
     var live = !!m.live;
     out += '<div class="bubble' + (live ? "" : " md") + '">' +
            (live ? esc(p.text).replace(/\n/g, "<br>") : mdFor(m)) + "</div>";
+  }
+  /* 组件源码还在流（被藏起来的那段）：挂一颗「大肥鱼生成中…」，
+     等这条答完、卡片装上，它跟着整块重画一起消失 */
+  if (p.uiGen) {
+    out += '<div class="bubble typing oui-gen"><i class="spin"></i><span class="wtxt">大肥鱼生成中…</span></div>';
   }
   if (!out) {
     /* 续段/续批时这里要显示「正在识别 · 第 2/2 段」，而不是笼统的「正在想」 */
@@ -1414,8 +1427,10 @@ function chatLivePaint(m) {
   var tb = nodes.tb, bubble = nodes.bubble, sum = nodes.sum;
   var p = chatLiveParts(m);
   /* 结构已经就位时只改文本节点：不再重建 details / think-body / 气泡。
-     结构变化（思考第一次出现、正文第一次出现、正文被工具轮清空）才走整块重建。 */
-  var fast = p.hasThink && tb && (p.text ? bubble : !bubble);
+     结构变化（思考第一次出现、正文第一次出现、正文被工具轮清空、开始流 OpenUI 源码）才走整块重建。 */
+  var uiGenFlip = (m._liveUiGen === true) !== p.uiGen;
+  m._liveUiGen = p.uiGen;
+  var fast = !uiGenFlip && p.hasThink && tb && (p.text ? bubble : !bubble);
   if (fast) {
     if (sum && sum.textContent !== p.label) sum.textContent = p.label;
     if (m._liveThink !== p.think) {
@@ -1625,7 +1640,12 @@ function chatRender() {
       if (m.imgs && m.imgs.length) {
         extra += '<span class="ub-imgs">';
         for (var ii = 0; ii < m.imgs.length; ii++) {
-          extra += '<img src="' + m.imgs[ii].thumb + '" alt="">';
+          var th = String(m.imgs[ii].thumb || ""), sr = String(m.imgs[ii].src || "");
+          /* 缩略图只收本机 data:image（落盘的历史也再验一次），原图地址只收 content:// */
+          if (th.indexOf("data:image/") !== 0) continue;
+          extra += '<img src="' + th + '" alt="" data-src="' +
+                   (sr.indexOf("content://") === 0 ? esc(sr) : "") +
+                   '" onclick="chatImgView(this)">';
         }
         extra += "</span>";
       }
@@ -1689,8 +1709,9 @@ function chatRender() {
   syncChatSend();
   var hint = document.getElementById("chatHint");
   if (hint) {
-    hint.textContent = agentCfg()
-      ? "内容由大肥鱼生成，可能有误；以题库解析为准。"
+    /* 配好了就没话要说（原来那句「内容由大肥鱼生成…」按裁定删掉，空行不占高）：
+       这一行只留给「还没登录 / 还没配置 API」和跑起来时的临时提示。 */
+    hint.textContent = agentCfg() ? ""
       : (agentMode() === "login"
           ? "还没登录：点右上角「设置」用手机号登录一次。"
           : "还没配置 API：点右上角「设置」填地址、模型和 Key。");
@@ -1725,22 +1746,52 @@ function chatScrollBottomSoon() {
     mo.observe(l, { childList: true, subtree: true });
   }
 }
-/* 输入框：默认随内容长到 96px；点展开按钮后放开到 40vh */
+/* 输入框：默认随内容长到 96px；写到 CHAT_LONG_INPUT 字以上才露出「展开」，
+   点它把同一颗输入框搬进浮窗（不复制一份，值、光标、输入法状态都跟着节点走）。 */
+var CHAT_LONG_INPUT = 60;
+var _bigInOpen = false;
 function chatAutoGrow(el) {
   if (!el) return;
-  var ch = document.getElementById("chat");
-  var max = ch && ch.classList.contains("chat-expanded") ? Math.round(innerHeight * 0.4) : 96;
+  var max = _bigInOpen ? 100000 : 96;
   el.style.height = "auto";
   el.style.height = Math.max(44, Math.min(el.scrollHeight, max)) + "px";
+  chatSyncExpandBtn();
 }
-function chatToggleInput() {
-  var ch = document.getElementById("chat");
+function chatSyncExpandBtn() {
+  var b = document.getElementById("chatExpand");
   var ta = document.getElementById("chatText");
-  if (!ch || !ta) return;
-  ch.classList.toggle("chat-expanded");
+  if (!b) return;
+  var n = ta ? String(ta.value || "").length : 0;
+  b.hidden = _bigInOpen || n < CHAT_LONG_INPUT;
+}
+function chatBigOpen() {
+  var ta = document.getElementById("chatText"), body = document.getElementById("bigInBody");
+  var win = document.getElementById("bigIn");
+  if (!ta || !body || !win || _bigInOpen) return;
+  body.appendChild(ta);              /* 移动节点，不重建 */
+  _bigInOpen = true;
+  openLayer(win);
+  chatSyncExpandBtn();
+  /* 这一帧浮窗还没真的可见，立刻 focus() 不落地：等过渡起来再聚焦（键盘才跟着弹） */
+  setTimeout(function () { try { ta.focus(); ta.setSelectionRange(ta.value.length, ta.value.length); } catch (e) { } }, 90);
+}
+/* 无论从哪条路收（「收起」按钮、返回键、连着关掉对话），节点都由 closeLayer 的钩子放回 */
+function chatBigClose() {
+  var win = document.getElementById("bigIn");
+  if (_bigInOpen && win) closeLayer(win);
+}
+function chatBigClosed() {
+  var ta = document.getElementById("chatText"), field = document.getElementById("chatField");
+  _bigInOpen = false;
+  if (ta && field && ta.parentNode !== field) field.appendChild(ta);
   chatAutoGrow(ta);
-  try { ta.focus(); } catch (e) { }
-  chatScrollBottomSoon();
+}
+function chatBigToggle() {
+  if (_bigInOpen) chatBigClose(); else chatBigOpen();
+}
+function chatBigSend() {
+  chatBigClose();
+  chatSend();
 }
 /* 首页全屏对话：从顶部把手/头部往下拖，超过阈值就收回 */
 function chatPullInit() {
@@ -1780,7 +1831,7 @@ function openChat() {
   chatUnread = false;
   var ch = document.getElementById("chat");
   ch.classList.remove("full");           /* 答题页仍走底部上滑 */
-  ch.classList.remove("chat-expanded");
+  chatBigClose();
   chatRender();
   openLayer(ch);
   chatScrollBottomSoon();
@@ -1791,7 +1842,7 @@ function openChatTab() {
   chatUnread = false;
   var ch = document.getElementById("chat");
   ch.classList.add("full");       /* 首页入口：整屏对话，可下拉收回 */
-  ch.classList.remove("chat-expanded");
+  chatBigClose();
   chatRender();
   openLayer(ch);
   chatScrollBottomSoon();
@@ -1824,8 +1875,7 @@ function attachChatFile() {
   Android.pickChatFile();
 }
 /* 附件按钮先弹一个小浮窗：文件走原来的抽取链路，图片走相册多选。
-   图片只作附件——页面拿缩略图摆着看、随消息记录，大肥鱼收到的是一行「附了 N 张图」的说明，
-   像素本身不上行（两条通道都没有视觉能力）。 */
+   图一放进输入区就开始上传，点浮窗外面任意处也能收回（拦截层 #attScrim）。 */
 var CHAT_IMG_MAX = 6;
 var chatImages = [];
 function chatAttachSheet() {
@@ -1840,7 +1890,21 @@ function chatAttachSheet() {
     '</button>' +
     '</div>';
   openLayer(sh);
+  chatAttachScrim(true);
 }
+/* 浮窗背后的拦截层：点浮窗外任意处收回它（压在对话之上、浮窗之下） */
+function chatAttachScrim(on) {
+  var s = document.getElementById("attScrim");
+  if (!s) return;
+  if (on) s.classList.add("on"); else s.classList.remove("on");
+}
+function chatAttachScrimTap() {
+  var sh = document.getElementById("sheet3");
+  if (sh && sh.classList.contains("on")) closeTop();
+  else chatAttachScrim(false);   /* 浮窗已经不在了：把这层擦干净就行 */
+}
+/* 面板无论从哪条路关掉（点项、返回键、点拦截层）都收到这里，拦截层不会单独留在屏上 */
+function sheet3Closed() { chatAttachScrim(false); }
 function chatAttachPick(kind) {
   closeTop();
   if (kind === "file") attachChatFile();
@@ -1863,6 +1927,8 @@ window.onChatImages = function (json) {
     chatImages.push({
       name: String(list[i].name || "图片"),
       thumb: String(list[i].thumb),
+      /* 原图地址：只认 content://，点聊天里的缩略图要靠它取大图 */
+      src: String(list[i].src || "").indexOf("content://") === 0 ? String(list[i].src) : "",
       idx: Number(list[i].idx) || 0,
       state: "up",      /* up=上传中（上半截清晰、下半截还模糊） ok=已就绪 err=失败 */
       p: 0,             /* 上传进度 0-99，清晰的那一层从上往下露出来 */
@@ -1871,7 +1937,7 @@ window.onChatImages = function (json) {
     added++;
   }
   renderChatImages();
-  if (added) { toast("已放入 " + chatImages.length + " 张图，正在上传…"); chatImagePump(); }
+  if (added) { toast("已放入 " + chatImages.length + " 张图"); chatImagePump(); }
 };
 window.onChatImagesError = function (msg) { toast(msg || "选图失败"); };
 /* 一张一张传（先后，不并发）：放进输入区就开始，传完一张模糊就变清晰。
@@ -1924,6 +1990,8 @@ window.onChatImageUp = function (idx, id, err) {
   }
   renderChatImages();
   chatImagePump();
+  /* 最后一张落地就说一句：正在上传 → 上传成功 */
+  if (chatImages.length && !chatAnyImgUp()) toast(chatImgStatus());
 };
 /* 还有图在传：这时候不能发（图会缺），但可以点 × 撤掉 —— 撤掉的正好是在传的那张时，
    chatImageDrop 会把下一张接上。 */
@@ -1949,6 +2017,17 @@ function chatImageDrop(i) {
   chatImagePump();          /* 撤掉的正好是在传的那张时，把下一张接上 */
 }
 function chatImagesClear() { chatImages = []; renderChatImages(); }
+/* 一排缩略图下面那行状态字：传的时候说「正在上传」，全部传完说「上传成功」 */
+function chatImgStatus() {
+  var up = 0, ok = 0, err = 0;
+  for (var i = 0; i < chatImages.length; i++) {
+    var st = chatImages[i].state;
+    if (st === "ok") ok++; else if (st === "err") err++; else up++;
+  }
+  if (up) return "正在上传图片…" + (ok ? "（已传好 " + ok + " 张）" : "");
+  if (err) return err + " 张没传上去" + (ok ? "，其余 " + ok + " 张可以发" : "");
+  return "上传成功";
+}
 function renderChatImages() {
   var box = document.getElementById("chatImgs");
   if (!box) return;
@@ -1963,10 +2042,45 @@ function renderChatImages() {
          (st === "err" ? '<i class="ci-err">!</i>' : "") +
          '<button class="cix" onclick="chatImageDrop(' + i + ')" aria-label="移除这张图">×</button></span>';
   }
+  var done = !chatAnyImgUp(), txt = chatImgStatus();
+  h += '<span class="ci-st' + (done && txt.indexOf("没传上去") >= 0 ? " bad" : "") + '">' + txt + "</span>";
   box.hidden = false;
   box.innerHTML = h;
   syncChatSend();          /* 传完/撤完，按钮跟着回来 */
 }
+/* 点开聊天里的图片看大图：先把消息里那份缩略图铺上（立刻有东西看），
+   再按原图地址找原生要一张大图换上去。老消息没记地址、或原图已被删，就停在缩略图。 */
+var _imgViewReq = 0;
+function chatImgView(el) {
+  var pic = document.getElementById("imgView"), tip = document.getElementById("imgViewTip");
+  if (!pic) return;
+  var img = pic.querySelector ? pic.querySelector("img") : null;
+  if (!img) return;
+  var th = String(el.getAttribute("src") || "");
+  if (th.indexOf("data:image/") !== 0) return;
+  img.src = th;
+  _imgViewReq++;                       /* 回来的原图只对得上这一次展示 */
+  if (tip) tip.hidden = true;
+  var sr = String(el.getAttribute("data-src") || "");
+  if (sr.indexOf("content://") === 0 && window.Android && Android.viewChatImage) {
+    if (tip) tip.hidden = false;
+    try {
+      Android.viewChatImage(sr, _imgViewReq);
+    } catch (e) {
+      if (tip) tip.hidden = true;
+    }
+  }
+  openLayer(pic);
+}
+window.onChatImageView = function (req, dataUrl, err) {
+  if (Number(req) !== _imgViewReq) return;      /* 已经收了，或看的是另一张 */
+  var pic = document.getElementById("imgView"), tip = document.getElementById("imgViewTip");
+  var img = pic && pic.querySelector ? pic.querySelector("img") : null;
+  if (tip) tip.hidden = true;
+  if (!img) return;
+  if (String(dataUrl || "").indexOf("data:image/") === 0) img.src = String(dataUrl);
+  else if (err) toast(err);
+};
 function chatFileClear() { chatFile = null; renderChatFile(); }
 
 function renderChatFile() {
@@ -1988,7 +2102,7 @@ function renderChatFile() {
 /* 文档跟着「那条消息」走：发出后输入区就清空，正文存在消息上；
    这一轮要带哪份文档，由 chatRunDoc 决定（发送时解析一次）。 */
 var chatRunDoc = null;
-/* 本轮随消息带出去的图片（只带名字）。像素不上行，所以只需要告诉模型「附了什么」。 */
+/* 本轮随消息带出去的图片（名字给说明用，像素靠上传换回的 file id）。 */
 var chatRunImgs = null;
 /* 这一轮图片上传拿到的 file id：只有它非空，模型才真的看得到图 */
 var chatRunImgIds = null;
@@ -2292,7 +2406,7 @@ async function chatSendText(text, silent) {
              file: withFile ? withFile.name : "",
              fileText: withFile ? segs[0] : "",
              fileChars: withFile ? withFile.chars : 0 };
-  if (withImgs) um.imgs = withImgs;          /* 只存缩略图与文件名，像素不上行 */
+  if (withImgs) um.imgs = withImgs;          /* 缩略图、文件名、原图地址随消息记录 */
   chatPush(um);
   if (withImgs) {
     chatImages = []; renderChatImages();

@@ -4,7 +4,7 @@
 
 这张表是 **P0 的导出面**：把现在暴露出去的东西一次列清楚，标明每个方法的入参形状与信任级别，供 P2 设计 AgentLoop 的工具注册时对照，也供后续安全收口时判断「哪些口子必须先收紧」。
 
-- 生成依据：`app/src/main/java/com/fan/shuatiku/MainActivity.java` 里全部 `@JavascriptInterface` 注解方法（当前 **45 个**）。
+- 生成依据：`app/src/main/java/com/fan/shuatiku/MainActivity.java` 里全部 `@JavascriptInterface` 注解方法（当前 **46 个**）。
 - P0 已加闸的方法在「P0 校验」一列写明；标 `—` 的表示本次未改动（见文末「P0 没做什么」）。
 - 校验规则集中在 `BridgeGuard.java`（纯逻辑、零 Android 依赖），回归用例在 `tools/BridgeTest.java`，由 `tools/check.cmd` 的 `js bridge guard` 段执行。
 
@@ -106,9 +106,10 @@
 | 40 | `agentCall(op, json)` | `op`、`json` | `String`(JSON) | L1 | — | Agent 护栏：begin / tick / check / approve / deny / finish；预算、重复调用与写操作批准的状态在 Java 侧 |
 | 41 | `exportTrace()` | — | `String` | L1 | — | 把最近 20 次 Agent 运行的三级 trace + 指标（脱敏）写成 JSON 到系统「下载」目录 |
 | 42 | `memoryCall(op, json)` | `op`、`json` | `String`(JSON) | L1 | — | 记忆库：snapshot / save / clear；长期画像与会话摘要落在 filesDir/memory/memory.json |
-| 43 | `pickChatImages()` | — | `void`（回调带缩略图清单） | L2 | — | 拉起相册多选（大肥鱼图片附件）：只回缩略图，原图不上行 |
+| 43 | `pickChatImages()` | — | `void`（回调带缩略图清单） | L2 | — | 拉起相册多选（大肥鱼图片附件）：回每张图的缩略图、序号和 `content://` 原图地址，并申请持久读授权 |
 | 44 | `uploadChatImage(idx)` | `idx` | `void`（回 `window.onChatImageUp`） | L2 | **idx 越界即拒** | 把相册选的第 idx 张图传到 DeepSeek 网页版换 file id（一张一回调，页面据此显示上传进度） |
-| 45 | `dsUploadProbe(path)` | `path` | `void`（回 `window.onDsUploadProbe`） | L2 | **只认 /sdcard/ 与 /data/local/tmp/** | 仅 debug 生效；把指定图片按图片附件上传一次，回报 file id（验网页版上传链路用） |
+| 45 | `viewChatImage(uri, req)` | `uri`、`req` | `void`（回 `window.onChatImageView`） | L2 | **只认 content:// 前缀** | 点聊天里发出去的图片看大图：按原图地址缩到最长边 1280 回 data URL；`req` 是页面这次展示的编号，回来的原图只对得上同一次，收条或换一张就丢弃 |
+| 46 | `dsUploadProbe(path)` | `path` | `void`（回 `window.onDsUploadProbe`） | L2 | **只认 /sdcard/ 与 /data/local/tmp/** | 仅 debug 生效；把指定图片按图片附件上传一次，回报 file id（验网页版上传链路用） |
 
 ## P0 加的闸门（`BridgeGuard`）
 

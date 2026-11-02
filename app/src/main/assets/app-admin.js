@@ -479,6 +479,11 @@ function closeLayer(el) {
   if (el.id === "planPage" && typeof planPageClosed === "function") planPageClosed();
   /* 对话收掉了，浮在上面的那张卡要跟着回它的槽位：窗口留在主页上既点不到也收不回 */
   if (el.id === "chat" && typeof chatOuiCollapse === "function") chatOuiCollapse();
+  /* #sheet3 是共用面板：谁用它开过浮窗，关掉时都要给一个收拾拦截层的机会（附件浮窗就靠它） */
+  if (el.id === "sheet3" && typeof sheet3Closed === "function") sheet3Closed();
+  /* 长文本浮窗关掉时，那颗输入框要回它的原位；连着整个对话一起关也走这条路 */
+  if (el.id === "bigIn" && typeof chatBigClosed === "function") chatBigClosed();
+  if (el.id === "chat" && typeof chatBigClose === "function") chatBigClose();
   syncLayerScrim();
 }
 function closeTop() {

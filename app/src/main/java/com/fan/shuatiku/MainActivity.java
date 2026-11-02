@@ -429,7 +429,8 @@ public class MainActivity extends Activity {
     }
 
     /* 相册多选的结果统一成一份缩略图清单交给页面：最长边 160px、JPEG 60，
-       一张几 KB。页面只拿它摆着看、随消息记录下来——图片内容本身不上行。 */
+       一张几 KB。页面拿它摆着看、随消息记录下来；原图按 content uri 存着，
+       点大图和上传都从这条 uri 走（所以要申请持久授权，聊天记录活到下次开机还要能打开）。 */
     private void collectPickedImages(Intent data) {
         final java.util.ArrayList<Uri> list = new java.util.ArrayList<Uri>();
         ClipData clip = data.getClipData();
@@ -444,8 +445,19 @@ public class MainActivity extends Activity {
             if (one != null) list.add(one);
         }
         if (list.isEmpty()) return;
-        pickedImageUris.clear();
-        pickedImageUris.addAll(list);
+        /* idx 是全局序号，不每批清零：连着选两次图时，前一张还挂在输入区，
+           清零会让它的 idx 指到新一批上（传错图）。 */
+        final int base = pickedImageUris.size();
+        synchronized (pickedImageUris) {
+            pickedImageUris.addAll(list);
+        }
+        for (int k = 0; k < list.size(); k++) {
+            try {
+                getContentResolver().takePersistableUriPermission(list.get(k), Intent.FLAG_GRANT_READ_URI_PERMISSION);
+            } catch (Exception ignored) {
+                // 有些提供器不给持久授权：本次上传照用，点大图会退回缩略图
+            }
+        }
         new Thread(new Runnable() {
             @Override
             public void run() {
@@ -454,7 +466,10 @@ public class MainActivity extends Activity {
                     JSONObject o = thumbOf(list.get(k));
                     if (o == null) continue;
                     /* idx 是这张图在 pickedImageUris 里的位置：页面之后按它来要上传 */
-                    try { o.put("idx", k); } catch (Exception ignored) { }
+                    try {
+                        o.put("idx", base + k);
+                        o.put("src", String.valueOf(list.get(k)));
+                    } catch (Exception ignored) { }
                     out.put(o);
                 }
                 js("window.onChatImages&&window.onChatImages(" + quote(out.toString()) + ")");
@@ -521,41 +536,47 @@ public class MainActivity extends Activity {
         return o;
     }
 
+    /** 按需缩放解码一张 content 图：先探尺寸定 inSampleSize，再精缩到 maxEdge。解不出来给 null。 */
+    private Bitmap decodeScaled(Uri uri, int maxEdge) throws Exception {
+        BitmapFactory.Options probe = new BitmapFactory.Options();
+        probe.inJustDecodeBounds = true;
+        InputStream in0 = getContentResolver().openInputStream(uri);
+        if (in0 == null) return null;
+        try {
+            BitmapFactory.decodeStream(in0, null, probe);
+        } finally {
+            in0.close();
+        }
+        int side = Math.max(probe.outWidth, probe.outHeight);
+        int sample = 1;
+        while (side / sample > maxEdge * 2) sample *= 2;
+        BitmapFactory.Options opt = new BitmapFactory.Options();
+        opt.inSampleSize = sample;
+        InputStream in = getContentResolver().openInputStream(uri);
+        if (in == null) return null;
+        Bitmap bm;
+        try {
+            bm = BitmapFactory.decodeStream(in, null, opt);
+        } finally {
+            in.close();
+        }
+        if (bm == null) return null;
+        int w = bm.getWidth(), h = bm.getHeight();
+        float scale = (float) maxEdge / Math.max(w, h);
+        if (scale < 1f) {
+            Bitmap small = Bitmap.createScaledBitmap(bm, Math.max(1, Math.round(w * scale)),
+                    Math.max(1, Math.round(h * scale)), true);
+            if (small != bm) bm.recycle();
+            bm = small;
+        }
+        return bm;
+    }
+
     private JSONObject thumbOf(Uri uri) {
         try {
-            BitmapFactory.Options probe = new BitmapFactory.Options();
-            probe.inJustDecodeBounds = true;
-            InputStream in0 = getContentResolver().openInputStream(uri);
-            if (in0 == null) return null;
-            try {
-                BitmapFactory.decodeStream(in0, null, probe);
-            } finally {
-                in0.close();
-            }
-            int side = Math.max(probe.outWidth, probe.outHeight);
-            int sample = 1;
-            while (side / sample > 320) sample *= 2;
-            BitmapFactory.Options opt = new BitmapFactory.Options();
-            opt.inSampleSize = sample;
-            InputStream in = getContentResolver().openInputStream(uri);
-            if (in == null) return null;
-            Bitmap bm;
-            try {
-                bm = BitmapFactory.decodeStream(in, null, opt);
-            } finally {
-                in.close();
-            }
+            Bitmap bm = decodeScaled(uri, 160);
             if (bm == null) return null;
             int w = bm.getWidth(), h = bm.getHeight();
-            float scale = 160f / Math.max(w, h);
-            if (scale < 1f) {
-                Bitmap small = Bitmap.createScaledBitmap(bm, Math.max(1, Math.round(w * scale)),
-                        Math.max(1, Math.round(h * scale)), true);
-                if (small != bm) {
-                    bm.recycle();
-                    bm = small;
-                }
-            }
             ByteArrayOutputStream bos = new ByteArrayOutputStream();
             bm.compress(Bitmap.CompressFormat.JPEG, 60, bos);
             bm.recycle();
@@ -1504,6 +1525,34 @@ public class MainActivity extends Activity {
                     }
                     js("window.onChatImageUp&&window.onChatImageUp(" + idx + ","
                             + quote(id) + "," + quote(err) + ")");
+                }
+            }).start();
+        }
+
+        /** 点开聊天里发出去的图片要看大图：只认 content://，最长边 1280、JPEG 75 缩出来回给页面。
+            原图打不开（被删了、当初没拿到持久授权）就回一句错，页面接着用它那条缩略图。 */
+        @JavascriptInterface
+        public void viewChatImage(final String uriStr, final int req) {
+            new Thread(new Runnable() {
+                @Override
+                public void run() {
+                    String data = "", err = "";
+                    try {
+                        if (uriStr == null || !uriStr.startsWith("content://")) {
+                            throw new Exception("这张图没留下能打开的地址");
+                        }
+                        Bitmap bm = decodeScaled(Uri.parse(uriStr), 1280);
+                        if (bm == null) throw new Exception("原图打不开了，只能看小图");
+                        ByteArrayOutputStream bos = new ByteArrayOutputStream();
+                        bm.compress(Bitmap.CompressFormat.JPEG, 75, bos);
+                        bm.recycle();
+                        data = "data:image/jpeg;base64,"
+                                + android.util.Base64.encodeToString(bos.toByteArray(), android.util.Base64.NO_WRAP);
+                    } catch (Exception e) {
+                        err = readable(e);
+                    }
+                    js("window.onChatImageView&&window.onChatImageView(" + req + ","
+                            + quote(data) + "," + quote(err) + ")");
                 }
             }).start();
         }

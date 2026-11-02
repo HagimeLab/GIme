@@ -146,6 +146,13 @@
   </div>
   <div class="oui-win-body" id="ouiWinBody"></div>
 </div>
+<!-- 附件小浮窗的拦截层：点浮窗外任意处把它收回（薄薄一层，不遮成黑屏） -->
+<div class="att-scrim" id="attScrim" onclick="chatAttachScrimTap()"></div>
+<!-- 聊天里发出去的图片：点缩略图看大图。点任意处或返回键收起 -->
+<div class="img-view" id="imgView" onclick="closeTop()" role="dialog" aria-label="查看图片">
+  <img id="imgViewPic" alt="">
+  <span class="iv-tip" id="imgViewTip" hidden>正在取原图…</span>
+</div>
 <div class="sheet chat" id="chat">
   <div class="handle"></div>
   <div class="chat-head">
@@ -177,17 +184,26 @@
       <button class="chat-att" id="chatAttach" onclick="chatAttachSheet()" aria-label="添加附件（文件或图片）">
         <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M8.5 12.6l6-6a3 3 0 0 1 4.3 4.3l-7.6 7.6a5 5 0 0 1-7.1-7.1l7.2-7.2"/></svg>
       </button>
-      <div class="chat-field">
+      <div class="chat-field" id="chatField">
         <textarea id="chatText" rows="1" placeholder="问大肥鱼这道题…"
           oninput="chatAutoGrow(this)"
           onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();chatSend()}"></textarea>
-        <button class="chat-more" id="chatExpand" onclick="chatToggleInput()" aria-label="展开输入框" title="展开输入框">
+        <button class="chat-more" id="chatExpand" onclick="chatBigToggle()" hidden aria-label="悬浮展开输入框" title="悬浮展开输入框">
           <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M6 15l6-6 6 6"/></svg>
         </button>
       </div>
       <button class="chat-send" id="chatSend" onclick="chatSend()">发送</button>
     </div>
   </div>
+</div>
+<!-- 长文本输入浮窗：字数多了点「展开」，把同一颗输入框搬进这层，写完点「收起」原路放回 -->
+<div class="big-in" id="bigIn" role="dialog" aria-label="长文本输入">
+  <div class="big-in-head">
+    <span class="big-in-t">写给大肥鱼</span>
+    <button type="button" class="big-in-btn" onclick="chatBigClose()">收起</button>
+    <button type="button" class="big-in-btn primary" onclick="chatBigSend()">发送</button>
+  </div>
+  <div class="big-in-body" id="bigInBody"></div>
 </div>
 <div class="glass" id="glass"></div>
 <div class="toast" id="toast"></div>

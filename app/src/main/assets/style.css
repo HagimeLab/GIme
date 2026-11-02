@@ -539,6 +539,8 @@ button.rec:active { opacity: .62; }
 .think-body::-webkit-scrollbar { display: none; }
 .chat-note { margin: 8px 4px; text-align: center; font-size: .75rem; color: var(--ink-2); }
 .chat-hint { font-size: .75rem; color: var(--ink-2); padding: 2px 2px 8px; line-height: 1.5; }
+/* 配置好之后这行没话说了：空着就别占高度 */
+.chat-hint:empty { display: none; }
 /* 附件条：贴在输入框上方。正文只留在内存里，条上只显示文件名与识别结果。 */
 .chat-file { display: flex; align-items: center; gap: 8px; margin: 0 2px 6px;
              padding: 8px 10px; border-radius: 12px; background: var(--raise);
@@ -549,10 +551,12 @@ button.rec:active { opacity: .62; }
 .chat-file .fsub { color: var(--ink-2); margin-left: 6px; }
 .chat-file .fx { flex: 0 0 auto; width: 26px; height: 26px; padding: 0; border-radius: 50%;
                  border: none; background: transparent; color: var(--ink-2); font-size: 16px; line-height: 1; }
-/* 图片附件：输入框上方一排缩略图，点 × 撤掉某一张。
+/* 图片附件：输入框上方一排缩略图 + 一行上传状态，点 × 撤掉某一张。
    WebView 80 上不用 flex gap，靠 -4px 外边距配 4px 子边距铺间距。 */
 .chat-imgs { display: flex; flex-wrap: wrap; margin: 0 2px 2px -4px; }
 .chat-imgs[hidden] { display: none; }
+.chat-imgs .ci-st { flex: 0 0 100%; margin: 0 0 2px 4px; font-size: .6875rem; color: var(--ink-2); }
+.chat-imgs .ci-st.bad { color: #D14343; }
 .chat-imgs .ci { position: relative; display: block; width: 56px; height: 56px; margin: 0 0 4px 4px; }
 .chat-imgs .ci img { position: absolute; left: 0; top: 0; width: 56px; height: 56px; object-fit: cover;
                      border-radius: 10px; border: 1.5px solid var(--line); background: var(--raise); }
@@ -585,11 +589,10 @@ button.rec:active { opacity: .62; }
 .chat-more { position: absolute; right: 2px; bottom: 0; width: 44px; height: 44px; padding: 0;
              border: none; border-radius: 50%; background: transparent; color: var(--ink-2);
              display: flex; align-items: center; justify-content: center; }
+/* 短文本时这颗按钮不出现：display:flex 会盖掉 hidden 属性，得自己补一条 */
+.chat-more[hidden] { display: none; }
 .chat-more:active { background: var(--raise); }
 .chat-more svg { transition: transform .18s var(--ease); }
-.chat.chat-expanded .chat-more svg { transform: rotate(180deg); }
-.chat.chat-expanded .chat-field textarea { max-height: 40vh; }
-.chat.chat-expanded .chat-hint { display: none; }
 /* 待确认的附件导入：和 note 同样占一行，但带两个按钮 */
 .chat-confirm .cf-name { font-weight: 600; color: var(--ink); }
 .chat-confirm .cf-warn { margin-top: 8px; font-size: .75rem; font-weight: 600; color: var(--ink); }
@@ -603,6 +606,24 @@ button.rec:active { opacity: .62; }
                     border-radius: 16px; border: 1.5px solid var(--line); background: var(--raise);
                     font-family: inherit; font-size: .875rem; color: var(--ink); line-height: 1.4; }
 .chat-in textarea:focus { border-color: var(--ink-2); outline: none; }
+/* 长文本浮窗：字数超过阈值才露出「展开」，点它把同一颗输入框搬进来（不复制，值与光标都在）。
+   浮窗压在对话（990）之上、附件拦截层（999）之下；搬进来的 textarea 由这条撑满，
+   height 用 !important 盖掉 chatAutoGrow 写在行内的小框高度。 */
+.big-in { position: fixed; left: 4vw; right: 4vw; top: calc(var(--st) + 56px);
+          bottom: calc(var(--sb) + 40px); z-index: 998; display: flex; flex-direction: column;
+          background: var(--paper); border: 1px solid var(--line); border-radius: var(--r-card);
+          box-shadow: 0 18px 48px rgba(16,18,22,.22);
+          visibility: hidden; opacity: 0; transform: translateY(14px);
+          transition: opacity .2s var(--ease), transform .2s var(--ease), visibility .22s; }
+.big-in.on { visibility: visible; opacity: 1; transform: translateY(0); }
+.big-in-head { flex: 0 0 auto; display: flex; align-items: center; padding: 12px 14px 6px; }
+.big-in-t { flex: 1; font-size: .8125rem; font-weight: 700; color: var(--ink-2); }
+.big-in-btn { flex: 0 0 auto; margin-left: 8px; padding: 9px 14px; border: none; border-radius: 12px;
+              background: var(--raise); color: var(--ink); font-size: .8125rem; font-weight: 600; }
+.big-in-btn.primary { background: var(--ink); color: var(--paper); }
+.big-in-body { flex: 1 1 auto; min-height: 0; display: flex; padding: 0 14px 14px; }
+.big-in-body textarea { flex: 1; height: auto !important; max-height: none !important;
+                        border-radius: 14px; font-size: .9375rem; line-height: 1.6; }
 /* 空会话（新对话）：头像放大、名字与输入框居中，虚线提示在输入框下面。
    发送后整组收起，输入框回到底部（chatFoot），头部名字重新出现。 */
 .chat-hero { flex: 1; min-height: 0; display: flex; flex-direction: column; align-items: center;
@@ -980,8 +1001,8 @@ html.swap, html.swap * { transition: none !important; }
    否则它会沿竖直方向抢高度 */
 .msg-body .live { flex: 0 0 auto; max-width: 100%; }
 /* 卡片比气泡宽：气泡按文字长度收缩，卡片要占满整行才好看 */
-/* 卡片与气泡分开摆：上 10px 是标题与气泡正文的呼吸，下 10px 是按钮与
-   「内容由大肥鱼生成」提示行之间的呼吸（P0 验收 D-1/D-2）。 */
+/* 卡片与气泡分开摆：上 10px 是标题与气泡正文的呼吸，下 10px 是按钮与下方输入区的呼吸
+   （P0 验收 D-1/D-2；原来那格写的是免责声明行，2026-11-02 按裁定删掉了）。 */
 .oui-slot { display: block; width: 100%; margin: 10px 0; }
 .oui-slot:empty { display: none; }   /* 画不出来就当没这张卡，不留空框 */
 
@@ -994,6 +1015,21 @@ html.swap, html.swap * { transition: none !important; }
              background: rgba(20,22,26,.18); visibility: hidden; opacity: 0;
              transition: opacity .22s var(--ease), visibility .25s; }
 .oui-scrim.on { visibility: visible; opacity: 1; }
+
+/* 附件小浮窗的拦截层：压在对话（990）之上、浮窗（1000）之下，点它=收回浮窗 */
+.att-scrim { position: fixed; top: 0; left: 0; right: 0; bottom: 0; z-index: 999;
+             background: rgba(20,22,26,.18); visibility: hidden; opacity: 0;
+             transition: opacity .22s var(--ease), visibility .25s; }
+.att-scrim.on { visibility: visible; opacity: 1; }
+
+/* 看图层：聊天里发出去的图片点开，深色铺底、原样显示，点任意处收回 */
+.img-view { position: fixed; top: 0; left: 0; right: 0; bottom: 0; z-index: 1150;
+            background: rgba(12,13,16,.92); display: flex; align-items: center; justify-content: center;
+            visibility: hidden; opacity: 0; transition: opacity .2s var(--ease), visibility .22s; }
+.img-view.on { visibility: visible; opacity: 1; }
+.img-view img { max-width: 94vw; max-height: 82vh; object-fit: contain; }
+.img-view .iv-tip { position: absolute; left: 0; right: 0; bottom: calc(var(--sb) + 30px);
+                    text-align: center; font-size: .75rem; color: rgba(255,255,255,.6); }
 
 /* 卡片悬浮窗：压在对话（990）之上、面板（1000）之下；底部留出输入条的高度 */
 .oui-win { position: fixed; left: 4vw; right: 4vw; bottom: calc(var(--sb) + 112px);

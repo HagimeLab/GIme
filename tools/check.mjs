@@ -1533,7 +1533,27 @@ ok("思考完成后默认收起",
      .indexOf('<details class="think" open>') < 0);
 
 ok("思考流追加文本节点，避免整块重建", /tb\.firstChild\.appendData/.test(html)
-   && /_thinkScrollAt/.test(html) && /var fast = p\.hasThink/.test(html));
+   && /_thinkScrollAt/.test(html) && /var fast = !uiGenFlip && p\.hasThink/.test(html));
+/* 围栏一出现就是「在生成组件」：藏源码那颗气泡要跟着换字，靠编号翻转打破快路径 */
+ok("OpenUI 源码还在流时挂一颗「大肥鱼生成中…」", (() => {
+  const m = { id: "oui1", live: true, text: '看这张卡\n```openui-lang\nroot = Card(Text("甲"' };
+  const p = W.chatLiveParts(m);
+  return p.uiGen === true && p.text === "看这张卡"
+      && W.chatLiveHtml(m).indexOf("大肥鱼生成中") >= 0;
+})());
+ok("没有围栏就不挂生成气泡", (() => {
+  const m = { id: "oui2", live: true, text: "就是普通一句话" };
+  return W.chatLiveParts(m).uiGen === false
+      && W.chatLiveHtml(m).indexOf("大肥鱼生成中") < 0;
+})());
+ok("答完之后不再挂生成气泡", (() => {
+  const m = { id: "oui3", live: false, text: '```openui-lang\nroot = Card(Text("甲"))\n```' };
+  const done = W.chatLiveParts(m);
+  return done.uiGen === false && W.chatLiveHtml(m).indexOf("大肥鱼生成中") < 0;
+})());
+ok("围栏出现/消失会打断只改文本的快路径",
+   /var uiGenFlip = \(m\._liveUiGen === true\) !== p\.uiGen;/.test(html)
+   && /m\._liveUiGen = p\.uiGen;/.test(html));
 ok("同样的内容不重复写 DOM，滚动也节流",
    /if \(m\._html === html\) return;/.test(html) && /now - _liveScrollAt > 120/.test(html));
 ok("被丢掉的气泡不再触发重画",
@@ -2730,10 +2750,43 @@ ok("首页对话整屏，答题页仍走底部上滑", (() => {
 })());
 ok("全屏对话可下拉收回", /function chatPullInit/.test(html)
    && /touchmove/.test(html) && /dy > 110/.test(html));
-ok("输入框可展开/收起", /function chatToggleInput/.test(html)
-   && /chat-expanded/.test(html) && /function chatAutoGrow/.test(html)
+/* 输入框的展开改成「按需悬浮」：短文本没这颗按钮，写长了才露出来，点开是浮窗 */
+ok("输入框：超过字数才露「展开」，点开是悬浮窗", (() => {
+  const ta = W.document.getElementById("chatText"), btn = W.document.getElementById("chatExpand");
+  ta.value = "甲".repeat(59); W.chatAutoGrow(ta);
+  const shortKept = btn.hidden;
+  ta.value = "甲".repeat(60); W.chatAutoGrow(ta);
+  const longShows = btn.hidden;
+  W.chatBigOpen();
+  const opened = { on: W.document.getElementById("bigIn").classList.contains("on"),
+                   moved: W.document.getElementById("bigInBody").children.length === 1,
+                   btnHidden: btn.hidden, sameNode: ta === W.document.getElementById("chatText") };
+  W.chatBigClose();
+  const closed = { on: W.document.getElementById("bigIn").classList.contains("on"),
+                   back: W.document.getElementById("chatField").children[0] === ta,
+                   /* 字还那么多：按钮该继续露着，收回浮窗不等于「不再需要展开」 */
+                   btnStill: btn.hidden === false };
+  ta.value = ""; W.chatAutoGrow(ta);
+  const emptied = btn.hidden;
+  return shortKept && !longShows && opened.on && opened.moved
+      && opened.btnHidden && opened.sameNode && !closed.on && closed.back && closed.btnStill && emptied;
+})());
+ok("展开走的是搬节点，不做第二份输入框", /body\.appendChild\(ta\);\s*\/\* 移动节点，不重建 \*\//.test(html)
+   && !/function chatToggleInput/.test(html) && !/chat-expanded/.test(html)
    && /id="chatExpand"/.test(html) && /oninput="chatAutoGrow\(this\)"/.test(html));
-ok("展开控件在输入框内部", /<div class="chat-field">/.test(html)
+ok("浮窗无论从哪条路收，输入框都回原位",
+   /if \(el\.id === "bigIn" && typeof chatBigClosed === "function"\) chatBigClosed\(\);/.test(jsSources[3])
+   && /if \(el\.id === "chat" && typeof chatBigClose === "function"\) chatBigClose\(\);/.test(jsSources[3])
+   && /ta\.parentNode !== field\) field\.appendChild\(ta\);/.test(html));
+ok("浮窗占大屏、textarea 盖掉行内高度", /\.big-in \{[^}]*z-index: 998/.test(cssText)
+   && /\.big-in-body textarea \{[^}]*height: auto !important/.test(cssText)
+   && /\.chat-more\[hidden\] \{ display: none; \}/.test(cssText));
+/* 输入框下面那行只留「没配好」的提示：那一句免责声明按裁定删掉了，空行不占高 */
+ok("免责声明已从界面删掉，空提示行不占高",
+   html.indexOf("内容由大肥鱼生成，可能有误") < 0
+   && /hint\.textContent = agentCfg\(\) \? ""/.test(html)
+   && /\.chat-hint:empty \{ display: none; \}/.test(cssText));
+ok("展开控件在输入框内部", /<div class="chat-field" id="chatField">/.test(html)
    && /\.chat-field\s*\{[^}]*position:\s*relative/.test(cssText)
    && /\.chat-more\s*\{[^}]*position:\s*absolute/.test(cssText));
 ok("对话打开后多段补滚到底", /function chatScrollBottomSoon/.test(html)
@@ -3281,6 +3334,75 @@ ok("上传中发送被拦住，按钮变「上传中」并禁用",
 ok("撤图不受上传限制（× 一直在）", /onclick="chatImageDrop\(/.test(html)
    && /function chatImageDrop\(i\) \{\s*\n\s*chatImages\.splice\(i, 1\);/.test(html)
    && !/chatImageDrop[^;]{0,80}disabled/.test(html));
+
+/* ---------- 29d-3. 附件浮窗三点收口：点外面收回 / 上传成功 / 点开看图 ---------- */
+section("[29d-3] 附件浮窗收口与图片查看");
+/* 浮窗压在对话（990）之上，共享遮罩（960）够不着它，所以单独铺一层拦截层 */
+ok("附件浮窗点外面也收回", (() => {
+  while (W.openLayers.length) W.closeTop();
+  W.chatAttachSheet();
+  const sh = W.document.getElementById("sheet3"), sc = W.document.getElementById("attScrim");
+  const opened = sh.classList.contains("on") && sc.classList.contains("on");
+  W.chatAttachScrimTap();
+  const closed = !sh.classList.contains("on") && !sc.classList.contains("on");
+  while (W.openLayers.length) W.closeTop();
+  return opened && closed;
+})());
+ok("拦截层夹在对话与浮窗之间（990 < 999 < 1000）",
+   /\.att-scrim \{[^}]*z-index: 999/.test(cssText) && /\.sheet \{[^}]*z-index: 1000/.test(cssText));
+/* 面板从哪条路关掉都要擦掉拦截层：返回键、点项、点浮窗外面共用一个出口 */
+ok("浮窗关掉时拦截层跟着没", /if \(el\.id === "sheet3" && typeof sheet3Closed/.test(jsSources[3])
+   && /function sheet3Closed\(\) \{ chatAttachScrim\(false\); \}/.test(html));
+ok("状态行：正在上传图片 → 上传成功", (() => {
+  W.chatImagesClear();
+  W.chatImages.push({ name: "a.jpg", thumb: "data:image/jpeg;base64,AAA", idx: 0, state: "up", p: 0, id: "" });
+  const up = W.chatImgStatus();
+  W.chatImages[0].state = "ok";
+  const okTxt = W.chatImgStatus();
+  W.chatImages[0].state = "err";
+  const bad = W.chatImgStatus();
+  W.chatImagesClear();
+  return up === "正在上传图片…" && okTxt === "上传成功" && bad.indexOf("没传上去") >= 0;
+})());
+ok("最后一张落地才说一次「上传成功」",
+   /if \(chatImages\.length && !chatAnyImgUp\(\)\) toast\(chatImgStatus\(\)\);/.test(html)
+   && /<span class="ci-st/.test(html));
+/* 点聊天里的图看大图：缩略图先铺上，原图按消息里记的 content uri 现取 */
+ok("气泡里的图可点开，地址只收 content://", (() => {
+  W.chatImagesClear();
+  W.onChatImages(JSON.stringify([
+    { name: "a.jpg", thumb: "data:image/jpeg;base64,AAA", src: "content://media/external/images/1" },
+    { name: "b.jpg", thumb: "data:image/jpeg;base64,BBB", src: "javascript:alert(1)" }
+  ]));
+  W.chatMsgs = [{ id: "u1", role: "user", text: "看这两张", imgs: W.chatImages.slice() }];
+  W.chatRender();
+  const h = String(W.document.getElementById("chatList").innerHTML);
+  W.chatMsgs = [];
+  W.chatImagesClear();
+  return h.indexOf('data-src="content://media/external/images/1"') >= 0
+      && h.indexOf('data-src="javascript') < 0 && h.indexOf('data-src=""') >= 0
+      && h.indexOf('onclick="chatImgView(this)"') >= 0;
+})());
+ok("看图层点开即铺缩略图、点任意处收回",
+   /img\.src = th;[\s\S]{0,40}_imgViewReq\+\+/.test(html)
+   && /openLayer\(pic\);/.test(html)
+   && /<div class="img-view" id="imgView" onclick="closeTop\(\)"/.test(skeletonHtml)
+   && /\.img-view \{[^}]*z-index: 1150/.test(cssText));
+ok("回来的原图只对得上这一次展示（换一张/收了就丢）",
+   /if \(Number\(req\) !== _imgViewReq\) return;/.test(html));
+ok("原生只认 content://，大图缩到最长边 1280",
+   mainSrc.indexOf('!uriStr.startsWith("content://")') >= 0
+   && /decodeScaled\(Uri\.parse\(uriStr\), 1280\)/.test(mainSrc)
+   && mainSrc.indexOf("window.onChatImageView") >= 0);
+/* 连着选两批图时 idx 不能每批清零：前一张还挂在输入区，清零会让它传成新批的图 */
+ok("idx 是全局序号，不每批清零",
+   /final int base = pickedImageUris\.size\(\);/.test(mainSrc)
+   && /o\.put\("idx", base \+ k\)/.test(mainSrc)
+   && mainSrc.indexOf("pickedImageUris.clear()") < 0);
+ok("选图时申请持久读授权，并把原图地址带给页面",
+   mainSrc.indexOf("takePersistableUriPermission(list.get(k)") >= 0
+   && /o\.put\("src", String\.valueOf\(list\.get\(k\)\)\)/.test(mainSrc)
+   && /src: String\(list\[i\]\.src \|\| ""\)\.indexOf\("content:\/\/"\) === 0/.test(html));
 
 /* ---------- 29e. 题库名上限：超长先改名，不静默截断 ---------- */
 section("[29e] 题库名上限：超长先改名，不静默截断");
