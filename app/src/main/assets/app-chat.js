@@ -543,6 +543,7 @@ function chatDrop(m) {
   if (!m) return;
   m._dead = true;
   m._pump = false;
+  m._tpump = false;
   m.live = false;
   var i = chatMsgs.indexOf(m);
   if (i >= 0) chatMsgs.splice(i, 1);
@@ -1252,11 +1253,52 @@ function pokeLive(m, done) {
   }
   setTimeout(step, 0);
 }
+/* 思考链同一条流上的另一路增量：网页版（内置通道）上游是「一大块 + 停一秒」，
+   原生 Streamer 攒够 24 字就立刻连发，实测增量间隔 p50=1ms / p95=999ms。
+   照实画就是跳一下冻一下；这里按帧把它铺开，节奏与正文一致。 */
+function liveThink(m) {
+  var full = String((m && m.reasoning) || "");
+  if (!m || !m.live || m.shownThink == null) return full;
+  return full.slice(0, Math.min(m.shownThink, full.length));
+}
+function pokeThink(m) {
+  if (!m) return;
+  if (m._tpump) return;
+  if (m.shownThink == null) m.shownThink = 0;
+  m._tpump = true;
+  function step() {
+    if (!m._tpump) return;
+    var full = String(m.reasoning || "");
+    if (m.shownThink < full.length) {
+      m.shownThink = Math.min(full.length, m.shownThink + Math.max(3, Math.ceil((full.length - m.shownThink) / 8)));
+      chatLivePaint(m);
+    }
+    if (m.shownThink >= full.length) {
+      m._tpump = false;
+      var cb = m._tdone;
+      m._tdone = null;
+      if (cb) cb();
+      return;
+    }
+    setTimeout(step, 28);
+  }
+  setTimeout(step, 0);
+}
+/* 收尾：正文和思考链都铺完才关 live。
+   早关的话最后一大段会一次性砸出来（正文那条注释说的就是这件事）。 */
+function chatLiveSettle(m) {
+  var fin = function () { m.live = false; chatRender(); };
+  var pending = 0;
+  var once = function () { if (--pending <= 0) fin(); };
+  if (m._pump) { pending++; m._done = once; }
+  if (m._tpump) { pending++; m._tdone = once; }
+  if (!pending) fin();
+}
 /* 流式期间只画思考链最后这一截：整段（几千字）每帧重新转义 + 重排，
    手机上就是持续掉帧；答完再一次性渲染全文（默认收起，不占屏）。 */
 function chatLiveParts(m) {
   var think = String((m && m.reasoning) || "");
-  var thinkView = think;
+  var thinkView = liveThink(m);
   var text = liveText(m);
   /* 工具轮次里上游吐的是 <tool_call>{...}，那是给解析器看的，别亮给用户。
      这一轮的气泡最后会被丢掉，但流式期间不能闪一串 JSON。 */
@@ -1305,7 +1347,7 @@ function chatLiveHtml(m) {
 var _liveScrollAt = 0, _thinkScrollAt = 0;
 function chatLivePaint(m) {
   if (!m || !m.id || m._dead) return;
-  var thinkFull = String((m && m.reasoning) || "");
+  var thinkFull = liveThink(m);          /* 铺开的视图，不是上游全量：全量一次画就是跳 */
   var textRaw = String((m && m.text) || "");
   /* 最热路径：只有思考在增长、正文没变。直接追加文本节点，
      不查 DOM、不读 list/think 布局、不算 parts。 */
@@ -2212,7 +2254,7 @@ async function chatRun(cfg, attachMeta) {
   function liveBubble() {
     var m = chatPush({ role: "assistant", text: "", reasoning: "", live: true }, true);
     m.onDelta = function (kind, chunk) {
-      if (kind === "think") { m.reasoning += chunk; chatLivePaintSoon(m); }
+      if (kind === "think") { m.reasoning += chunk; pokeThink(m); }
       else {
         if (m.shown == null) m.shown = m.text.length;
         m.text += chunk;
@@ -2247,6 +2289,7 @@ async function chatRun(cfg, attachMeta) {
         live.text = "";
         live.reasoning = "";
         live.shown = 0;
+        live.shownThink = 0;
         live._html = "";
         try { chatLivePaint(live); } catch (x) { }
       });
@@ -2492,19 +2535,10 @@ async function chatRun(cfg, attachMeta) {
     }
     if (dig.length) live.tools = capDigest(dig);
     if (!live.reasoning) live.reasoning = String(msg.reasoning_content || "");
-    /* live 先别关：settle 期间 chatLiveHtml 仍按纯文本显示，等 shown 追上全量
-       再切 Markdown。否则最后一大段会在收尾时一次性砸出来。 */
-    var hadText = String(live.text || "").length > 0;
     chatSave();
-    if (!hadText) {
-      live.live = false;
-      chatRender();
-      return;
-    }
-    pokeLive(live, function () {
-      live.live = false;
-      chatRender();
-    });
+    /* live 先别关：等 shown / shownThink 都追上全量再切 Markdown，
+       否则最后一大段会在收尾时一次性砸出来。 */
+    chatLiveSettle(live);
     return;
   }
   /* 步数用完不再抛错：原来这里 throw，用户只看到一条报错，而这几步已经查到的
@@ -2562,7 +2596,7 @@ async function chatRun(cfg, attachMeta) {
   if (stopUncounted) fin.uncountedFinal = true;   /* 诊断包可见：护栏统计未含这次收口请求 */
   if (!fin.reasoning) fin.reasoning = String((m2 && m2.reasoning_content) || "");
   chatSave();
-  pokeLive(fin, function () { fin.live = false; chatRender(); });
+  chatLiveSettle(fin);
 }
 /* 工具轮次上限：8 轮在多工具长任务里会在收尾前被截停（g15 实测），放到 10 轮；
    token 预算仍是硬闸，不会无限跑。 */

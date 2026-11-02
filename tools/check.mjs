@@ -1459,8 +1459,29 @@ ok("没有订阅时推增量不报错", (() => {
 /* 上游把正文攒成一大段时，气泡按剩余量分帧摊开；文本本身不丢 */
 const paceMsg = { live: true, text: "abcdef", shown: 2 };
 ok("流式正文按 shown 截断显示", W.liveText(paceMsg) === "ab", W.liveText(paceMsg));
-ok("收尾等摊完再切 Markdown",
-   /pokeLive\(live, function \(\) \{[\s\S]{0,60}live\.live = false;[\s\S]{0,30}chatRender\(\)/.test(html));
+/* 思考链同一套摊帧：网页版（内置通道）实测增量 p50=1ms / p95=999ms，
+   照实画就是「跳一大块、冻一秒」。 */
+ok("思考链按 shownThink 截断显示", W.liveThink({ live: true, reasoning: "abcdef", shownThink: 2 }) === "ab");
+ok("思考链收尾后给全文，不被 shownThink 卡住",
+   W.liveThink({ live: false, reasoning: "abcdef", shownThink: 2 }) === "abcdef"
+   && W.liveThink({ live: true, reasoning: "abcdef" }) === "abcdef");
+ok("思维链增量走摊帧，不再每个 chunk 直接画一次",
+   /if \(kind === "think"\) \{ m\.reasoning \+= chunk; pokeThink\(m\); \}/.test(html)
+   && /function pokeThink\(m\)/.test(html)
+   && /m\.shownThink = Math\.min\(full\.length/.test(html));
+/* 收尾口径：两条流都摊完才关 live。钉行为，不钉源码形状。 */
+ok("收尾等两条流摊完才切 Markdown", (() => {
+  const onlyThink = { live: true, _tpump: true };
+  W.chatLiveSettle(onlyThink);
+  const heldThink = onlyThink.live === true && typeof onlyThink._tdone === "function";
+  const both = { live: true, _pump: true, _tpump: true };
+  W.chatLiveSettle(both);
+  const heldBoth = both.live === true && typeof both._done === "function" && typeof both._tdone === "function";
+  both._done();
+  const stillHeld = both.live === true;
+  both._tdone();
+  return heldThink && heldBoth && stillHeld && both.live === false;
+})());
 ok("思考时默认展开",
    W.chatLiveHtml({ id: "t1", live: true, reasoning: "想一想", text: "" })
      .indexOf('<details class="think" open>') >= 0);
@@ -1471,9 +1492,6 @@ ok("思考完成后默认收起",
    W.chatLiveHtml({ id: "t1", live: false, reasoning: "想一想", text: "答" })
      .indexOf('<details class="think" open>') < 0);
 
-ok("思维链增量走帧节流，不再每个 chunk 重排一次",
-   /if \(kind === "think"\) \{ m\.reasoning \+= chunk; chatLivePaintSoon\(m\); \}/.test(html) &&
-   /function chatLivePaintSoon\(m\)/.test(html));
 ok("思考流追加文本节点，避免整块重建", /tb\.firstChild\.appendData/.test(html)
    && /_thinkScrollAt/.test(html) && /var fast = p\.hasThink/.test(html));
 ok("同样的内容不重复写 DOM，滚动也节流",
