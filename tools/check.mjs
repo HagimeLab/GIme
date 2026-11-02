@@ -1462,6 +1462,34 @@ ok("流式正文按 shown 截断显示", W.liveText(paceMsg) === "ab", W.liveTex
 /* 思考链同一套摊帧：网页版（内置通道）实测增量 p50=1ms / p95=999ms，
    照实画就是「跳一大块、冻一秒」。 */
 ok("思考链按 shownThink 截断显示", W.liveThink({ live: true, reasoning: "abcdef", shownThink: 2 }) === "ab");
+/* 摊帧引入过的回归：链已到但还没摊出字时，hasThink 若看全量就会用空盒子顶掉打字泡，
+   用户看到的是「发出后一点反馈都没有」。 */
+ok("链还没摊出字时仍是「大肥鱼正在想…」打字泡，不给空盒", (() => {
+  const busy = W.chatBusy, title = W.chatWork.title;
+  W.chatBusy = false; W.chatWork.title = "";
+  const h = W.chatLiveHtml({ id: "tp1", live: true, reasoning: "想一想", text: "", shownThink: 0 });
+  W.chatBusy = busy; W.chatWork.title = title;
+  return h.indexOf('class="bubble typing"') >= 0 && h.indexOf("大肥鱼正在想") >= 0
+      && h.indexOf("<details") < 0;
+})());
+ok("摊出字之后换成思考链盒子（标题仍是正在思考）", (() => {
+  const h = W.chatLiveHtml({ id: "tp2", live: true, reasoning: "想一想", text: "", shownThink: 2 });
+  return h.indexOf('<details class="think"') >= 0 && h.indexOf("正在思考…") >= 0
+      && h.indexOf('class="think-body">想一<') >= 0;
+})());
+/* 回答中途被杀掉 → live:true 落盘 → chatHasLive() 恒真 → 「大肥鱼正在想…」再也出不来。
+   用户报的「发出后没反馈」就是这条。 */
+ok("读回来的消息不再带着 live", (() => {
+  const old = W.chatMsgs;
+  W.chatMsgs = [{ id: "r_live", role: "assistant", text: "x", live: true, _pump: true, _tpump: true }];
+  const out = W.chatSettleRestored(W.chatMsgs);
+  const cleared = out[0].live === false && out[0]._pump === false && out[0]._tpump === false;
+  const hasLive = W.chatHasLive();
+  W.chatMsgs = old;
+  return cleared === true && hasLive === false;
+})());
+ok("三处读盘入口都过这道收口（启动两条分支 + 切会话）",
+   (jsSources[5].match(/chatSettleRestored\(/g) || []).length >= 4);
 ok("思考链收尾后给全文，不被 shownThink 卡住",
    W.liveThink({ live: false, reasoning: "abcdef", shownThink: 2 }) === "abcdef"
    && W.liveThink({ live: true, reasoning: "abcdef" }) === "abcdef");
@@ -1482,6 +1510,18 @@ ok("收尾等两条流摊完才切 Markdown", (() => {
   both._tdone();
   return heldThink && heldBoth && stillHeld && both.live === false;
 })());
+/* 回答中途被杀掉时 live:true 会跟着 chatSave 落盘；读回来若不清掉，
+   chatHasLive() 恒真 → 「大肥鱼正在想…」那颗等待气泡永远不出现。 */
+ok("从盘上读回来的消息一律算答完（live 清零，等待气泡不被压掉）", (() => {
+  const a = { role: "assistant", text: "旧答案", live: true, _pump: true, _tpump: true };
+  const b = { role: "assistant", text: "正常", live: false };
+  const list = [a, b];
+  const out = W.chatSettleRestored(list);
+  return out === list && a.live === false && a._pump === false
+      && a._tpump === false && b.live === false;
+})());
+ok("三处读盘口都走清零（启动两条分支 + 切会话）",
+   (html.match(/chatSettleRestored\(/g) || []).length >= 4);
 ok("思考时默认展开",
    W.chatLiveHtml({ id: "t1", live: true, reasoning: "想一想", text: "" })
      .indexOf('<details class="think" open>') >= 0);

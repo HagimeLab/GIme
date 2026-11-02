@@ -136,7 +136,7 @@ function chatLoadConv(id) {
   /* 切走时把当前那个空会话删掉——它从没产生过对话 */
   chatPruneEmpty(id);
   chatCurId = target.id;
-  chatMsgs = (target.msgs || []).slice(-200);
+  chatMsgs = chatSettleRestored((target.msgs || []).slice(-200));
   /* 切换会话 = 切换网页侧那条链路：缺映射的在这里补建，之后的提问都落到它上面 */
   chatUseUpstream(chatCurId);
   chatSave();
@@ -244,6 +244,16 @@ function convDel(id) {
   chatRender();
   toast("已删除");
 }
+/* 从盘上读回来的消息不可能还在流式：App 在回答中途被杀掉时，收尾前已经 chatSave()
+   过一次，live:true 就被写进盘里。留着它有两个后果——气泡按流式的纯文本分支画
+   （Markdown 不解析，星号露在外面），更要紧的是 chatHasLive() 从此恒真，
+   把「大肥鱼正在想…」那颗等待气泡永久压掉：发出去到第一个字之间一点反馈都没有。 */
+function chatSettleRestored(list) {
+  for (var i = 0; i < list.length; i++) {
+    if (list[i] && list[i].live) { list[i].live = false; list[i]._pump = false; list[i]._tpump = false; }
+  }
+  return list;
+}
 (function () {
   var s = store.read(LS.c, null);
   var cv = store.read(LS_CV, null);
@@ -252,14 +262,14 @@ function convDel(id) {
     chatCurId = cv.cur && cv.list.some(function (c) { return c.id === cv.cur; })
       ? cv.cur : cv.list[0].id;
     var c0 = chatCurConv();
-    chatMsgs = (c0 && c0.msgs ? c0.msgs : []).slice(-200);
+    chatMsgs = chatSettleRestored((c0 && c0.msgs ? c0.msgs : []).slice(-200));
   } else {
     /* 老版本只有一份聊天记录：收编成一个会话，标题留给 chatSyncConv 补 */
     var old = (s && Array.isArray(s.messages)) ? s.messages.slice(-200) : [];
     var c = { id: "cv_legacy", title: "", at: Date.now(), msgs: old };
     chatConvs = [c];
     chatCurId = c.id;
-    chatMsgs = old.slice();
+    chatMsgs = chatSettleRestored(old.slice());
     chatSyncConv();
     chatConvSave();
   }
@@ -1315,7 +1325,7 @@ function chatLiveParts(m) {
                      : "思考过程 · " + think.length + " 字";
   var wait = tooling ? "正在调用工具…"
                      : (chatBusy && chatWork && chatWork.title ? chatWork.title : "大肥鱼正在想…");
-  return { think: thinkView, hasThink: !!think, text: text, tooling: tooling,
+  return { think: thinkView, hasThink: !!thinkView, text: text, tooling: tooling,
            open: open, label: label, wait: wait };
 }
 function chatLiveHtml(m) {
