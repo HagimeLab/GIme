@@ -3280,11 +3280,19 @@ function ouiSignatureLines() {
   return OUI_SIG_CACHE;
 }
 function chatAgentRules() {
-  return "Agent 执行规则：需要题库数据时先读（建计划只要 id 时用 compact:true）；" +
+  return "【回答形态·强约束】只要是在回答用户问题（知识点讲解、错题分析、学习规划、数据统计，甚至简短确认），" +
+         "都**必须**用 ```openui-lang 卡片把答案图文并茂地讲出来，**禁止整段纯文本回答**。" +
+         "固定结构：首行 root = Stack([...])；先给结论（Callout / Metric / Badge），再用 Rich 展开讲解，能上图就上图——" +
+         "对比用 Table，趋势/占比/分布用 Chart(bar/line/pie/stack)，步骤/流程用 Steps/Flow，并列多段用 Tab，" +
+         "提醒用 Callout(warn)，公式用 Math 或 Rich 里的 $…$，简单示意图用 Image(\"svg:<svg…>\")。" +
+         "讲解类卡片**至少配 1 个可视化组件**（Table / Chart / Steps / Flow / Grid / Metric / Progress），不要只堆 Rich 文字；" +
+         "Callout / Text 是纯文本、不认 $…$ 公式（会原样显示美元符），公式一律用 Math(...) 或写进 Rich(...)。" +
+         "一张卡讲不完就在 Stack 里放多张 Card（每张带标题），不要退回大段纯文字；极短确认也要包一张卡（如 Callout(\"已记录\",\"…\")）。" +
+         "Agent 执行规则：需要题库数据时先读（建计划只要 id 时用 compact:true）；" +
          "建计划先 create_plan，拿到返回的 plan.id 后再用 update_plan 填日程；" +
          "用户要求提醒或通知时，最后调用 notify_phone。write_answers / write_explanations / " +
          "delete_plan 会先弹预览卡，未批准不要重复调用。" +
-         "需要交互卡片时只用 ```openui-lang：首行 root = Stack([...])，**参数一律按签名的位置写，不要写 key: value**——" +
+         "所有卡片都只用 ```openui-lang（这条是硬格式）：首行 root = Stack([...])，**参数一律按签名的位置写，不要写 key: value**——" +
          "这个解析器会把一个具名参数多计一个，Text/Row 这类参数少的组件会直接报「takes N arg(s), got M」并把多出来的整条丢掉；" +
          "中间那几位用不上就写空值：Chart(\"bar\", 标签, 数值, [], \"\", \"题\")、Row(子组件, \"start\", \"sm\")；" +
          "组件签名（由官方 schema 生成）：\n" + ouiSignatureLines() + "\n" +
@@ -3305,7 +3313,9 @@ function chatAgentRules() {
          "确认后的动作可以就是 approve 或 send:<文本>。" +
          "Card 第一个参数是标题字符串、第二个才是子组件数组；没有标题就直接用 Stack，不要写 Card([...])。" +
          "示例：root = Stack([Card(\"标题\", [Text(\"正文\"), Progress(\"完成度\", 50), Button(\"继续\", \"send:继续\")])])。" +
+         "图文示范：root = Stack([Callout(\"结论\", \"勾股定理：a² + b² = c²\", \"info\"), Table([\"边\", \"长度\"], [[\"a\", \"3\"], [\"b\", \"4\"], [\"c\", \"5\"]]), Steps([\"先认直角边 a、b\", \"再算斜边 c = √(a² + b²)\"]), Button(\"出 3 道练习\", \"send:出三道勾股定理练习\")])。" +
          "不要用 Card { ... } 块语法，也不要在正文重复卡片内容。" +
+         "再次强调：任何一条回答都必须带 ```openui-lang 卡片，纯文字回复视为不合格。" +
          (webSearchOn() ? "联网搜索已开启：用户问学习资料、最新信息或备考建议时，优先联网检索；" +
            "推荐资料要给出可点击链接、来源和适用场景，不要编造链接。" : "");
 }

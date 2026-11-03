@@ -1434,7 +1434,7 @@ ok("答题页关着时请求里没有题目段",
      const sys = noCtxReq.messages.filter((m) => m.role === "system");
      return sys.length >= 2 && sys.length <= 4 &&
        sys[0].content.indexOf("当前题目上下文") < 0 &&
-       sys.some((m) => m.content.indexOf("Agent 执行规则") === 0) &&
+       sys.some((m) => m.content.indexOf("Agent 执行规则") >= 0) &&
        JSON.stringify(noCtxReq.messages).indexOf("当前题目上下文") < 0;
    })(),
    JSON.stringify(noCtxReq && noCtxReq.messages.map((m) => m.role)));
@@ -5554,6 +5554,29 @@ ok("单题就超上限的工具结果截短字段后仍是合法 JSON 且不超�
 ok("无障碍：Tab 是 tablist/tab、表头 scope=col、空态区分 status/button",
    uiSrc.indexOf("'role', 'tablist'") >= 0 && uiSrc.indexOf("'aria-selected'") >= 0 &&
    uiSrc.indexOf("'scope', 'col'") >= 0 && uiSrc.indexOf("eAct ? 'button' : 'status'") >= 0);
+
+section("[30b-8] 交互体验：回答一律 OpenUI 卡片图文讲解，不许纯文本");
+const ruleText = String(W.chatAgentRules());
+ok("系统提示写死「必须用卡片、禁止整段纯文本」，且结尾再强调一次",
+   ruleText.indexOf("【回答形态·强约束】") >= 0 &&
+   ruleText.indexOf("禁止整段纯文本回答") >= 0 &&
+   ruleText.indexOf("再次强调") >= 0 && ruleText.indexOf("纯文字回复视为不合格") >= 0);
+ok("给出「按内容选组件」的图文映射（结论/对比/趋势/步骤/并列/公式/示意）",
+   ruleText.indexOf("先给结论") >= 0 && ruleText.indexOf("对比用 Table") >= 0 &&
+   ruleText.indexOf("Chart(bar/line/pie/stack)") >= 0 &&
+   ruleText.indexOf("步骤/流程用 Steps/Flow") >= 0 &&
+   ruleText.indexOf("并列多段用 Tab") >= 0 && ruleText.indexOf('Image("svg:') >= 0);
+ok("极短确认也要求成卡，不允许只回一句话",
+   ruleText.indexOf("极短确认也要包一张卡") >= 0);
+ok("讲解卡至少配 1 个可视化组件，并提示 Callout/Text 不认 $公式$",
+   ruleText.indexOf("至少配 1 个可视化组件") >= 0 &&
+   ruleText.indexOf("Callout / Text 是纯文本") >= 0);
+ok("提示里带的图文示范卡可被解析器接受（Callout+Table+Steps+Button）", (() => {
+  const mm = ruleText.match(/图文示范：(root = [\s\S]*?)。/);
+  if (!mm) return false;
+  const r = W.OpenUI.parse(mm[1]);
+  return !!(r && r.root) && ((r.meta && r.meta.errors) ? r.meta.errors.length === 0 : true);
+})());
 
 /* ---------- 结果 ---------- */
 console.log("\n" + "=".repeat(46));
