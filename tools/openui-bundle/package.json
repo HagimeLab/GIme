@@ -7,6 +7,7 @@
   },
   "dependencies": {
     "@openuidev/lang-core": "1.0.2",
+    "katex": "0.16.11",
     "zod": "4.6.7"
   },
   "devDependencies": {

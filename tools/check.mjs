@@ -59,6 +59,28 @@ try {
 const html = [cssSource].concat([skeletonHtml]).concat(jsSources).join("\n");
 
 /* ---------- 最小 DOM 桩 ---------- */
+/* 选择器只认两种形状：[data-*] 与 .单个类名。其余（标签名、后代、组合）一律不匹配，
+   等于维持桩原来「querySelectorAll 恒空」的行为——readForm 与新组件的局部重画
+   正好只用这两种，所以先把这两条真做起来，别的地方不会突然多走分支。 */
+function stubMatch(el, sel) {
+  const s = String(sel || "").trim();
+  if (!s) return false;
+  if (s[0] === "[" && s.endsWith("]")) {
+    const key = s.slice(1, -1);
+    const dataKey = key.indexOf("data-") === 0 ? key.slice(5) : key;
+    return !!(el.dataset && Object.prototype.hasOwnProperty.call(el.dataset, dataKey));
+  }
+  if (s[0] === "." && s.indexOf(" ") < 0) return String(el.className || "").split(/\s+/).indexOf(s.slice(1)) >= 0;
+  return false;
+}
+function stubWalk(el, sel, out) {
+  for (const c of (el.children || [])) {
+    if (!c) continue;
+    if (stubMatch(c, sel)) out.push(c);
+    if (c.children) stubWalk(c, sel, out);
+  }
+  return out;
+}
 function makeElement(id) {
   const cls = new Set();
   /* CSSStyleDeclaration 的两个口子：点属性（style.fontSize）和 setProperty（自定义属性 --x）。
@@ -87,8 +109,8 @@ function makeElement(id) {
     /* 渲染层用的是 append（多参），只实现 appendChild 的话卡片在测试里根本画不出来 */
     append: (...cs) => { for (const c of cs) if (c) { el.children.push(c); c.parentNode = el; } },
     remove: () => {},
-    querySelector: () => null,
-    querySelectorAll: () => [],
+    querySelector: (sel) => stubWalk(el, String(sel || ""), [])[0] || null,
+    querySelectorAll: (sel) => stubWalk(el, String(sel || ""), []),
     getBoundingClientRect: () => ({ top: 0, left: 0, bottom: 0, right: 0, width: 0, height: 0 }),
     addEventListener: () => {},
     focus: () => {},
@@ -2788,6 +2810,34 @@ ok("可点样式齐（.oui-tap / 段 / 行 + 按下反馈）", (() => {
 ok("Button 的 copy: 在渲染层就地完成（不落到「动作不支持」）",
    /\/\^copy:\/i\.test\(act\)/.test(jsSources[1]) && /function ouiCopy/.test(jsSources[1]) &&
    /Android\.copyText/.test(jsSources[1]));
+ok("没写 action 的 Button 不画成按钮（死按钮降级成纯文字，不再出现假按钮）", (() => {
+  const dead = uiRender('root = Row([Button("我推完了，对答案"), Button("卡住了，给点提示")])');
+  const live = uiRender('root = Button("继续", "send:继续")');
+  const deadBtns = uiCollect(dead, (n) => n.id === "new-button");
+  const plain = uiCollect(dead, (n) => uiCls(n).indexOf("oui-btn-plain") >= 0);
+  return deadBtns.length === 0 && plain.length === 2 &&
+         uiCollect(live, (n) => n.id === "new-button").length === 1 &&
+         /\.oui-btn-plain\s*\{/.test(cssSource);
+})());
+ok("系统提示明确要求 Button 必须带 action", (() => {
+  const r = W.chatAgentRules();
+  return r.indexOf("每个 Button 都必须带 action") >= 0 && r.indexOf("send:选项文字") >= 0;
+})());
+ok("Button 是轻量描边标签，不再画成实心黑胶囊", (() => {
+  // .oui-btn 本体底色必须是浅面，不能再用 var(--text)（浅色下就是一块近黑实心砖）
+  const base = cssSource.match(/\.oui-btn\s*\{[^}]*\}/);
+  const primary = cssSource.match(/\.oui-btn\.primary\s*\{[^}]*\}/);
+  if (!base || !primary) return false;
+  const baseBg = /background:\s*var\(--surface-2\)/.test(base[0]);
+  const noInkBg = !/background:\s*var\(--text\)/.test(base[0]) && !/background:\s*var\(--text\)/.test(primary[0]);
+  const rounded = /border-radius:\s*12px/.test(base[0]);          // 不再是 999px 胶囊
+  const hairline = /inset 0 0 0 1px var\(--stroke-2\)/.test(base[0]);
+  return baseBg && noInkBg && rounded && hairline;
+})());
+ok("系统提示要求 Button 别当主角（一次最多 2 个，正文可点项优先 Tap/rowAction）", (() => {
+  const r = W.chatAgentRules();
+  return r.indexOf("一次最多给 2 个") >= 0 && r.indexOf("Table.rowAction") >= 0;
+})());
 ok("Input 支持 date / multiline", (() => {
   const d = uiCollect(uiRender('root = Input("d","日期","","date")'), (n) => n.id === "new-input")[0];
   const m = uiCollect(uiRender('root = Input("m","备注","","multiline")'), (n) => n.id === "new-textarea")[0];
@@ -2981,7 +3031,221 @@ ok("问答改成「正文/过程/结果」分块卡", (() => {
       && /\.oui-slot\s*\{[^}]*width:\s*100%/.test(cssText);
 })());
 
+/* ---------- 30b-2. OpenUI 第八轮：Markdown / 公式 / 选项组 / 空态错态 / 分段 / 状态位 ---------- */
+section("[30b-2] OpenUI 第八轮（渲染类缺口）");
+
+ok("Rich 真走 Markdown（加粗与行内代码画出来，不是原样亮源码）", (() => {
+  const box = uiRender('root = Rich("**粗** 和 `x`")');
+  const n = uiCollect(box, (x) => uiCls(x).indexOf("oui-md") >= 0)[0];
+  return !!n && String(n.innerHTML).indexOf("<strong>粗</strong>") >= 0 &&
+         String(n.innerHTML).indexOf("<code>x</code>") >= 0;
+})());
+ok("Text 的 md 参数接通（与 Rich 同一条路）", (() => {
+  const box = uiRender('root = Text("题干 **重点**", false, true)');
+  const n = uiCollect(box, (x) => uiCls(x).indexOf("oui-md") >= 0)[0];
+  return !!n && String(n.innerHTML).indexOf("<strong>重点</strong>") >= 0;
+})());
+ok("没写 md 的 Text 仍是纯文本（老行为不变）", (() => {
+  const box = uiRender('root = Text("**不是粗**")');
+  const n = uiCollect(box, (x) => uiCls(x).indexOf("oui-text") >= 0)[0];
+  return !!n && n.textContent.indexOf("**不是粗**") >= 0 && uiCls(n).indexOf("oui-md") < 0;
+})());
+ok("卡片里的 $公式$ 先摘成占位，不被 Markdown 的强调规则吃掉", (() => {
+  const box = uiRender('root = Rich("**粗** $x_1$ 与 $a*b$")');
+  const n = uiCollect(box, (x) => uiCls(x).indexOf("oui-md") >= 0)[0];
+  const h = String(n.innerHTML);
+  return h.indexOf("oui-mh") >= 0 && h.indexOf("<em>") < 0 && h.indexOf("<strong>粗</strong>") >= 0;
+})());
+ok("Math 组件画得出公式节点，KaTeX 未到也留可读字面量", (() => {
+  const box = uiRender('root = Math("\\\\frac{1}{2}", true)');
+  const n = uiCollect(box, (x) => uiCls(x).indexOf("oui-math") >= 0)[0];
+  return !!n && uiCls(n).indexOf("disp") >= 0 && String(n.textContent).indexOf("\\frac{1}{2}") >= 0;
+})());
+ok("待排公式攒在渲染层，加载完由 ouiMathFlush 一次性补排", (() => {
+  return /const ouiMathPending = \[\]/.test(jsSources[1]) &&
+         /window\.ouiMathFlush = function/.test(jsSources[1]) &&
+         /ouiMathPending\.push\(\{ el: el/.test(jsSources[1]) &&
+         /if \(window\.ouiEnsureMath\) window\.ouiEnsureMath\(\)/.test(jsSources[1]);
+})());
+ok("公式契约写清：反斜杠必须双写（单反斜杠坏在字符串解析那一层）", (() => {
+  const find = (n) => (W.OpenUI.signatures || []).find((x) => x.name === n) || {};
+  const md = String(find("Math").description || "");
+  const rd = String(find("Rich").description || "");
+  return md.indexOf("\\\\frac") >= 0 && md.indexOf("双写") >= 0 && rd.indexOf("双写") >= 0 &&
+         String(W.chatAgentRules).indexOf("反斜杠一律双写") >= 0;
+})());
+ok("公式报错走令牌色（不用 KaTeX 自带的 #cc0000，暗色底读不出）",
+   /\.oui-math \.katex-error \{[^}]*color: var\(--warn\) !important/.test(cssSource));
+ok("KaTeX 与 core 一样按需注入，冷启动不引它", (() => {
+  return !/katex/.test(skeletonHtml) &&
+         /function ouiEnsureMath\(\)/.test(jsSources[5]) &&
+         jsSources[5].indexOf('s.src = "ui/katex/katex.min.js"') >= 0 &&
+         jsSources[5].indexOf('link.href = "ui/katex/katex.min.css"') >= 0 &&
+         /ouiMathFlush/.test(jsSources[5].slice(jsSources[5].indexOf("function ouiEnsureMath")));
+})());
+ok("Markdown 样式表已放宽给卡片共用（不再有只认气泡的 .bubble.md）", (() => {
+  return !/\.bubble\.md/.test(cssSource) && /\.md p \{[^}]*margin: 0 0 8px/.test(cssSource) &&
+         /\.md code \{[^}]*ui-monospace/.test(cssSource) &&
+         /\.oui-text\.oui-md \{[^}]*line-height: 1\.7/.test(cssSource);
+})());
+
+ok("RadioGroup 画出全部选项行 + 一个隐藏域（readForm 的契约不动）", (() => {
+  const box = uiRender('root = RadioGroup("题型", "题型", ["单选", "多选", "判断"], "多选")');
+  const rows = uiCollect(box, (x) => uiCls(x) === "oui-choice");
+  const held = uiCollect(box, (x) => x.dataset && x.dataset.fname === "题型");
+  return rows.length === 3 && held.length === 1 && held[0].value === "多选" &&
+         String(held[0].type) === "hidden";
+})());
+ok("radio 的 name 带每张卡的 gid（两张卡同名字段不会互抢选中态）", (() => {
+  const a = uiRender('root = RadioGroup("q", "A", ["1", "2"])');
+  const b = uiRender('root = RadioGroup("q", "B", ["1", "2"])');
+  const na = uiCollect(a, (x) => String(x.type) === "radio").map((x) => String(x.name));
+  const nb = uiCollect(b, (x) => String(x.type) === "radio").map((x) => String(x.name));
+  return na.length === 2 && na[0] === na[1] && nb.length === 2 &&
+         nb[0] === nb[1] && na[0] !== nb[0] && /^oui-r\d+-q$/.test(na[0]);
+})());
+ok("CheckboxGroup 把选中项拼成「A、B」写进表单", (() => {
+  const box = uiRender('root = CheckboxGroup("章", "章节", ["极限", "导数", "积分"], ["极限", "积分"])');
+  const held = uiCollect(box, (x) => x.dataset && x.dataset.fname === "章");
+  const rows = uiCollect(box, (x) => uiCls(x) === "oui-choice");
+  return held.length === 1 && held[0].value === "极限、积分" && rows.length === 3;
+})());
+ok("表单提交收得到选项组的值（readForm 真在 DOM 上跑）", (() => {
+  const box = uiRender('root = Form("f", [RadioGroup("题型", "题型", ["单选", "多选"], "多选"), Input("天", "天数", "", "number", "7")], "提交")');
+  const form = uiCollect(box, (x) => x.dataset && x.dataset.form === "f")[0];
+  const got = W.readForm(form);
+  const flat = got.map((kv) => kv.join("：")).join("|");
+  return got.length === 2 && flat.indexOf("题型：多选") >= 0 && flat.indexOf("天数：7") >= 0;
+})());
+ok("选项组只留一个字段口子（可见控件不挂 data-fname，避免收到半截）", (() => {
+  const box = uiRender('root = RadioGroup("题型", "题型", ["单选", "多选"])');
+  const fns = uiCollect(box, (x) => x.dataset && Object.prototype.hasOwnProperty.call(x.dataset, "fname"));
+  return fns.length === 1;
+})());
+
+ok("Empty 画出空状态（虚线框 + 可选的整块可点）", (() => {
+  const box = uiRender('root = Empty("这个题库还没有错题", "要不要我挑 10 题", "send:挑 10 题")');
+  const n = uiCollect(box, (x) => uiCls(x).indexOf("oui-empty") >= 0)[0];
+  return !!n && uiCls(n).indexOf("tap") >= 0 && n["attr_data-oui-act"] === "send:挑 10 题" &&
+         uiText(n).indexOf("这个题库还没有错题") >= 0 && uiText(n).indexOf("挑 10 题") >= 0;
+})());
+ok("Error 画出错误态并带重试按钮", (() => {
+  const box = uiRender('root = Error("题库没读全", "只解析出 12 题", "send:再查一遍")');
+  const n = uiCollect(box, (x) => uiCls(x).indexOf("oui-error") >= 0)[0];
+  const btns = uiCollect(box, (x) => uiCls(x).indexOf("oui-btn") >= 0);
+  return !!n && btns.length === 1 && uiText(btns[0]).indexOf("重试") >= 0 &&
+         uiText(n).indexOf("只解析出 12 题") >= 0;
+})());
+ok("Error 没有 retry 时不画死按钮", (() => {
+  const box = uiRender('root = Error("上游超时")');
+  return uiCollect(box, (x) => uiCls(x).indexOf("oui-btn") >= 0).length === 0;
+})());
+ok("Tab 只画当前段的内容（标题一排 + 面板不纵向堆成长页）", (() => {
+  const box = uiRender('root = Tab(["题干", "解析"], [[Text("题干正文")], [Text("解析正文")]])');
+  const tabs = uiCollect(box, (x) => uiCls(x).indexOf("oui-tab-t") >= 0);
+  const body = uiCollect(box, (x) => uiCls(x) === "oui-tabs-b")[0];
+  return tabs.length === 2 && uiCls(tabs[0]).indexOf("on") >= 0 &&
+         uiText(body).indexOf("题干正文") >= 0 && uiText(body).indexOf("解析正文") < 0;
+})());
+ok("labels 与 panels 数量不齐也不崩（缺的那段画空）", (() => {
+  const box = uiRender('root = Tab(["甲", "乙", "丙"], [[Text("一")]])');
+  return uiCollect(box, (x) => uiCls(x).indexOf("oui-tab-t") >= 0).length === 3;
+})());
+ok("Tab 标题行按 App 自己的 44px 触点标准（不是 40px）",
+   /\.oui-tab-t \{[^}]*min-height: 44px/.test(cssSource));
+ok("Details 第三层比第二层多缩进（章节→小节→题目看得出深了一级）",
+   /\.oui-details \.oui-details \.oui-details \{[^}]*margin-left: 6px/.test(cssSource));
+
+ok("Button 的 disabled 不接按击、loading 挂转圈", (() => {
+  const off = uiRender('root = Button("提交", "submit:f", "primary", true)');
+  const b1 = uiCollect(off, (x) => uiCls(x).indexOf("oui-btn") >= 0)[0];
+  const load = uiRender('root = Button("提交", "send:x", "primary", false, true)');
+  const b2 = uiCollect(load, (x) => uiCls(x).indexOf("oui-btn") >= 0)[0];
+  const spin = uiCollect(load, (x) => uiCls(x) === "oui-spin");
+  return !!b1 && b1.disabled === true && uiCls(b1).indexOf("disabled") >= 0 &&
+         !!b2 && b2.disabled === true && spin.length === 1 &&
+         b2["attr_aria-busy"] === "true";
+})());
+ok("Button 的 icon 只占两个字形的位", (() => {
+  const box = uiRender('root = Button("去刷", "drill:线代", "primary", false, false, "⏱ 计时")');
+  const ic = uiCollect(box, (x) => uiCls(x) === "oui-btn-i")[0];
+  const btn = uiCollect(box, (x) => uiCls(x).indexOf("oui-btn") >= 0)[0];
+  return !!ic && ic.textContent.length === 2 && uiText(btn).indexOf("去刷") >= 0;
+})());
+ok("Stack / Row 的 align / justify / padding 落到类名（不写内联 style）", (() => {
+  const box = uiRender('root = Stack([Text("a")], "sm", "center", "between", "md")');
+  const n = uiCollect(box, (x) => uiCls(x).indexOf("oui-stack") >= 0)[0];
+  const c = uiCls(n);
+  return c.indexOf("align-center") >= 0 && c.indexOf("justify-between") >= 0 &&
+         c.indexOf("pad-md") >= 0 && c.indexOf("gap-sm") >= 0 && String(n.style.cssText || "") === "";
+})());
+ok("对齐样式齐（且没有偷偷用 WebView 80 不认的 flex gap）", (() => {
+  return /\.oui-stack\.align-center, \.oui-row\.align-center \{[^}]*align-items: center/.test(cssSource) &&
+         /\.oui-stack\.justify-between, \.oui-row\.justify-between \{[^}]*space-between/.test(cssSource) &&
+         /\.oui-stack\.pad-md, \.oui-row\.pad-md \{[^}]*padding: 14px/.test(cssSource) &&
+         !/\.oui-stack \{[^}]*gap:/.test(cssSource) && !/\.oui-row \{[^}]*gap:/.test(cssSource);
+})());
+
+ok("Table 的 sortable 给每列表头挂上点击与方向标记", (() => {
+  const box = uiRender('root = Table(["题", "正确率"], [["甲", "30%"], ["乙", "90%"]], 0, "", true)');
+  const ths = uiCollect(box, (x) => uiCls(x).indexOf("oui-th-sort") >= 0);
+  return ths.length === 2 && ths[1]["attr_data-oui-col"] === "1" &&
+         uiCollect(box, (x) => uiCls(x) === "oui-sort-c").length === 2 &&
+         /\.oui-th-sort:active/.test(cssSource) && /\.oui-sort-c \{/.test(cssSource);
+})());
+ok("Table 的 widths 生成 colgroup（短列不再被拉宽）", (() => {
+  const box = uiRender('root = Table(["a", "b"], [["1", "2"]], 0, "", false, ["40px", "auto"])');
+  const cg = uiCollect(box, (x) => String(x.id) === "new-colgroup")[0];
+  const cols = uiCollect(box, (x) => String(x.id) === "new-col");
+  return !!cg && cols.length === 2 && String(cols[0].style.width) === "40px" &&
+         String(cols[1].style.width) === "auto";
+})());
+ok("widths 只认安全形状（百分比 / px / em / auto）", (() => {
+  const box = uiRender('root = Table(["a"], [["1"]], 0, "", false, ["40px; background:url(x)", "1fr"])');
+  return uiCollect(box, (x) => String(x.id) === "new-col").length === 0;
+})());
+
+ok("Chart 的 unit 跟着数值走（柱顶 / 堆叠总量 / 饼图图例）", (() => {
+  const bar = uiText(uiRender('root = Chart("bar", ["周一"], [6], [], "drill:线代", "题")'));
+  const pie = uiText(uiRender('root = Chart("pie", ["对", "错"], [3, 1], [], "", "%")'));
+  const stk = uiText(uiRender('root = Chart("stack", ["周一"], [[3, 1]], ["新学", "复习"], "", "题")'));
+  return bar.indexOf("6题") >= 0 && pie.indexOf("3%（75%）") >= 0 && stk.indexOf("4题") >= 0;
+})());
+ok("Chart 的 legend 能换到图上 / 饼左（DOM 顺序真的改了）", (() => {
+  const stk = uiRender('root = Chart("stack", ["甲"], [[1, 2]], ["A", "B"], "", "", "top")');
+  const chart = uiCollect(stk, (x) => uiCls(x) === "oui-chart")[0];
+  const first = (chart.children || [])[0];
+  const pie = uiRender('root = Chart("pie", ["甲", "乙"], [1, 1], [], "", "", "top")');
+  const box2 = uiCollect(pie, (x) => uiCls(x).indexOf("oui-pie-box") >= 0)[0];
+  return !!first && uiCls(first) === "oui-legend" && uiCls(box2).indexOf("lg-top") >= 0 &&
+         (box2.children || [])[0] === uiCollect(box2, (x) => uiCls(x) === "oui-pie-lg")[0];
+})());
+
+ok("签名表已含第八轮全部组件（模型写得出、渲染器画得出、样式有落点）", (() => {
+  const need = ["Rich", "Math", "RadioGroup", "CheckboxGroup", "Empty", "Error", "Tab"];
+  const names = (W.OpenUI.signatures || []).map((s) => s.name);
+  const clsNeed = ["oui-math", "oui-choices", "oui-choice", "oui-empty", "oui-error", "oui-tabs",
+                   "oui-md", "oui-spin", "oui-btn-i", "oui-th-sort", "oui-sort-c", "oui-tabs-h"];
+  return need.every((n) => names.indexOf(n) >= 0) &&
+         W.OpenUI.signatures.length >= 35 &&
+         clsNeed.every((c) => cssSource.indexOf("." + c) >= 0);
+})());
+ok("系统提示把新组件的用法写死（选项组 / 排版 / 空态 / 浮层各一条）", (() => {
+  const src = String(W.chatAgentRules);
+  return src.indexOf("RadioGroup(name, label, options, value)") >= 0 &&
+         src.indexOf("CheckboxGroup") >= 0 && src.indexOf("Rich(text)") >= 0 &&
+         src.indexOf("Empty(text, hint, action)") >= 0 && src.indexOf("Tab(labels, panels)") >= 0 &&
+         src.indexOf("toast:<文本>") >= 0 && src.indexOf("confirm:<标题>|<说明>|<确认后的动作>") >= 0;
+})());
+ok("Toast 的 action 说明进了 Button / Tap 的描述（模型知道有这条路）", (() => {
+  const find = (n) => (W.OpenUI.signatures || []).find((x) => x.name === n) || {};
+  return /toast:<文本>/.test(find("Button").description || "") &&
+         /confirm:<标题>\|<说明>/.test(find("Button").description || "") &&
+         /toast:<文本>/.test(find("Tap").description || "");
+})());
+
 /* ---------- 30c. OpenUI 卡片动作路由：点了要真的接回对话 ---------- */
+
 section("[30c] OpenUI 卡片动作路由");
 
 /* P0 只把动作丢给原生桥打日志，页面上什么都没发生——点了像坏的一样。
@@ -3122,6 +3386,55 @@ ok("选中当前值有标记，点一行就写回并收面板", (() => {
   const pick = String(W.chatOuiPick);
   return sheet.indexOf('" on"') >= 0 && sheet.indexOf("当前") >= 0
       && pick.indexOf("fn(v)") >= 0 && pick.indexOf("closeTop()") >= 0;
+})());
+ok("toast: 只给一句即时反馈，不发消息", (() => {
+  while (W.openLayers.length) W.closeTop();
+  const _ask = W.chatAsk, _toast = W.toast;
+  try {
+    W.chatAsk = () => { throw new Error("toast: 不该发消息"); };
+    const seen = [];
+    W.toast = (m) => seen.push(String(m));
+    W.chatOuiRoute("toast", "已保存", null, null, null);
+    /* 没带参数就退回按钮文字，再没有就一句「已处理」——不能让浮层弹空串 */
+    W.chatOuiRoute("toast", "", null, { textContent: "已复制" }, null);
+    W.chatOuiRoute("toast", "", null, null, null);
+    return seen.length === 3 && seen[0] === "已保存" && seen[1] === "已复制" && seen[2] === "已处理";
+  } finally { W.chatAsk = _ask; W.toast = _toast; }
+})());
+ok("confirm: 用 App 自己的 glass 弹浮层，确认后才执行内层动作", (() => {
+  while (W.openLayers.length) W.closeTop();
+  const _toast = W.toast;
+  try {
+    const seen = [];
+    W.toast = (m) => seen.push(String(m));
+    W.chatOuiRoute("confirm", "要采用这条解析吗？|解析会覆盖现在的内容|toast:已采用", null, null, null);
+    const h = glassHtml();
+    /* openLayer 写的是 classList，桩里 className 与 classList 是两套存储，按真的那个判 */
+    const opened = glassEl().classList.contains("on");
+    const okBtn = W.document.getElementById("gOk");
+    if (okBtn && okBtn.onclick) okBtn.onclick();
+    return opened && h.indexOf("要采用这条解析吗？") >= 0 && h.indexOf("解析会覆盖现在的内容") >= 0 &&
+           h.indexOf("采用") >= 0 && seen.length === 1 && seen[0] === "已采用";
+  } finally { W.toast = _toast; while (W.openLayers.length) W.closeTop(); }
+})());
+ok("confirm: 内层动作原样送回 chatOuiAction（不复制一套执行逻辑）",
+   /chatOuiAction\(m, inner, node, form\)/.test(String(W.chatOuiRoute)));
+ok("confirm: 没带内层动作时只吭声，不假装成功", (() => {
+  while (W.openLayers.length) W.closeTop();
+  const _ask = W.chatAsk, _toast = W.toast;
+  try {
+    const said = [];
+    W.chatAsk = (t) => said.push(String(t));
+    const seen = [];
+    W.toast = (m) => seen.push(String(m));
+    W.chatOuiRoute("confirm", "标题|说明", null, null, null);
+    const okBtn = W.document.getElementById("gOk");
+    if (okBtn && okBtn.onclick) okBtn.onclick();
+    return said.length === 0 && seen.join("|").indexOf("没带后面的动作") >= 0;
+  } finally {
+    W.chatAsk = _ask; W.toast = _toast;
+    while (W.openLayers.length) W.closeTop();
+  }
 })());
 
 /* ---------- 30d. OpenUI 卡片悬浮窗：展开搬进窗口，收回搬回原槽位 ---------- */
@@ -4947,6 +5260,21 @@ section("[19b] OpenUI bundle 指纹一致性");
   }
   const lock = path.join(ROOT, "tools/openui-bundle/package-lock.json");
   ok("openui-bundle 有锁文件（版本可复算）", fs.existsSync(lock), lock);
+  /* KaTeX 是这一轮新引的离线件：产物齐、版本在 package.json 里钉死、字体只带 woff2 */
+  const kd = path.join(ASSETS, "ui/katex");
+  const kp = JSON.parse(fs.readFileSync(path.join(ROOT, "tools/openui-bundle/package.json"), "utf8"));
+  const kver = (kp.dependencies && kp.dependencies.katex) || "";
+  ok("katex 版本在 package.json 里钉死", /^\d+\.\d+\.\d+$/.test(kver), "katex=" + kver);
+  ok("katex 产物齐（js + css + 20 个 woff2，没有带 woff/ttf）", (() => {
+    if (!fs.existsSync(path.join(kd, "katex.min.js")) || !fs.existsSync(path.join(kd, "katex.min.css"))) return false;
+    const fl = fs.readdirSync(path.join(kd, "fonts"));
+    return fl.length === 20 && fl.every((f) => f.endsWith(".woff2"));
+  })());
+  ok("katex.min.css 不引网络资源（字体全是相对路径）", (() => {
+    const css = fs.readFileSync(path.join(kd, "katex.min.css"), "utf8");
+    const urls = css.match(/url\([^)]*\)/g) || [];
+    return urls.length > 0 && urls.every((u) => /url\((['"]?)fonts\/[^)]*\1\)/.test(u));
+  })());
 }
 
 /* ---------- 结果 ---------- */

@@ -114,6 +114,96 @@ function tapInner(t, self) {
   return !!(el && el !== self);
 }
 
+/* ---- Markdown：卡片的 Text(md:true) 复用气泡那套 mdToHtml()（app-chat.js）----
+   样式表原样共用（.bubble.md 已放宽成 .md），不再抄一份：抄两份的话气泡改了、
+   卡片永远是旧的。mdToHtml 自己会 esc() 再上标记，链接走 mdSafeUrl 白名单，
+   所以模型写的源码不会把 <script> 之类的东西塞进来。 */
+function ouiMdHtml(src) {
+  if (typeof window.mdToHtml !== 'function') return null;
+  try {
+    const h = window.mdToHtml(String(src == null ? '' : src));
+    return typeof h === 'string' ? h : null;
+  } catch (e) { return null; }
+}
+
+/* ---- 公式：KaTeX 是懒加载件（596KB），首屏不引 ----
+   katex 没到位时先落一颗能读的字面量（$x_1$），加载完由 ouiMathFlush() 补排；
+   待排的元素只存在这张表里，不往 DOM 上挂 data-tex——公式串带反斜杠和引号，
+   拼进属性迟早撞转义。 */
+const ouiMathPending = [];
+var ouiGidSeq = 0;
+function ouiKatexHtml(tex, display) {
+  const k = window.katex;
+  if (!k || !tex) return '';
+  try {
+    return k.renderToString(String(tex), {
+      displayMode: !!display, throwOnError: false, output: 'html', maxSize: 60, maxExpand: 60, trust: false,
+    });
+  } catch (e) { return ''; }
+}
+function ouiMathNode(display, tex) {
+  const el = make(display ? 'div' : 'span', 'oui-math' + (display ? ' disp' : ''));
+  const html = ouiKatexHtml(tex, display);
+  if (html) el.innerHTML = html;
+  else {
+    el.textContent = (display ? '$$' : '$') + textOf(tex) + (display ? '$$' : '$');
+    ouiMathPending.push({ el: el, tex: textOf(tex), display: !!display });
+    if (window.ouiEnsureMath) window.ouiEnsureMath();
+  }
+  return el;
+}
+window.ouiMathFlush = function () {
+  for (let i = ouiMathPending.length - 1; i >= 0; i--) {
+    const p = ouiMathPending[i];
+    /* 卡片收回/消息重画会让节点脱离文档树：按 parentNode 判活，
+       回归沙箱的 DOM 桩没有 isConnected，用 parentNode 两边都成立 */
+    if (!p.el.parentNode) { ouiMathPending.splice(i, 1); continue; }
+    const html = ouiKatexHtml(p.tex, p.display);
+    if (!html) continue;
+    p.el.textContent = '';
+    p.el.innerHTML = html;
+    ouiMathPending.splice(i, 1);
+  }
+  return ouiMathPending.length;
+};
+
+/* $…$ / $$…$$ 先摘成占位符再走 Markdown：LaTeX 里的 _ 和 * 会被强调规则吃掉，
+   连 x_1 都会变成 <em>。摘出来的槽位用 \u0000 包，esc() 不动它，填回去即可。 */
+function ouiSplitMath(s) {
+  const holds = [];
+  const out = String(s == null ? '' : s)
+    .replace(/\$\$([\s\S]+?)\$\$/g, (m, t) => { holds.push({ tex: t.trim(), display: true }); return '\u0000M' + (holds.length - 1) + '\u0000'; })
+    .replace(/\$([^$\n]+?)\$/g, (m, t) => { holds.push({ tex: t.trim(), display: false }); return '\u0000M' + (holds.length - 1) + '\u0000'; });
+  return { text: out, holds: holds };
+}
+/* 把 md 源码画进 el：Markdown + 行内公式；没有 mdToHtml（回归沙箱）就退回纯文本 */
+function ouiPaintMd(el, src) {
+  const ex = ouiSplitMath(src);
+  const html = ouiMdHtml(ex.text);
+  if (html == null) { el.textContent = textOf(src); return el; }
+  el.innerHTML = html.replace(/\u0000M(\d+)\u0000/g, (m, i) => '<i class="oui-mh" data-i="' + i + '"></i>');
+  const marks = el.querySelectorAll('.oui-mh');
+  for (let i = 0; i < marks.length; i++) {
+    const hv = ex.holds[Number(marks[i].getAttribute('data-i'))];
+    if (!hv) { marks[i].className = ''; continue; }
+    marks[i].replaceWith(ouiMathNode(hv.display, hv.tex));
+  }
+  return el;
+}
+
+function boxAlign(d, p, extra) {
+  /* align / justify / padding 一律走类名，不写内联 style：样式表里只有类名那一档
+     能被暗色令牌和 check.mjs 的 CSS 断言管住。 */
+  const al = ['start', 'center', 'end'].indexOf(p.align) >= 0 ? p.align : '';
+  const ju = ['start', 'center', 'end', 'between'].indexOf(p.justify) >= 0 ? p.justify : '';
+  const pd = p.padding === 'sm' || p.padding === 'md' ? p.padding : '';
+  if (al) d.className += ' align-' + al;
+  if (ju) d.className += ' justify-' + ju;
+  if (pd) d.className += ' pad-' + pd;
+  if (extra) d.className += extra;
+  return d;
+}
+
 function renderNode(node, ctx) {
   if (node == null) return null;
   if (typeof node === 'string') return document.createTextNode(node);
@@ -133,11 +223,13 @@ function renderNode(node, ctx) {
       /* gap 在 schema 里是 sm/md 两档，md 等于默认间距，只有 sm 要额外一类。
          以前这里完全忽略 p.gap，模型写了也看不出任何区别。 */
       const d = make('div', 'oui-stack' + (p.gap === 'sm' ? ' gap-sm' : ''));
+      boxAlign(d, p);
       d.append(kids(p.children));
       return d;
     }
     case 'Row': {
       const d = make('div', 'oui-row');
+      boxAlign(d, p);
       d.append(kids(p.children));
       return d;
     }
@@ -171,10 +263,88 @@ function renderNode(node, ctx) {
       const lv = Math.max(1, Math.min(3, Number(p.level) || 2));
       return makeText('div', `oui-title l${lv}`, p.text);
     }
-    case 'Text':
-      return makeText('div', `oui-text${p.muted ? ' muted' : ''}`, p.text);
+    case 'Text': {
+      const cls = 'oui-text' + (p.muted ? ' muted' : '');
+      /* md:true 才走 Markdown：默认纯文本是老行为，模型漏写也不会突然把 * 当记号 */
+      if (!p.md) return makeText('div', cls, p.text);
+      const d = make('div', cls + ' oui-md');
+      return ouiPaintMd(d, p.text);
+    }
+    case 'Rich': {
+      const d = make('div', 'oui-text oui-md' + (p.muted ? ' muted' : ''));
+      return ouiPaintMd(d, p.text);
+    }
+    case 'Math':
+      return ouiMathNode(!!p.display, p.text);
     case 'Badge':
       return makeText('span', 'oui-badge', p.text);
+    case 'Empty': {
+      /* 空状态：以前只能留一行灰字，用户分不清「没有」和「没加载出来」 */
+      const d = make('div', 'oui-empty');
+      d.append(make('i', 'oui-empty-o'));
+      d.append(makeText('div', 'oui-empty-t', p.text));
+      if (p.hint) d.append(makeText('div', 'oui-empty-h', p.hint));
+      const eAct = textOf(p.action).trim();
+      if (eAct) {
+        d.className += ' tap';
+        d.setAttribute('data-oui-act', eAct);
+        bindTap(d, (e) => {
+          e.stopPropagation();
+          if (/^copy:/i.test(eAct)) { ouiCopy(eAct.slice(5)); return; }
+          ctx.onAction(eAct, d, nearestForm(d));
+        });
+      }
+      return d;
+    }
+    case 'Error': {
+      /* 错误态 + 重试：工具失败时模型爱把异常写成一句正文，这里给它一个显式形状 */
+      const d = make('div', 'oui-error');
+      d.append(makeText('b', 'oui-error-t', p.text));
+      if (p.hint) d.append(makeText('div', 'oui-error-h', p.hint));
+      const retry = textOf(p.retry).trim();
+      if (retry) {
+        const b = make('button', 'oui-btn secondary');
+        b.type = 'button';
+        b.textContent = '重试';
+        bindTap(b, (e) => {
+          e.stopPropagation();
+          ctx.onAction(retry, b, nearestForm(b));
+        });
+        d.append(b);
+      }
+      return d;
+    }
+    case 'Tab': {
+      /* 分段控件：labels 与 panels 一一对齐，点标题只换内容区。
+         重画照 Table 分页那一套（清 body 再挂），不动卡片本体、不跳页。 */
+      const labels = listOf(p.labels).map(textOf);
+      const panels = listOf(p.panels);
+      if (!labels.length) return make('div', 'oui-tabs');
+      const box = make('div', 'oui-tabs');
+      const head = make('div', 'oui-tabs-h');
+      const body = make('div', 'oui-tabs-b');
+      let cur = 0;
+      const paint = () => {
+        head.textContent = '';
+        body.textContent = '';
+        labels.forEach((l, i) => {
+          const t = make('button', 'oui-tab-t' + (i === cur ? ' on' : ''));
+          t.type = 'button';
+          t.textContent = l;
+          bindTap(t, (e) => {
+            e.stopPropagation();
+            if (i === cur) return;
+            cur = i;
+            paint();
+          });
+          head.append(t);
+        });
+        body.append(kids(panels[cur]));
+      };
+      paint();
+      box.append(head, body);
+      return box;
+    }
     case 'List': {
       const d = make(p.ordered ? 'ol' : 'ul', 'oui-list');
       for (const item of listOf(p.items)) d.append(makeText('li', '', item));
@@ -200,6 +370,11 @@ function renderNode(node, ctx) {
       const d = make('div', 'oui-chart');
       const labels = listOf(p.labels);
       const raw = listOf(p.values);
+      /* unit / legend：数值单位（题、%、分钟）以前只能塞进 labels，柱顶就丢了；
+         触屏没有 hover，所以不做 tooltip，数值本来就标在项上。 */
+      const unit = textOf(p.unit).trim();
+      const withUnit = (s) => (unit ? s + unit : String(s));
+      const lgTop = p.legend === 'top';
       /* stack 传的是二维（每行一个类别、每列一个系列）：对数组做 Number() 会变 NaN，
          所以先认出二维，单系列的 values 才走 map(Number)。 */
       const is2D = raw.length > 0 && Array.isArray(raw[0]);
@@ -241,11 +416,11 @@ function renderNode(node, ctx) {
           row.append(make('i', 'oui-pie-d' + ((i % 5) + 1)));
           row.append(makeText('span', 'oui-pie-l', l));
           row.append(makeText('b', 'oui-pie-v',
-            String(values[i]) + '（' + Math.round((vals[i] / total) * 100) + '%）'));
+            withUnit(values[i]) + '（' + Math.round((vals[i] / total) * 100) + '%）'));
           lg.append(segTap(row, l));
         });
-        const box = make('div', 'oui-pie-box');
-        box.append(pie, lg);
+        const box = make('div', 'oui-pie-box' + (lgTop ? ' lg-top' : ''));
+        if (lgTop) box.append(lg, pie); else box.append(pie, lg);
         d.append(box);
         return d;
       }
@@ -265,7 +440,7 @@ function renderNode(node, ctx) {
         const bars = make('div', 'oui-bars');
         rows.forEach((r, i) => {
           const col = make('div', 'oui-bar');
-          col.append(makeText('b', '', String(Math.round(totals[i] * 10) / 10)));
+          col.append(makeText('b', '', withUnit(Math.round(totals[i] * 10) / 10)));
           const stack = make('div', 'oui-col');
           stack.style.height = Math.max(2, (totals[i] / maxT) * 100) + '%';
           for (let s = 0; s < nS; s++) {
@@ -279,17 +454,19 @@ function renderNode(node, ctx) {
           col.append(stack, makeText('span', '', labels[i] || ''));
           bars.append(segTap(col, labels[i] || ''));
         });
-        d.append(bars);
-        if (nS) {
-          const lg = make('div', 'oui-legend');
+        const lg = nS ? make('div', 'oui-legend') : null;
+        if (lg) {
           for (let i = 0; i < nS; i++) {
             const item = make('span');
             item.append(make('i', 'oui-pie-d' + ((i % 5) + 1)));
             item.append(document.createTextNode(names[i] || '系列 ' + (i + 1)));
             lg.append(item);
           }
-          d.append(lg);
         }
+        if (lg && lgTop) d.append(lg);
+        d.append(bars);
+        /* legend:top 让图例先看「哪个系列是什么色」，再看柱高（系列名长时尤其有用） */
+        if (lg && !lgTop) d.append(lg);
         return d;
       }
       const max = Math.max.apply(null, values.concat([1]));
@@ -317,7 +494,7 @@ function renderNode(node, ctx) {
           const col = make('div', 'oui-bar');
           const fill = make('i', '');
           fill.style.height = Math.max(0, Math.min(100, (Math.max(0, v) / max) * 100)) + '%';
-          col.append(makeText('b', '', String(v)), fill, makeText('span', '', labels[i] || ''));
+          col.append(makeText('b', '', withUnit(v)), fill, makeText('span', '', labels[i] || ''));
           bars.append(segTap(col, labels[i] || ''));
         });
         d.append(bars);
@@ -441,12 +618,39 @@ function renderNode(node, ctx) {
       return d;
     }
     case 'Button': {
+      const act = textOf(p.action);
+      /* 没写 action 的按钮点了没反应（死按钮），比不放更糟：
+         一律退化成纯文字，用户不会以为它能点。模型该给 action 就该给。 */
+      if (!act.trim()) return makeText('div', 'oui-btn-plain', textOf(p.label));
       const b = make('button', `oui-btn ${p.variant === 'secondary' ? 'secondary' : 'primary'}`);
       b.type = 'button';
-      b.textContent = textOf(p.label);
+      /* loading 的转圈在前，icon 其次，最后才是文字：按顺序 append 拼，
+         不用 insertBefore(firstChild)——回归沙箱的 DOM 桩没有 insertBefore。 */
+      if (p.loading) {
+        const sp = make('i', 'oui-spin');
+        sp.setAttribute('aria-hidden', 'true');
+        b.append(sp);
+        b.className += ' loading';
+        b.setAttribute('aria-busy', 'true');
+      }
+      /* icon：界面是黑白的、没有图标字体，所以只接一个字形（✓ ⏱ ↻ 或 emoji）。
+         取前两个码位，模型写整词也不会把按钮撑破。 */
+      if (p.icon) {
+        const ic = make('span', 'oui-btn-i');
+        ic.textContent = Array.from(textOf(p.icon)).slice(0, 2).join('');
+        ic.setAttribute('aria-hidden', 'true');
+        b.append(ic);
+      }
+      b.append(document.createTextNode(textOf(p.label)));
+      /* disabled / loading 都不绑手势：灰按钮点下去必须有「什么都没发生」的确定感，
+         绑了反而会把内层事件吞掉。 */
+      if (p.disabled || p.loading) {
+        b.disabled = true;
+        b.className += ' disabled';
+        return b;
+      }
       bindTap(b, (e) => {
         e.stopPropagation();
-        const act = textOf(p.action);
         /* copy: 在渲染层就地完成，不绕回路由：剪贴板是纯前端能力，
            走 chatOuiRoute 只会落到「不支持」那一句。 */
         if (/^copy:/i.test(act)) { ouiCopy(act.slice(5) || textOf(p.label)); return; }
@@ -464,6 +668,9 @@ function renderNode(node, ctx) {
       if (multi) i.rows = 3;
       else if (p.kind === 'number') i.type = 'number';
       else if (p.kind === 'date') i.type = 'date';
+      /* datetime-local 在安卓 WebView 上没有原生滚轮，会退化成可手打的日期时间框，
+         仍比让模型自己拼 "2026-11-03T18:00" 的纯文本强一档 */
+      else if (p.kind === 'datetime') i.type = 'datetime-local';
       else i.type = 'text';
       i.name = name;
       i.dataset.fname = name;
@@ -513,6 +720,78 @@ function renderNode(node, ctx) {
       wrap.append(field);
       return wrap;
     }
+    case 'RadioGroup': {
+      /* 单选组：可见的 radio 只负责手感，值落在一个隐藏域上（照 Select 的做法），
+         这样 readForm 的「一个 data-fname = 一项」契约不用改。
+         name 用 gid 前缀：同一条消息里两张卡都写 name:"题型" 时，原生 radio
+         会跨卡互斥，点第二张把第一张的选中态清掉。 */
+      const wrap = make('div', 'oui-field oui-choices');
+      if (p.label) wrap.append(makeText('span', 'oui-label', p.label));
+      const name = textOf(p.name);
+      const opts = listOf(p.options).map(textOf).filter((o) => o !== '');
+      const saved = hasKey(ctx.values, name) ? textOf(ctx.values[name]) : textOf(p.value);
+      const held = make('input');
+      held.type = 'hidden';
+      held.name = name;
+      held.dataset.fname = name;
+      held.dataset.flabel = textOf(p.label || p.name);
+      held.value = opts.indexOf(saved) >= 0 ? saved : '';
+      const gname = 'oui-r' + (ctx.gid || 'x') + '-' + name;
+      opts.forEach((o) => {
+        const row = make('label', 'oui-choice');
+        const r = document.createElement('input');
+        r.type = 'radio';
+        r.name = gname;
+        r.value = o;
+        r.checked = held.value === o;
+        row.append(r, makeText('span', 'oui-choice-t', o));
+        r.onchange = () => {
+          if (!r.checked) return;
+          held.value = o;
+          if (ctx.values) ctx.values[name] = o;
+          if (ctx.onChange) ctx.onChange(true);
+        };
+        wrap.append(row);
+      });
+      wrap.append(held);
+      return wrap;
+    }
+    case 'CheckboxGroup': {
+      /* 多选组：选中项按「、」拼成一个值写进表单（和 Button 拼选项的老写法对齐，
+         模型不用改语义就能从堆按钮迁过来） */
+      const wrap = make('div', 'oui-field oui-choices');
+      if (p.label) wrap.append(makeText('span', 'oui-label', p.label));
+      const name = textOf(p.name);
+      const opts = listOf(p.options).map(textOf).filter((o) => o !== '');
+      const init = listOf(p.values).map(textOf);
+      const saved = hasKey(ctx.values, name) ? textOf(ctx.values[name]).split('、') : init;
+      const picked = opts.filter((o) => saved.indexOf(o) >= 0);
+      const held = make('input');
+      held.type = 'hidden';
+      held.name = name;
+      held.dataset.fname = name;
+      held.dataset.flabel = textOf(p.label || p.name);
+      held.value = picked.join('、');
+      const cells = [];
+      opts.forEach((o) => {
+        const row = make('label', 'oui-choice');
+        const c = document.createElement('input');
+        c.type = 'checkbox';
+        c.checked = picked.indexOf(o) >= 0;
+        row.append(c, makeText('span', 'oui-choice-t', o));
+        c.onchange = () => {
+          const now = [];
+          for (const one of cells) if (one.input.checked) now.push(one.text);
+          held.value = now.join('、');
+          if (ctx.values) ctx.values[name] = held.value;
+          if (ctx.onChange) ctx.onChange(true);
+        };
+        cells.push({ input: c, text: o });
+        wrap.append(row);
+      });
+      wrap.append(held);
+      return wrap;
+    }
     case 'Toggle': {
       const wrap = make('label', 'oui-toggle');
       const name = textOf(p.name);
@@ -554,29 +833,72 @@ function renderNode(node, ctx) {
         }
         return seen > 0;
       });
+      /* widths：按列给 CSS 宽度（"40%" / "72px" / "auto"）。题号、百分比这类短列
+         和题干列挤在一行等宽时，短列会被拉得很宽、正文反而被压成竖排。 */
+      const widths = listOf(p.widths).map(textOf).filter((w) => /^(auto|\d+(\.\d+)?(%|px|em|rem))$/.test(w.trim()));
+      if (widths.length) {
+        const cg = document.createElement('colgroup');
+        for (let i = 0; i < width; i++) {
+          const col = document.createElement('col');
+          if (widths[i]) col.style.width = widths[i].trim();
+          cg.append(col);
+        }
+        t.append(cg);
+      }
       if (cols.length) {
         const thead = document.createElement('thead');
         const tr = document.createElement('tr');
-        cols.forEach((c, ci) => tr.append(makeText('th', num[ci] ? 'num' : null, c)));
+        cols.forEach((c, ci) => {
+          if (!p.sortable) { tr.append(makeText('th', num[ci] ? 'num' : null, c)); return; }
+          const th = make('th', (num[ci] ? 'num ' : '') + 'oui-th-sort');
+          th.append(document.createTextNode(c), make('i', 'oui-sort-c'));
+          th.setAttribute('data-oui-col', String(ci));
+          bindTap(th, (e) => { e.stopPropagation(); sortBy(ci); });
+          tr.append(th);
+        });
         thead.append(tr);
         t.append(thead);
       }
       const tb = make('tbody');
+      /* 排序靠 order 这层索引表，不去动 rows 本身：分页、rowAction 的 {1}..{n}
+         都还按原行取内容，排序只改「第 i 格画哪一行」。 */
+      const order = rows.map((_, i) => i);
+      let sortCol = -1, sortDir = 1;
+      let repaint = () => {};
+      const cmpCell = (a, b) => {
+        const sa = a ? a.text.trim() : '', sb = b ? b.text.trim() : '';
+        const na = parseFloat(sa.replace(/[%,，\s]/g, '')), nb = parseFloat(sb.replace(/[%,，\s]/g, ''));
+        if (isFinite(na) && isFinite(nb) && na !== nb) return (na - nb) * sortDir;
+        return (sa < sb ? -1 : sa > sb ? 1 : 0) * sortDir;
+      };
+      const sortBy = (ci) => {
+        if (ci === sortCol) sortDir = -sortDir;
+        else { sortCol = ci; sortDir = 1; }
+        order.sort((a, b) => cmpCell(rows[a][ci], rows[b][ci]));
+        const ths = t.querySelectorAll ? t.querySelectorAll('.oui-th-sort') : [];
+        for (let i = 0; i < ths.length; i++) {
+          const on = Number(ths[i].getAttribute('data-oui-col')) === ci;
+          const mark = ths[i].querySelector ? ths[i].querySelector('.oui-sort-c') : null;
+          if (mark) mark.textContent = on ? (sortDir > 0 ? '↑' : '↓') : '';
+        }
+        repaint();
+      };
       /* rowAction：整行可点，{1}..{n} 换成这一行各列文字（点「概念混淆 60 47%」那行
          就能直接跳到对应题型，不用再让用户去别的页面翻）。 */
       const rAct = textOf(p.rowAction);
       const paint = (from, to) => {
         tb.textContent = '';
-        for (let i = from; i < to; i++) {
+        for (let i = from; i < to && i < order.length; i++) {
+          const row = rows[order[i]];
           const tr = document.createElement('tr');
-          rows[i].forEach((cell, ci) => {
+          row.forEach((cell, ci) => {
             const td = makeText('td', (num[ci] ? 'num ' : '') + (cell.tone || ''), cell.text);
             tr.append(td);
           });
           if (rAct) {
             tr.className = (tr.className ? tr.className + ' ' : '') + 'oui-row-tap';
             const map = {};
-            rows[i].forEach((cell, ci) => { map[String(ci + 1)] = cell.text; });
+            row.forEach((cell, ci) => { map[String(ci + 1)] = cell.text; });
             const a = actOf(rAct, map);
             tr.setAttribute('data-oui-act', a);
             bindTap(tr, (e) => {
@@ -610,6 +932,7 @@ function renderNode(node, ctx) {
           prev.disabled = page === 0;
           next.disabled = page === pages - 1;
         };
+        repaint = () => show(page);
         bindTap(prev, (e) => { e.stopPropagation(); show(page - 1); });
         bindTap(next, (e) => { e.stopPropagation(); show(page + 1); });
         pager.append(prev, info, next);
@@ -620,6 +943,7 @@ function renderNode(node, ctx) {
         return box;
       }
       paint(0, rows.length);
+      repaint = () => paint(0, rows.length);
       t.append(tb);
       /* 三行以内直接摊开：折叠是为了省版面，短表折起来只是多一次点击。
          长表仍折成一行「表格 · N 列 M 行」，点开才占版面。 */
@@ -763,7 +1087,11 @@ function renderOpenUI(source, opts) {
   if (!res || !res.root) return null;
   const errors = (res.meta && res.meta.errors) || [];
   const box = make('div', 'oui');
+  /* 每张卡一个 gid：radio 的原生 name 只在同 name 的 input 之间互斥，
+     不带 gid 的话两条消息里同名字段的选项会互相抢选中态。 */
+  ouiGidSeq += 1;
   const node = renderNode(res.root, {
+    gid: String(ouiGidSeq),
     onAction: (action, node, form) => opts && opts.onAction && opts.onAction(action, node, form),
     onPick: (title, options, current, done) => opts && opts.onPick && opts.onPick(title, options, current, done),
     values: (opts && opts.values) || {},

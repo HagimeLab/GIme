@@ -491,33 +491,33 @@ button.rec:active { opacity: .62; }
   border: 2px solid var(--ink-3); border-top-color: transparent; border-radius: 50%;
   vertical-align: -1px; animation: spin .8s linear infinite; }
 @keyframes spin { to { transform: rotate(360deg); } }
-/* 大肥鱼正文的 Markdown：只作用于 .bubble.md，思考链与用户消息不受影响 */
-.bubble.md p { margin: 0 0 8px; }
-.bubble.md p:last-child { margin-bottom: 0; }
-.bubble.md h1, .bubble.md h2, .bubble.md h3,
-.bubble.md h4, .bubble.md h5, .bubble.md h6 { margin: 12px 0 6px; line-height: 1.35; font-weight: 700; }
-.bubble.md h1 { font-size: 1.2em; }
-.bubble.md h2 { font-size: 1.1em; }
-.bubble.md h3, .bubble.md h4, .bubble.md h5, .bubble.md h6 { font-size: 1em; }
-.bubble.md h1:first-child, .bubble.md h2:first-child, .bubble.md h3:first-child { margin-top: 0; }
-.bubble.md ul, .bubble.md ol { margin: 4px 0 8px; padding-left: 1.4em; }
-.bubble.md li { margin: 2px 0; }
-.bubble.md code { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+/* 大肥鱼正文的 Markdown：只作用于 .md，思考链与用户消息不受影响 */
+.md p { margin: 0 0 8px; }
+.md p:last-child { margin-bottom: 0; }
+.md h1, .md h2, .md h3,
+.md h4, .md h5, .md h6 { margin: 12px 0 6px; line-height: 1.35; font-weight: 700; }
+.md h1 { font-size: 1.2em; }
+.md h2 { font-size: 1.1em; }
+.md h3, .md h4, .md h5, .md h6 { font-size: 1em; }
+.md h1:first-child, .md h2:first-child, .md h3:first-child { margin-top: 0; }
+.md ul, .md ol { margin: 4px 0 8px; padding-left: 1.4em; }
+.md li { margin: 2px 0; }
+.md code { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
                   font-size: .9em; padding: 1px 4px; border-radius: 4px; background: var(--surface); }
-.bubble.md pre { margin: 8px 0; padding: 10px 12px; border-radius: 10px; overflow-x: auto;
+.md pre { margin: 8px 0; padding: 10px 12px; border-radius: 10px; overflow-x: auto;
                  background: var(--surface); border: 1px solid var(--line); }
-.bubble.md pre code { padding: 0; background: none; font-size: .85em; line-height: 1.55; }
-.bubble.md blockquote { margin: 8px 0; padding: 2px 0 2px 10px;
+.md pre code { padding: 0; background: none; font-size: .85em; line-height: 1.55; }
+.md blockquote { margin: 8px 0; padding: 2px 0 2px 10px;
                         border-left: 3px solid var(--line); color: var(--ink-2); }
-.bubble.md hr { border: 0; border-top: 1px solid var(--line); margin: 10px 0; }
+.md hr { border: 0; border-top: 1px solid var(--line); margin: 10px 0; }
 /* Markdown 表格：气泡里横滚，别撑破 max-width */
-.bubble.md .md-table { margin: 8px 0; overflow-x: auto; -webkit-overflow-scrolling: touch; }
-.bubble.md table { width: 100%; border-collapse: collapse; font-size: .85em; line-height: 1.55; }
-.bubble.md th, .bubble.md td { padding: 6px 8px; border-bottom: 1px solid var(--line);
+.md .md-table { margin: 8px 0; overflow-x: auto; -webkit-overflow-scrolling: touch; }
+.md table { width: 100%; border-collapse: collapse; font-size: .85em; line-height: 1.55; }
+.md th, .md td { padding: 6px 8px; border-bottom: 1px solid var(--line);
                                text-align: left; vertical-align: top; }
-.bubble.md th { font-weight: 700; background: var(--surface); }
-.bubble.md tr:last-child td { border-bottom: none; }
-.bubble.md .md-link { color: inherit; text-decoration: underline; text-underline-offset: 2px; cursor: pointer; }
+.md th { font-weight: 700; background: var(--surface); }
+.md tr:last-child td { border-bottom: none; }
+.md .md-link { color: inherit; text-decoration: underline; text-underline-offset: 2px; cursor: pointer; }
 /* 流式回答：思考链在上、正文在下，同一个气泡列里长出来 */
 .msg .live { flex: 1; min-width: 0; max-width: 78%; display: flex; flex-direction: column;
              align-items: flex-start; gap: 6px; }
@@ -1248,27 +1248,52 @@ html.swap, html.swap * { transition: none !important; }
   border-radius: 999px;
 }
 
+/* 按钮以前是实心「黑胶囊」：浅色下 --text 是近黑、深色下是近白，
+   于是卡片里一排大色块非常抢眼（用户反馈「以后不要在出现这个按钮」）。
+   改成轻量描边标签（chip）：浅底 + 1px 描边 + 常规字重，仍有点击反馈，不再是一坨实心块。 */
 .oui-btn {
-  padding: 10px 16px;
-  border-radius: var(--r-pill);
-  font-size: 1em;
-  font-weight: 600;
+  padding: 8px 14px;
+  border-radius: 12px;
+  font-size: .9286em;
+  font-weight: 500;
+  background: var(--surface-2);
+  color: var(--text);
+  box-shadow: inset 0 0 0 1px var(--stroke-2);
+  transition: opacity .12s ease, background .12s ease;
 }
+.oui-btn:active { opacity: .68; }
 
 .oui-btn.primary {
-  background: var(--text);
-  color: var(--on-accent);
+  background: var(--surface-3);
+  color: var(--text);
+  font-weight: 600;
+  box-shadow: inset 0 0 0 1px var(--stroke-2);
 }
 
 .oui-btn.secondary {
-  background: var(--surface-2);
-  color: var(--text);
+  background: transparent;
+  color: var(--muted);
+  box-shadow: inset 0 0 0 1px var(--stroke);
 }
 
 .oui-btn.done {
-  background: var(--surface-2);
-  color: var(--text);
-  box-shadow: inset 0 0 0 1px var(--line);
+  background: transparent;
+  color: var(--muted);
+  box-shadow: inset 0 0 0 1px var(--stroke);
+}
+
+/* 没写 action 的 Button 退化成纯文字：不画底色/圆角，用户不会以为能点 */
+.oui-btn-plain {
+  font-size: .9286em;
+  font-weight: 500;
+  color: var(--text-2, var(--text));
+  opacity: .85;
+  line-height: 1.55;
+}
+.oui-btn-plain::before {
+  content: "·";
+  margin-right: 6px;
+  color: var(--ink-3, var(--text-2, var(--text)));
 }
 
 .oui-field {
@@ -1465,6 +1490,9 @@ html.swap, html.swap * { transition: none !important; }
 .oui-details .oui-details { margin-left: 10px; padding-left: 10px;
                             border-left: 2px solid var(--stroke-2); border-bottom: none; }
 .oui-details .oui-details > summary { min-height: 34px; font-size: .9286em; font-weight: 500; }
+/* 第三层再收一档：只靠左边线区分的话，章节→小节→题目看不出深了一级；
+   6px 是量过的上限——再加就把 360dp 上的正文挤成竖排了。 */
+.oui-details .oui-details .oui-details { margin-left: 6px; padding-left: 8px; }
 
 /* ---- 指标涨跌 ---- */
 .oui-metric-d { margin-top: 2px; color: var(--muted); font-size: .8571em; font-weight: 600; }
@@ -1530,6 +1558,92 @@ html.swap, html.swap * { transition: none !important; }
 
 /* 长串（URL、英文术语）不撑破卡片 */
 .oui-text, .oui-callout-x, .oui-title { overflow-wrap: anywhere; }
+
+/* ---- 第八轮：Markdown 块 / 公式 / 选项组 / 空态·错误态 / 分段 / 按钮状态 / 容器对齐 ---- */
+/* Rich 与气泡共用上面那套 .md 排版规则（原先挂在气泡类上的前缀已放宽成 .md，
+   抄两份的话气泡改了、卡片永远是旧的），这里只管卡片这边的边界。 */
+.oui-text.oui-md { line-height: 1.7; }
+.oui-md > *:first-child { margin-top: 0; }
+.oui-md > *:last-child { margin-bottom: 0; }
+.oui-md .md-table { max-width: 100%; }
+
+/* KaTeX：字号跟正文走；display 档单独成行且允许横滚——长公式在 360dp 上一定超宽。
+   官方样式表把 .katex-display 居中并带上下 margin，卡片里靠左、margin 由我们给。 */
+.oui-math { font-size: 1.02em; }
+.oui-math.disp { margin: 6px 0; overflow-x: auto; -webkit-overflow-scrolling: touch; }
+.oui-math .katex-display { margin: 0; text-align: left; }
+.oui-math .katex-display > .katex { text-align: left; }
+/* 公式写坏了时 KaTeX 自己塞内联 color:#cc0000 —— 暗色底上读不出来。
+   报错态跟着界面的警示令牌走，原式子仍然原样亮着（不静默变空白）。 */
+.oui-math .katex-error { color: var(--warn) !important; }
+
+/* 单选 / 多选：整行按手指可点高度排。控件用原生的（和 .oui-toggle 同一套做法），
+   暗色下由 WebView 自己反色，不另画一份勾选态——另画的那份永远会和系统对不上。 */
+.oui-choices > .oui-choice { display: flex; align-items: center; min-height: 44px;
+                             padding: 0 10px; border-radius: 12px; font-size: 1em; }
+.oui-choices > .oui-choice + .oui-choice { margin-top: 2px; }
+.oui-choices > .oui-choice:active { background: var(--surface-2); }
+.oui-choices input { flex: 0 0 auto; width: 18px; height: 18px; margin: 0 10px 0 0; }
+.oui-choice-t { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+
+/* 空状态：这一栏确实没有内容（区别于「加载失败」的错误态） */
+.oui-empty { padding: 22px 14px; border-radius: 16px; text-align: center;
+             border: 1px dashed var(--stroke-2); }
+.oui-empty.tap { cursor: pointer; }
+.oui-empty.tap:active { background: var(--surface-2); }
+.oui-empty-o { display: block; width: 30px; height: 30px; margin: 0 auto 10px;
+               border-radius: 50%; border: 1.5px solid var(--ink-3); }
+.oui-empty-t { font-size: .9286em; color: var(--text); }
+.oui-empty-h { margin-top: 4px; font-size: .8571em; line-height: 1.6; color: var(--muted); }
+
+/* 错误态 + 重试 */
+.oui-error { padding: 12px 14px; border-radius: 14px; background: var(--surface-2);
+             border-left: 3px solid var(--warn); }
+.oui-error-t { font-size: .9286em; color: var(--warn); }
+.oui-error-h { margin-top: 4px; font-size: .8571em; line-height: 1.6; color: var(--muted); }
+.oui-error .oui-btn { margin-top: 10px; }
+
+/* 分段控件：标题自己一排（多的话横滚），内容区由 .oui-tabs-b 管间距 */
+.oui-tabs-h { display: flex; overflow-x: auto; -webkit-overflow-scrolling: touch;
+              border-bottom: 1px solid var(--stroke-2); }
+.oui-tabs-h::-webkit-scrollbar { display: none; }
+.oui-tab-t { flex: 0 0 auto; min-height: 44px; padding: 0 12px; border: 0;
+             background: transparent; font-size: .9286em; color: var(--muted);
+             position: relative; }
+.oui-tab-t.on { color: var(--text); font-weight: 700; }
+.oui-tab-t.on::after { content: ""; position: absolute; left: 10px; right: 10px; bottom: -1px;
+                       height: 2px; border-radius: 2px; background: var(--ink); }
+.oui-tabs-b { padding-top: 10px; }
+
+/* Button 的状态位：icon 只占一个字形的宽；disabled 不接按击（灰了还能点是假反馈） */
+.oui-btn-i { margin-right: 6px; }
+.oui-btn.disabled { opacity: .42; pointer-events: none; }
+.oui-btn.loading { opacity: .72; }
+.oui-spin { display: inline-block; width: 12px; height: 12px; margin-right: 8px;
+            vertical-align: -2px; border-radius: 50%; border: 2px solid var(--stroke-2);
+            border-top-color: var(--ink); animation: oui-spin .8s linear infinite; }
+@keyframes oui-spin { to { transform: rotate(360deg); } }
+
+/* Stack / Row 的 align / justify / padding。纵向间距仍然靠相邻兄弟 margin
+   （flex gap 要 Chrome 84+，本机 WebView 80 不认），这里只补对齐和留白。 */
+.oui-stack.align-start, .oui-row.align-start { align-items: flex-start; }
+.oui-stack.align-center, .oui-row.align-center { align-items: center; }
+.oui-stack.align-end, .oui-row.align-end { align-items: flex-end; }
+.oui-stack.justify-start, .oui-row.justify-start { justify-content: flex-start; }
+.oui-stack.justify-center, .oui-row.justify-center { justify-content: center; }
+.oui-stack.justify-end, .oui-row.justify-end { justify-content: flex-end; }
+.oui-stack.justify-between, .oui-row.justify-between { justify-content: space-between; }
+.oui-stack.pad-sm, .oui-row.pad-sm { padding: 8px; }
+.oui-stack.pad-md, .oui-row.pad-md { padding: 14px; }
+
+/* Table 表头排序：整格可点，当前列带 ↑/↓ */
+.oui-th-sort { cursor: pointer; }
+.oui-th-sort:active { background: var(--surface-3); }
+.oui-sort-c { margin-left: 4px; font-style: normal; color: var(--muted); }
+
+/* 图例换到图上/饼左：DOM 已经按 legend 参数改了顺序，这里只把原来的边距扳回来 */
+.oui-chart > .oui-legend:first-child { margin-top: 0; margin-bottom: 6px; }
+.oui-pie-box.lg-top .oui-pie-lg { margin-left: 0; margin-right: 12px; }
 
 /* ---- 选择面板（可选，见上方说明） ---- */
 /* 选择面板：黑白列表，当前值整行反色并打勾 */

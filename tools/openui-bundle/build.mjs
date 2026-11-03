@@ -16,7 +16,7 @@ await build({
   },
 });
 
-/* 顺手把 22 个组件的官方签名落成一个小文件（约 2KB）。
+/* 顺手把组件的官方签名落成一个小文件（几 KB）。
    为什么要有它：openui-core.js 已改成按需加载（index.html 不再同步引），
    但系统提示在用户发第一条消息时就要签名——那条路径不能等 533KB 解析完。
    这份文件与 bundle 出自同一次构建，check.mjs 会拿它和 bundle 里的 signatures 逐条比对，
@@ -34,3 +34,16 @@ fs.writeFileSync(
   header + "window.OPENUI_SIGNATURES = " + JSON.stringify(OpenUI.signatures) + ";\n"
 );
 console.log("signatures: " + OpenUI.signatures.length + " 条 → ui/openui-signatures.js");
+
+/* KaTeX 离线件：公式渲染用（Math 组件 + Text(md:true) 里的 $…$）。
+   照搬官方 dist 的 min 版，不重新打包——它本身就是浏览器直可用的 UMD。
+   字体只带 woff2（20 个约 296KB）：katex.min.css 的 @font-face 把 woff2 排在第一位，
+   WebView 80 认 woff2，woff/ttf 那两份永远不会被请求，带上只是白占 900KB APK。 */
+const KDX = "node_modules/katex/dist";
+const KDST = "../../app/src/main/assets/ui/katex";
+const pkg = JSON.parse(fs.readFileSync("node_modules/katex/package.json", "utf8"));
+fs.mkdirSync(KDST + "/fonts", { recursive: true });
+for (const f of ["katex.min.js", "katex.min.css"]) fs.copyFileSync(`${KDX}/${f}`, `${KDST}/${f}`);
+const woff2 = fs.readdirSync(`${KDX}/fonts`).filter((f) => f.endsWith(".woff2"));
+for (const f of woff2) fs.copyFileSync(`${KDX}/fonts/${f}`, `${KDST}/fonts/${f}`);
+console.log(`katex ${pkg.version}: js+css → ui/katex/，woff2 ${woff2.length} 个`);

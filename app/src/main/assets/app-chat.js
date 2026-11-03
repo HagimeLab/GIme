@@ -1088,6 +1088,30 @@ function chatOuiRoute(verb, arg, m, node, form) {
     startSession("wrong", pick.sub ? pick.sub.id : "all", tf, "");
     return;
   }
+  /* toast:<文本>：即时反馈走 App 自己的 toast，不发消息。
+     以前模型要给用户一句「已保存」只能塞进正文或 Callout。 */
+  if (verb === "toast") {
+    toast(arg || (node && node.textContent ? String(node.textContent) : "已处理"));
+    return;
+  }
+  /* confirm:<标题>|<说明>|<确认后执行的动作>
+     浮层直接用 App 已有的 glass()（危险操作弹窗就是它），确认了把内层动作
+     原样送回 chatOuiAction——不复制一份执行逻辑，所以内层可以是任何已支持的动词。
+     不新造第三套 overlay：预览有卡片悬浮窗、提示有 toast、确认有 glass。 */
+  if (verb === "confirm") {
+    var bits = String(arg || "").split("|");
+    var inner = bits.length > 2 ? bits.slice(2).join("|").trim() : "";
+    glass({
+      title: (bits[0] || "要采用吗？").trim(),
+      desc: (bits[1] || "").trim(),
+      ok: ["采用", function () {
+        if (!inner) { toast("这个确认没带后面的动作"); return; }
+        chatOuiAction(m, inner, node, form);
+      }],
+      no: ["取消", function () { }]
+    });
+    return;
+  }
   toast("这个卡片动作 GIme 还不支持：" + verb);
 }
 
@@ -1174,6 +1198,33 @@ function ouiEnsureCore() {
     document.head.appendChild(s);
   });
   return _ouiCorePromise;
+}
+/* KaTeX（596KB：js 275KB + css 23KB + 20 个 woff2 共 296KB）同样按需注入：
+   绝大多数会话不出公式，冷启动不该为它付一次解析。
+   注入完把渲染层攒下的待排公式一次性补上（ouiMathFlush），已经画出来的卡不用重挂。 */
+var _ouiMathPromise = null;
+function ouiEnsureMath() {
+  if (window.katex) {
+    try { window.ouiMathFlush && window.ouiMathFlush(); } catch (e) { }
+    return Promise.resolve(true);
+  }
+  if (_ouiMathPromise) return _ouiMathPromise;
+  _ouiMathPromise = new Promise(function (resolve) {
+    var link = document.createElement("link");
+    link.rel = "stylesheet";
+    link.href = "ui/katex/katex.min.css";
+    (document.head || document.documentElement).appendChild(link);
+    var s = document.createElement("script");
+    s.src = "ui/katex/katex.min.js";
+    s.async = true;
+    s.onload = function () {
+      if (window.katex) { try { window.ouiMathFlush && window.ouiMathFlush(); } catch (e) { } }
+      resolve(!!window.katex);
+    };
+    s.onerror = function () { _ouiMathPromise = null; resolve(false); };
+    (document.head || document.documentElement).appendChild(s);
+  });
+  return _ouiMathPromise;
 }
 /* 气泡的 innerHTML 落地后再把围栏里的界面挂成真组件：
    renderOpenUI 返回的是 DOM 元素，拼不进字符串，只能后挂。 */
@@ -3146,7 +3197,21 @@ function chatAgentRules() {
          "delete_plan 会先弹预览卡，未批准不要重复调用。" +
          "需要交互卡片时只用 ```openui-lang：首行 root = Stack([...])，参数按位置，带 ? 的可省略；" +
          "组件签名（由官方 schema 生成）：\n" + ouiSignatureLines() + "\n" +
-         "Button 的 action 取 send:/value:/nav:/approve:/adjust:/toggle:/insight:。" +
+         "Button 的 action 取 send:/value:/copy:/nav:/approve:/adjust:/toggle:/insight:/toast:/confirm:。" +
+         "**每个 Button 都必须带 action**——没写 action 的按钮点了没反应，会被降级成纯文字，等于白画；" +
+         "想给用户几个选项时，用 Button(\"选项文字\", \"send:选项文字\")，不要用 Row 堆一排没有 action 的按钮。" +
+         "Button 是轻量描边标签，别当主角：一次最多给 2 个，文案压到 8 个字以内；" +
+         "想在正文里做可点项，优先用 Tap(children, action)、Table.rowAction、Chart.action，别再塞一排按钮。" +
+         "要排版的内容用 Rich(text)（加粗、列表、行内代码、表格、公式 $…$ 都认），别把题干拆成一堆 Text；" +
+         "公式用 Math(text, display) 或 Rich 里的 $…$ / $$…$$，反斜杠一律双写（Math(\"\\\\frac{1}{2}\")），" +
+         "单写会被字符串解析当成转义符吃掉；" +
+         "一组互斥选项用 RadioGroup(name, label, options, value)，可并存的多选用 CheckboxGroup，" +
+         "别用一排 Button 或 Toggle 拼选项；" +
+         "确实没有内容用 Empty(text, hint, action)，失败/超时用 Error(text, hint, retry) 并给 retry 动作，" +
+         "别把异常写成一句没事的正文；" +
+         "同一块要看几份并列内容（题干/解析/笔记、多个题库）用 Tab(labels, panels)，别纵向堆成长页。" +
+         "即时反馈用 toast:<文本>（不发消息），危险或要采用的一步用 confirm:<标题>|<说明>|<确认后的动作>，" +
+         "确认后的动作可以就是 approve 或 send:<文本>。" +
          "Card 第一个参数是标题字符串、第二个才是子组件数组；没有标题就直接用 Stack，不要写 Card([...])。" +
          "示例：root = Stack([Card(\"标题\", [Text(\"正文\"), Progress(\"完成度\", 50), Button(\"继续\", \"send:继续\")])])。" +
          "不要用 Card { ... } 块语法，也不要在正文重复卡片内容。" +
