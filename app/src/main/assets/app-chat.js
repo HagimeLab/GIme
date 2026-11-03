@@ -922,6 +922,29 @@ window.onOuiAction = function (action, payload) {
 /* 动作路由：send/value/submit/nav 是对话动作，approve/adjust/toggle/insight 进方案域
    （P1 并入后的四个业务动词），其余明确说「不支持」。
    nav 的目标除了四个 tab，还多了 #/plans 与 #/plan/<id>。 */
+/* 卡片里的题库名可能写 id、全名或名字里的一段：「线性代数」「线代」「s3」都该认。
+   认不出来把原文带回去让调用方提示，别让用户以为自己点错了。 */
+function ouiBankArg(arg) {
+  var s = String(arg || "").trim();
+  if (!s || s === "全部" || s === "所有" || s === "all" || s === "*") return { all: true, sub: null };
+  var subs = (typeof BANK !== "undefined" && BANK && BANK.subjects) ? BANK.subjects : [];
+  for (var i = 0; i < subs.length; i++) {
+    if (String(subs[i].id) === s) return { all: false, sub: subs[i] };
+  }
+  var hit = subs.filter(function (x) { return x.name === s; });
+  if (hit.length === 1) return { all: false, sub: hit[0] };
+  hit = subs.filter(function (x) { return x.name.indexOf(s) >= 0 || s.indexOf(x.name) >= 0; });
+  if (hit.length === 1) return { all: false, sub: hit[0] };
+  return { all: false, sub: null, miss: s };
+}
+/* 切页之后把目标滚到屏幕中间，不然用户还得自己找 */
+function ouiReveal(sel) {
+  var el = document.querySelector(sel);
+  if (el && el.scrollIntoView) {
+    try { el.scrollIntoView({ block: "center", behavior: "smooth" }); } catch (e) { }
+  }
+}
+
 function chatOuiRoute(verb, arg, m, node, form) {
   if (verb === "send") {
     /* 没带参数就退回按钮文字：Button("继续", {action: "send"}) 是很自然的写法 */
@@ -1029,6 +1052,40 @@ function chatOuiRoute(verb, arg, m, node, form) {
   }
   if (verb === "hitl") {
     if (typeof chatHitlAction === "function") chatHitlAction(arg);
+    return;
+  }
+  /* —— 卡片驱动 App：落到 App 已有的页面 / 题库 / 错题入口 ——
+     arg 写法：「线性代数」「线性代数/single」「全部」；斜杠后半段是题型过滤（可省）。 */
+  if (verb === "bank" || verb === "wrong" || verb === "drill" || verb === "redrill") {
+    var rawArg = String(arg || "").trim();
+    var tf = "";
+    var slash = rawArg.indexOf("/");
+    if (slash >= 0) { tf = rawArg.slice(slash + 1).trim(); rawArg = rawArg.slice(0, slash).trim(); }
+    var pick = ouiBankArg(rawArg);
+    if (pick.miss) { toast("没找到这个题库：" + pick.miss); return; }
+    if (verb === "bank") {
+      closeTop();
+      goTab("bank");
+      if (pick.sub) setTimeout(function () { ouiReveal('#bankList .swipe[data-sid="' + pick.sub.id + '"]'); }, 280);
+      return;
+    }
+    if (verb === "wrong") {
+      /* 进了错题本就顺手展开这个题库那一组，省一次点击 */
+      if (pick.sub) wrongOpen[pick.sub.id] = true;
+      closeTop();
+      goTab("wrong");
+      if (pick.sub) setTimeout(function () { ouiReveal('#wrongList .wgroup[data-sid="' + pick.sub.id + '"]'); }, 280);
+      return;
+    }
+    if (verb === "drill") {
+      if (!pick.sub) { toast("要刷哪个题库？说得具体一点"); return; }
+      closeTop();
+      startSession("practice", pick.sub.id, tf, "bank");
+      return;
+    }
+    /* redrill：没写题库就是「全部错题」 */
+    closeTop();
+    startSession("wrong", pick.sub ? pick.sub.id : "all", tf, "");
     return;
   }
   toast("这个卡片动作 GIme 还不支持：" + verb);
@@ -1186,7 +1243,7 @@ function ouiWinSlot(mid) {
 /* 点卡片本体就展开。不能用 openui-ui 的 bindTap：它 preventDefault，会把从卡片上
    起手的滚动手势一起吃掉（卡片很高，用户正是从卡片上往下滑）。这里按「按下到抬起
    位移小且快」判点，滚动和长按都不算；卡里的交互件（按钮/输入/下拉/折叠行）另算。 */
-var OUI_INNER = "button,input,textarea,select,label,summary,a";
+var OUI_INNER = "button,input,textarea,select,label,summary,a,.oui-tap,.oui-seg-tap,.oui-row-tap";
 function bindOuiOpen(node, mid) {
   var sx = 0, sy = 0, st = 0, lastTouch = 0;
   function down(x, y) { sx = x; sy = y; st = Date.now(); }

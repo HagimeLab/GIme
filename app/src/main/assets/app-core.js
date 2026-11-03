@@ -1761,7 +1761,7 @@ function renderWrong() {
     /* 默认收起：错题一多，全展开会把页面拖得很长。
        批量管理也不强行展开——展开哪一组由用户自己点。 */
     var open = !!wrongOpen[g.id];
-    return '<div class="wgroup"><button class="wg-head" onclick="toggleWrongGroup(&quot;' + g.id + '&quot;)">' +
+    return '<div class="wgroup" data-sid="' + g.id + '"><button class="wg-head" onclick="toggleWrongGroup(&quot;' + g.id + '&quot;)">' +
              '<span class="wg-t">' + esc(g.name) + "</span>" +
              '<span class="wg-n">' + g.list.length + " 题</span>" +
              '<span class="wg-chev">' + (open ? "▴" : "▾") + "</span>" +

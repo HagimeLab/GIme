@@ -30,7 +30,7 @@ const components = [
   }),
   comp(
     "Button",
-    "按钮。action 取：send:<文本> 直接发送；value:<文本> 填入输入框；copy:<文本> 复制到剪贴板；nav:<#/路由> 跳页；approve 采用当前草案；adjust 去调整；submit:<表单名> 提交表单；toggle:<方案id>:<日期>:<序号> 勾选今日任务；insight:<方案id> 刷新关注信息",
+    "按钮。action 取：send:<文本> 直接发送；value:<文本> 填入输入框；copy:<文本> 复制到剪贴板；nav:<#/路由> 跳页；bank:<题库名> 打开题库；wrong:<题库名|全部> 打开错题本；drill:<题库名> 开始刷该题库；redrill:<题库名|全部> 重刷错题；approve 采用当前草案；adjust 去调整；submit:<表单名> 提交表单；toggle:<方案id>:<日期>:<序号> 勾选今日任务；insight:<方案id> 刷新关注信息",
     {
       label: z.string(),
       action: z.string().optional(),
@@ -54,10 +54,11 @@ const components = [
     label: z.string(),
     checked: z.boolean().optional(),
   }),
-  comp("Table", "表格；columns 为表头，rows 为二维字符串数组。单元格以 ! 开头=警示、+ 开头=强调、~ 开头=次要；行比列多时多余的列丢弃、比列少时补空，不会错位。rows 超过 pageSize 时自动分页", {
+  comp("Table", "表格；columns 为表头，rows 为二维字符串数组。单元格以 ! 开头=警示、+ 开头=强调、~ 开头=次要；行比列多时多余的列丢弃、比列少时补空，不会错位。rows 超过 pageSize 时自动分页。rowAction 让整行可点，{1}..{n} 会替换成被点那一行各列的文字（如 wrong:{1}）", {
     columns: z.array(z.string()),
     rows: z.array(z.array(z.string())),
     pageSize: z.int().min(1).optional(),
+    rowAction: z.string().optional(),
   }),
   comp("Metric", "指标卡；delta 是涨跌标注，如 +12% / -3 题，正数显绿、负数显红", {
     label: z.string(),
@@ -83,11 +84,12 @@ const components = [
     text: z.string(),
     tone: z.enum(["info", "warn", "success"]).optional(),
   }),
-  comp("Chart", "图表；kind 取 bar / line / pie（占比）/ stack（堆叠）。labels 与 values 等长；stack 时 values 传二维（每行一个类别的各系列数值，行短了按 0 补），names 为系列名（缺的显示为「系列 N」）", {
+  comp("Chart", "图表；kind 取 bar / line / pie（占比）/ stack（堆叠）。labels 与 values 等长；stack 时 values 传二维（每行一个类别的各系列数值，行短了按 0 补），names 为系列名（缺的显示为「系列 N」）。action 让柱/扇区/图例可点，{label} 替换成被点那一项的标签（如 wrong:{label}）", {
     kind: z.enum(["bar", "line", "pie", "stack"]).optional(),
     labels: z.array(z.string()),
     values: z.union([z.array(z.number()), z.array(z.array(z.number()))]),
     names: z.array(z.string()).optional(),
+    action: z.string().optional(),
   }),
   comp("Divider", "分隔线", {}),
   comp("Image", "图片；src 接受 http(s)、data:image，或写成 svg:<svg .../> 直接画示意图。SVG 里可用 SMIL / CSS 做动画（<animate>、@keyframes），但不支持脚本与外链", {
@@ -133,6 +135,10 @@ const components = [
     children: kids(),
     submitLabel: z.string().optional(),
     action: z.string().optional(),
+  }),
+  comp("Tap", "可点区域：children 整块被点后执行 action。action 取：bank:<题库名> 打开题库并定位；wrong:<题库名|全部> 打开错题本；drill:<题库名> 直接开始刷该题库；redrill:<题库名|全部> 重刷错题；nav:<home|bank|wrong|me> 切页；send:<文本> 让大肥鱼接着说", {
+    children: kids(),
+    action: z.string(),
   }),
 ];
 

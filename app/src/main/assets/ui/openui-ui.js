@@ -9,9 +9,11 @@ const make = (tag, cls) => {
 const textOf = (v) => (v == null ? '' : String(v));
 
 // 按下即触发：收键盘会让布局在按下与抬起之间上移，走 click 会点空
-function bindTap(node, fn) {
+// guard(target)：返回 true 表示这一击属于内层控件（按钮/输入/嵌套 Tap），外层不要接。
+function bindTap(node, fn, guard) {
   let lastFire = 0;
   let sx = 0, sy = 0, st = 0, lastTouch = 0;
+  const blocked = (t) => !!(guard && guard(t));
   const fire = (e) => {
     /* 真机同一次点击会先后送来 touchstart 和 mousedown；不去重的话
        toggle: 会连切两次（看起来没反应）、send: 会重复发两条。 */
@@ -37,6 +39,7 @@ function bindTap(node, fn) {
      收键盘导致的布局上移不影响判断——比的是手指坐标，不是落点元素。 */
   node.addEventListener('touchstart', (e) => {
     lastTouch = Date.now();
+    if (blocked(e.target)) { st = 0; return; }
     const p = e.touches && e.touches[0];
     if (!p) return;
     sx = p.clientX;
@@ -48,6 +51,7 @@ function bindTap(node, fn) {
     const p = e.changedTouches && e.changedTouches[0];
     const dt = Date.now() - st;
     st = 0;
+    if (blocked(e.target)) return;
     if (!p || dt > 600) return;
     if (Math.abs(p.clientX - sx) + Math.abs(p.clientY - sy) > 12) return;
     fire(e);
@@ -56,6 +60,7 @@ function bindTap(node, fn) {
   node.addEventListener('mousedown', (e) => {
     /* 触屏已经走过一遍 touch*（touchend 之后浏览器还会补一串鼠标事件），这里只兜鼠标 */
     if (Date.now() - lastTouch < 700) return;
+    if (blocked(e.target)) return;
     fire(e);
   });
 }
@@ -94,6 +99,21 @@ function cellOf(v) {
   return { text: m[2], tone: m[1] === '!' ? 'danger' : m[1] === '+' ? 'ok' : 'muted' };
 }
 
+/* action 里的占位符：{label} 换成图表标签，{1}..{n} 换成被点那一行各列的文字。
+   卡片能反过来驱动 App（点某一段 → 跳到对应题库/错题）就靠这一步替换。 */
+function actOf(tpl, map) {
+  const s = textOf(tpl);
+  if (!s) return '';
+  return s.replace(/\{([^{}]+)\}/g, (m, k) => (map && hasKey(map, k) ? textOf(map[k]) : m));
+}
+
+/* 内层可点件的边界：外层 Tap 与「点整卡展开」都要让开它们 */
+const TAP_INNER = 'button,input,textarea,select,label,summary,a,.oui-tap,.oui-seg-tap,.oui-row-tap';
+function tapInner(t, self) {
+  const el = t && t.closest ? t.closest(TAP_INNER) : null;
+  return !!(el && el !== self);
+}
+
 function renderNode(node, ctx) {
   if (node == null) return null;
   if (typeof node === 'string') return document.createTextNode(node);
@@ -127,6 +147,24 @@ function renderNode(node, ctx) {
       const body = make('div', 'oui-stack');
       body.append(kids(p.children));
       d.append(body);
+      return d;
+    }
+    case 'Tap': {
+      /* 可点容器：让卡片里的图表 / 表格 / 整块文字反过来驱动 App。
+         内层按钮会自己 stopPropagation，这里再加一道 guard 兜住嵌套 Tap。 */
+      const d = make('div', 'oui-tap');
+      d.setAttribute('role', 'button');
+      /* 只包一行内容的 Tap 当成「可点条目」：加边框 + 右侧箭头，用户才知道能点 */
+      const only = Array.isArray(p.children) ? p.children.length : 1;
+      if (only === 1) d.className += ' oui-tap-line';
+      d.append(kids(p.children));
+      const act = textOf(p.action);
+      d.setAttribute('data-oui-act', act);
+      bindTap(d, (e) => {
+        e.stopPropagation();
+        if (/^copy:/i.test(act)) { ouiCopy(act.slice(5)); return; }
+        ctx.onAction(act, d, nearestForm(d));
+      }, (t) => tapInner(t, d));
       return d;
     }
     case 'Title': {
@@ -167,6 +205,20 @@ function renderNode(node, ctx) {
       const is2D = raw.length > 0 && Array.isArray(raw[0]);
       const values = is2D ? [] : raw.map(Number);
       if (!raw.length) return d;
+      /* action：点某根柱 / 某个图例项就执行，{label} 换成该项标签。
+         饼图是一整块 conic-gradient 画不出可点的扇区，可点的是下面的图例行。 */
+      const cAct = textOf(p.action);
+      const segTap = (el, label) => {
+        if (!cAct) return el;
+        const a = actOf(cAct, { label: textOf(label) });
+        el.setAttribute('data-oui-act', a);
+        el.className = (el.className ? el.className + ' ' : '') + 'oui-seg-tap';
+        bindTap(el, (e) => {
+          e.stopPropagation();
+          ctx.onAction(a, el, nearestForm(el));
+        });
+        return el;
+      };
       if (p.kind === 'pie') {
         /* 占比：柱/折线画不出「占多少」，用 conic-gradient 画饼，
            颜色走 5 档灰阶令牌（黑白界面里彩色饼图很扎眼）。 */
@@ -190,7 +242,7 @@ function renderNode(node, ctx) {
           row.append(makeText('span', 'oui-pie-l', l));
           row.append(makeText('b', 'oui-pie-v',
             String(values[i]) + '（' + Math.round((vals[i] / total) * 100) + '%）'));
-          lg.append(row);
+          lg.append(segTap(row, l));
         });
         const box = make('div', 'oui-pie-box');
         box.append(pie, lg);
@@ -225,7 +277,7 @@ function renderNode(node, ctx) {
             stack.append(seg);
           }
           col.append(stack, makeText('span', '', labels[i] || ''));
-          bars.append(col);
+          bars.append(segTap(col, labels[i] || ''));
         });
         d.append(bars);
         if (nS) {
@@ -266,7 +318,7 @@ function renderNode(node, ctx) {
           const fill = make('i', '');
           fill.style.height = Math.max(0, Math.min(100, (Math.max(0, v) / max) * 100)) + '%';
           col.append(makeText('b', '', String(v)), fill, makeText('span', '', labels[i] || ''));
-          bars.append(col);
+          bars.append(segTap(col, labels[i] || ''));
         });
         d.append(bars);
       }
@@ -510,6 +562,9 @@ function renderNode(node, ctx) {
         t.append(thead);
       }
       const tb = make('tbody');
+      /* rowAction：整行可点，{1}..{n} 换成这一行各列文字（点「概念混淆 60 47%」那行
+         就能直接跳到对应题型，不用再让用户去别的页面翻）。 */
+      const rAct = textOf(p.rowAction);
       const paint = (from, to) => {
         tb.textContent = '';
         for (let i = from; i < to; i++) {
@@ -518,6 +573,17 @@ function renderNode(node, ctx) {
             const td = makeText('td', (num[ci] ? 'num ' : '') + (cell.tone || ''), cell.text);
             tr.append(td);
           });
+          if (rAct) {
+            tr.className = (tr.className ? tr.className + ' ' : '') + 'oui-row-tap';
+            const map = {};
+            rows[i].forEach((cell, ci) => { map[String(ci + 1)] = cell.text; });
+            const a = actOf(rAct, map);
+            tr.setAttribute('data-oui-act', a);
+            bindTap(tr, (e) => {
+              e.stopPropagation();
+              ctx.onAction(a, tr, nearestForm(tr));
+            });
+          }
           tb.append(tr);
         }
       };

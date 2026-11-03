@@ -1443,6 +1443,24 @@ html.swap, html.swap * { transition: none !important; }
                      color: var(--muted); font-size: .7857em; }
 .oui-legend > span > i { width: 8px; height: 8px; margin-right: 5px; border-radius: 2px; }
 
+/* ---- 卡片驱动 App：可点区域 / 可点柱段 / 可点表格行 ----
+   只做「按下去有反馈」，不额外画边框：卡片本身已经有卡片框，再套一层会显得脏。 */
+.oui-tap { position: relative; cursor: pointer; -webkit-tap-highlight-color: transparent;
+           border-radius: 12px; transition: opacity .12s; }
+.oui-tap:active { opacity: .72; }
+.oui-tap > * + * { margin-top: 10px; }
+/* 单行 Tap 当「可点条目」：给它一条看得见的边和一个箭头，否则用户不知道能点 */
+.oui-tap-line { display: flex; align-items: center; justify-content: space-between;
+                padding: 10px 12px; border: 1px solid var(--stroke-2);
+                background: var(--surface-2); }
+.oui-tap-line::after { content: "›"; margin-left: 8px; color: var(--ink-3); font-weight: 400; }
+.oui-tap-line > * + * { margin-top: 0; }
+.oui-seg-tap, .oui-row-tap { cursor: pointer; -webkit-tap-highlight-color: transparent; }
+.oui-seg-tap:active { opacity: .6; }
+.oui-table tr.oui-row-tap:active td { background: var(--surface-2); }
+.oui-table tr.oui-row-tap td:last-child::after { content: "›"; float: right; margin-left: 6px;
+                                                 color: var(--ink-3); font-weight: 400; }
+
 /* ---- 折叠块嵌套：缩进 + 细线，深一层看得出层级，也不至于把宽度吃光 ---- */
 .oui-details .oui-details { margin-left: 10px; padding-left: 10px;
                             border-left: 2px solid var(--stroke-2); border-bottom: none; }

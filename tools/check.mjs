@@ -2724,6 +2724,67 @@ ok("新组件都画得出来（Code/Flow/Grid/Details/Slider）", (() => {
   const cls = uiCollect(box, () => true).map(uiCls).join("|");
   return ["oui-code", "oui-flow", "oui-grid", "oui-details", "oui-slider"].every((c) => cls.indexOf(c) >= 0);
 })());
+/* ---- 卡片驱动 App：Tap / Chart.action / Table.rowAction + 四个 App 动词 ---- */
+ok("Tap 画出可点区域（role=button、带 data-oui-act、子树照常渲染）", (() => {
+  const box = uiRender('root = Tap([Text("看错题")], "wrong:全部")');
+  const t = uiCollect(box, (n) => uiCls(n).indexOf("oui-tap") >= 0)[0];
+  return !!t && t["attr_role"] === "button" && t["attr_data-oui-act"] === "wrong:全部" &&
+         uiText(t).indexOf("看错题") >= 0;
+})());
+ok("单行 Tap 画成「可点条目」（带边框箭头，用户才知道能点）", (() => {
+  const box = uiRender('root = Stack([Tap([Text("看错题")], "wrong:全部"), Tap([Text("标题"), Chart("bar", ["甲"], [1])], "wrong:全部")])');
+  const taps = uiCollect(box, (n) => uiCls(n).indexOf("oui-tap") >= 0);
+  const lines = taps.filter((n) => uiCls(n).indexOf("oui-tap-line") >= 0);
+  return taps.length === 2 && lines.length === 1 && uiText(lines[0]).indexOf("看错题") >= 0;
+})());
+ok("Chart.action 把 {label} 换成被点那一项的标签（点柱子跳错题）", (() => {
+  const box = uiRender('root = Chart("bar", ["概念","计算"], [60,40], ["甲","乙"], "wrong:{label}")');
+  const segs = uiCollect(box, (n) => uiCls(n).indexOf("oui-seg-tap") >= 0);
+  return segs.length === 2 &&
+         segs[0]["attr_data-oui-act"] === "wrong:概念" &&
+         segs[1]["attr_data-oui-act"] === "wrong:计算";
+})());
+ok("堆叠柱的每一列也能点（仍按列标签替换）", (() => {
+  const box = uiRender('root = Chart("stack", ["周一","周二"], [[3,1],[2,2]], ["新学","复习"], "wrong:{label}")');
+  const segs = uiCollect(box, (n) => uiCls(n).indexOf("oui-seg-tap") >= 0);
+  return segs.length === 2 && segs[0]["attr_data-oui-act"] === "wrong:周一" &&
+         segs[1]["attr_data-oui-act"] === "wrong:周二";
+})());
+ok("Table.rowAction 整行可点，{1}..{n} 换成这一行各列文字", (() => {
+  const box = uiRender('root = Table(["题型","错题"], [["概念","60"]], 1, "wrong:{1}")');
+  const trs = uiCollect(box, (n) => n.id === "new-tr" && uiCls(n).indexOf("oui-row-tap") >= 0);
+  return trs.length === 1 && trs[0]["attr_data-oui-act"] === "wrong:概念";
+})());
+ok("没写 action / rowAction 的图表和表格不会变成可点（不乱加反馈）", (() => {
+  const box = uiRender('root = Stack([Chart("bar", ["甲"], [1]), Table(["a"], [["1"]], 1)])');
+  return uiCollect(box, (n) => uiCls(n).indexOf("oui-seg-tap") >= 0).length === 0 &&
+         uiCollect(box, (n) => uiCls(n).indexOf("oui-row-tap") >= 0).length === 0;
+})());
+ok("签名里有 Tap / Chart.action / Table.rowAction", (() => {
+  const find = (n) => (W.OpenUI.signatures || []).find((x) => x.name === n) || {};
+  return !!find("Tap").signature && String(find("Tap").signature).indexOf("children") >= 0 &&
+         String(find("Chart").signature).indexOf("action?") >= 0 &&
+         String(find("Table").signature).indexOf("rowAction?") >= 0;
+})());
+ok("四个 App 动词都接到 App 既有入口（bank/wrong/drill/redrill）", (() => {
+  const chat = jsSources[5];
+  return /verb === "bank"/.test(chat) && /verb === "drill"/.test(chat) &&
+         /verb === "redrill"/.test(chat) && /function ouiBankArg/.test(chat) &&
+         /goTab\("bank"\)/.test(chat) && /goTab\("wrong"\)/.test(chat) &&
+         /startSession\("practice", pick\.sub\.id, tf, "bank"\)/.test(chat) &&
+         /startSession\("wrong", pick\.sub \? pick\.sub\.id : "all", tf, ""\)/.test(chat) &&
+         /wrongOpen\[pick\.sub\.id\] = true/.test(chat);
+})());
+ok("点可点区域不会顺手把整张卡展开（OUI_INNER 认得它们）",
+   /var OUI_INNER = "[^"]*\.oui-tap[^"]*\.oui-seg-tap[^"]*\.oui-row-tap/.test(jsSources[5]));
+ok("可点样式齐（.oui-tap / 段 / 行 + 按下反馈）", (() => {
+  return /\.oui-tap\s*\{[^}]*cursor:\s*pointer/.test(cssSource) &&
+         /\.oui-tap:active\s*\{[^}]*opacity/.test(cssSource) &&
+         /\.oui-tap-line\s*\{[^}]*border/.test(cssSource) &&
+         /\.oui-tap-line::after\s*\{[^}]*content:\s*"›"/.test(cssSource) &&
+         /\.oui-seg-tap:active\s*\{[^}]*opacity/.test(cssSource) &&
+         /\.oui-table tr\.oui-row-tap:active td\s*\{[^}]*background/.test(cssSource);
+})());
 ok("Button 的 copy: 在渲染层就地完成（不落到「动作不支持」）",
    /\/\^copy:\/i\.test\(act\)/.test(jsSources[1]) && /function ouiCopy/.test(jsSources[1]) &&
    /Android\.copyText/.test(jsSources[1]));
