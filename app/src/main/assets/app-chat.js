@@ -1350,6 +1350,9 @@ function chatOuiMount(root) {
    搬节点而不是重画：输入到一半的值、按钮回调、打卡后的文案都跟着节点走，
    重画只会把它们冲掉。 */
 var _ouiWinMid = "";
+/* 悬浮窗这张卡属于哪个会话。切会话后旧窗口还压在页面上，
+   上一段对话的组件就会被当成新对话的组件展开——所以按会话核对。 */
+var _ouiWinConv = "";
 function ouiWinSlot(mid) {
   if (!mid) return null;
   var slots = document.querySelectorAll("[data-oui]");
@@ -1417,6 +1420,7 @@ function chatOuiExpand(mid) {
   if (t && t.textContent) t.classList.add("oui-in-head");
   body.appendChild(card);              /* 移动节点，不重建 */
   _ouiWinMid = mid;
+  _ouiWinConv = chatCurId || "";
   chatOuiScrim(true);
   chatOuiMaxSet(false);
   win.classList.add("on");
@@ -1436,6 +1440,7 @@ function chatOuiCollapse() {
   var card = body && body.querySelector(".oui");
   var slot = ouiWinSlot(_ouiWinMid);
   _ouiWinMid = "";
+  _ouiWinConv = "";
   if (card) {
     /* 那条消息还在就原路放回去；已经不在了（切了会话）就丢掉，
        不然它会一直浮在窗口里，下次展开另一张时叠成两张卡 */
@@ -1887,6 +1892,10 @@ function chatCopyMsg(id) {
 function chatRender() {
   var list = document.getElementById("chatList");
   if (!list) return;
+  /* 切了会话就把上一段对话展开的卡收掉：窗口里的卡片节点不随列表重建销毁，
+     旧卡的槽位却没了，它会一直浮在新对话上，看起来就是「点这个对话展开，
+     显示的是上一个对话的组件」。同一会话内的重画（流式、卡片里点按钮）不收回。 */
+  if (_ouiWinMid && _ouiWinConv !== (chatCurId || "")) chatOuiCollapse();
   /* 头部始终是 agent 的名字；对话标题只在历史列表里出现。
      空会话时它由 CSS 隐藏，名字显示在中间的 hero 里。 */
   var ttl = document.getElementById("chatTitle");

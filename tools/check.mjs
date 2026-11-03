@@ -5579,6 +5579,14 @@ ok("提示里带的图文示范卡可被解析器接受（Callout+Table+Steps+Bu
   return !!(r && r.root) && ((r.meta && r.meta.errors) ? r.meta.errors.length === 0 : true);
 })());
 
+section("[30b-9] 浮窗卡片按会话归属：切会话后不把上一段对话的组件当成新的展开");
+ok("展开卡时记录所属会话；重画时若已换会话先收回旧卡（同一会话内重画保留）",
+   html.indexOf('var _ouiWinConv = "";') >= 0 &&
+   html.indexOf('_ouiWinConv = chatCurId || "";') >= 0 &&
+   html.indexOf('if (_ouiWinMid && _ouiWinConv !== (chatCurId || "")) chatOuiCollapse();') >= 0);
+ok("收回卡片时清空会话标记，避免下次误判",
+   html.indexOf('_ouiWinMid = "";\n  _ouiWinConv = "";') >= 0);
+
 /* ---------- 结果 ---------- */
 console.log("\n" + "=".repeat(46));
 if (fails.length) {
