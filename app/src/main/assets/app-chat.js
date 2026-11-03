@@ -746,7 +746,33 @@ var UI_FENCE = /```(?:openui-lang|openui)[^\n]*\n([\s\S]*?)```/i;
    只有「首行 root =」+「确实调用了已知组件」两条都成立才认，宁可不画也不乱画；
    普通代码块（root = foo() 但没有组件调用）仍按代码块显示。 */
 var UI_BARE_FENCE = /```[ \t]*\r?\n([\s\S]*?)```/g;
-var UI_COMPONENT_CALL = /\b(?:Card|Form|Table|Select|Progress|Row|Stack|Text|Button|Title|Badge|Divider|Metric|Input|Toggle)\s*\(/;
+/* 组件名从 bundle 的 signatures 现取，别再手写清单：
+   15→19 那次加 List/Steps/Callout/Chart 时就漏了这四行，模型漏语言标签的卡片
+   只要用到这四件就整段裸奔成代码块。取不到 signatures 才退回内置名单。 */
+var UI_COMPONENT_CALL = null;
+function ouiComponentCallRe() {
+  if (UI_COMPONENT_CALL) return UI_COMPONENT_CALL;
+  var names = [];
+  /* core 改成懒加载之后，这段代码很可能在 window.OpenUI 还不存在时就跑：
+     先看运行时的 signatures，再看构建期写好的静态表（openui-signatures.js，
+     和页面同步加载，永远在），最后才是内置名单。少一步就会把新组件当成
+     「不是组件调用」，裸围栏里的卡片整段退化成代码块。 */
+  function take(list) {
+    for (var i = 0; i < (list || []).length; i++) {
+      if (list[i] && list[i].name) names.push(String(list[i].name));
+    }
+  }
+  try { take(window.OpenUI && OpenUI.signatures); } catch (e) { }
+  if (!names.length) { try { take(window.OPENUI_SIGNATURES); } catch (e) { } }
+  if (!names.length) {
+    names = ["Card", "Form", "Table", "Select", "Progress", "Row", "Stack", "Text", "Button",
+             "Title", "Badge", "Divider", "Metric", "Input", "Toggle",
+             "List", "Steps", "Callout", "Chart", "Image", "Link", "Skeleton",
+             "Code", "Flow", "Grid", "Details", "Slider"];
+  }
+  UI_COMPONENT_CALL = new RegExp("\\b(?:" + names.join("|") + ")\\s*\\(");
+  return UI_COMPONENT_CALL;
+}
 function ouiBareFence(text) {
   var re = new RegExp(UI_BARE_FENCE.source, "g"), m;
   while ((m = re.exec(text))) {
@@ -757,7 +783,7 @@ function ouiBareFence(text) {
       if (lines[i].trim()) { first = lines[i]; break; }
     }
     if (!/^\s*root\s*=/.test(first)) continue;
-    if (!UI_COMPONENT_CALL.test(src)) continue;
+    if (!ouiComponentCallRe().test(src)) continue;
     return { src: src, raw: m[0] };
   }
   return null;
@@ -768,21 +794,43 @@ function ouiSplit(m) {
   var text = String((m && m.text) || "");
   var c = OUI_CACHE[id];
   if (c && c.t === text) return c;
-  var out = { t: text, text: text, src: "" };
-  var hit = text.match(UI_FENCE);
-  if (hit) {
-    out.src = String(hit[1] || "").trim();
-    out.text = text.replace(hit[0], "").replace(/\n{3,}/g, "\n\n").trim();
+  /* srcs 收**全部**围栏：一条回答画两张卡是正常写法（先总览再明细）。
+     以前只 match 第一段，第二段会留在正文里被 mdToHtml 当代码块渲染成源码。 */
+  var out = { t: text, text: text, src: "", srcs: [] };
+  var re = new RegExp(UI_FENCE.source, "gi"), mm, raws = [];
+  while ((mm = re.exec(text))) {
+    var body = String(mm[1] || "").trim();
+    if (!body) continue;
+    out.srcs.push(body);
+    raws.push(mm[0]);
+  }
+  if (out.srcs.length) {
+    out.src = out.srcs[0];
+    var rest = text;
+    for (var i = 0; i < raws.length; i++) rest = rest.replace(raws[i], "");
+    out.text = rest.replace(/\n{3,}/g, "\n\n").trim();
   } else {
     var loose = ouiBareFence(text);
     if (loose) {
       out.src = loose.src;
+      out.srcs = [loose.src];
       out.text = text.replace(loose.raw, "").replace(/\n{3,}/g, "\n\n").trim();
     }
   }
   if (Object.keys(OUI_CACHE).length > 60) OUI_CACHE = {};
   OUI_CACHE[id] = out;
   return out;
+}
+/* 每条围栏一个槽位，键是「消息 id#序号」：挂载、悬浮窗、重画都按这个键认卡片。
+   一条消息只挂一张卡时键是 id#0，与旧的 data-oui="id" 不再兼容——两边都改了。 */
+function ouiSlotHtml(m) {
+  var parts = (ouiSplit(m).srcs) || [];
+  var id = (m && m.id) || "";
+  var h = "";
+  for (var i = 0; i < parts.length; i++) {
+    h += '<div class="oui-slot" data-oui="' + esc(id + "#" + i) + '"></div>';
+  }
+  return h;
 }
 /* 模型常把 OpenUI 写成 Card { Text(...) ... } 这种块语法，官方解析器只认 root = ...。
    这里做一个窄归一：只处理单层 Card 块，组件参数里的 name= 值转成位置参数；
@@ -1049,23 +1097,60 @@ function chatOuiPick(idx) {
   if (fn) { try { fn(v); } catch (e) { } }
   closeTop();
 }
+/* core（533KB）不再由 index.html 同步加载：第一次真要画卡时才注入。
+   不加载它的场景：从不打开大肥鱼、或这一轮模型没出卡——冷启动就省下这一次解析。
+   并发安全：同一个 promise，成功后再调直接 resolve。 */
+var _ouiCorePromise = null;
+function ouiEnsureCore() {
+  if (window.OpenUI) return Promise.resolve(true);
+  if (_ouiCorePromise) return _ouiCorePromise;
+  _ouiCorePromise = new Promise(function (resolve) {
+    var s = document.createElement("script");
+    s.src = "ui/openui-core.js";
+    s.async = true;
+    s.onload = function () { resolve(!!window.OpenUI); };
+    s.onerror = function () {
+      /* 注入失败就清掉缓存，下次再试；别把「加载不了」记成永久状态 */
+      _ouiCorePromise = null;
+      resolve(false);
+    };
+    document.head.appendChild(s);
+  });
+  return _ouiCorePromise;
+}
 /* 气泡的 innerHTML 落地后再把围栏里的界面挂成真组件：
    renderOpenUI 返回的是 DOM 元素，拼不进字符串，只能后挂。 */
 function chatOuiMount(root) {
   if (!root || !root.querySelectorAll || !window.renderOpenUI) return;
+  if (!window.OpenUI) {
+    /* 卡片源码已经在屏幕上了，core 还在路上：拉一次再回来挂（同一份 root 复用）。
+       __ouiWaiting 防重入，否则两次渲染会把同一张卡挂两遍。 */
+    if (root.__ouiWaiting) return;
+    root.__ouiWaiting = true;
+    ouiEnsureCore().then(function (ok) {
+      root.__ouiWaiting = false;
+      if (ok) chatOuiMount(root);
+    });
+    return;
+  }
   var slots = root.querySelectorAll("[data-oui]");
   for (var i = 0; i < slots.length; i++) {
     var slot = slots[i];
-    var id = (slot.getAttribute && slot.getAttribute("data-oui")) || "";
+    /* 键是「消息 id#序号」：同一条消息可能挂多张卡，序号取这条消息的第几段围栏 */
+    var key = (slot.getAttribute && slot.getAttribute("data-oui")) || "";
+    var cut = key.lastIndexOf("#");
+    var id = cut < 0 ? key : key.slice(0, cut);
+    var idx = cut < 0 ? 0 : (parseInt(key.slice(cut + 1), 10) || 0);
     var m = null;
     for (var j = 0; j < chatMsgs.length; j++) {
       if (chatMsgs[j] && chatMsgs[j].id === id) { m = chatMsgs[j]; break; }
     }
     if (!m) continue;
-    var src = ouiNormalize(ouiSplit(m).src);
+    var parts = (ouiSplit(m).srcs) || [];
+    var src = ouiNormalize(parts[idx] || "");
     if (!src) continue;
     /* 这张卡正浮在悬浮窗里：节点还活在窗口里，槽位空着（CSS 会收起来），别在这儿重画 */
-    if (id === _ouiWinMid) continue;
+    if (key === _ouiWinMid) continue;
     if (!m.formValues) m.formValues = {};
     try {
       var card = window.renderOpenUI(src, {
@@ -1080,7 +1165,7 @@ function chatOuiMount(root) {
       });
       /* 卡片是挂载后才撑高的；用户原本在底部时跟着它走，别让最后一张卡被截掉半截 */
       var near = root.scrollHeight - root.scrollTop - root.clientHeight < 160;
-      if (card) { slot.appendChild(card); bindOuiOpen(card, id); }
+      if (card) { slot.appendChild(card); bindOuiOpen(card, key); }
       if (card && near) root.scrollTop = root.scrollHeight;
     } catch (e) { /* 画不出来就当没有这张卡：正文那段 Markdown 还在 */ }
   }
@@ -1674,8 +1759,7 @@ function chatRender() {
                     (hasBody ? '<button class="blk-copy" onclick="chatCopyMsg(\'' +
                       esc(m.id || "") + '\')">复制</button>' : "") +
                   "</div>" + content + chatToolsHtml(m) + "</div>" +
-                (ouiSplit(m).src
-                  ? '<div class="oui-slot" data-oui="' + esc(m.id || "") + '"></div>' : "") +
+                ouiSlotHtml(m) +
               "</div>";
     }
     h += '<div class="msg' + (me ? " me" : " ai") + '" data-mid="' + esc(m.id || "") + '">' +
@@ -2367,6 +2451,9 @@ async function chatSend() {
 function chatAsk(text) {
   var t = String(text == null ? "" : text).trim();
   if (!t) return;
+  /* 发出去就顺手预取 core：模型要想几秒，正好把这 533KB 的下载/解析藏进去，
+     等卡片流出来时 ouiEnsureCore 多半已经 resolve，挂载不用等。失败也不影响提问。 */
+  if (!window.OpenUI) { try { ouiEnsureCore(); } catch (e) { } }
   if (chatBusy) {
     chatInterrupt = t;
     chatStop();
@@ -2959,9 +3046,19 @@ var OUI_SIG_CACHE = "";
 function ouiSignatureLines() {
   if (OUI_SIG_CACHE) return OUI_SIG_CACHE;
   var lines = [], i;
+  /* 优先用构建时落下的静态签名：core 现在是按需加载，第一条消息发出时
+     它多半还没下载完，而系统提示不能等。两者不一致 check.mjs 会报。 */
+  try {
+    var stat = window.OPENUI_SIGNATURES;
+    if (stat && stat.length) {
+      for (i = 0; i < stat.length; i++) {
+        lines.push("- " + stat[i].signature + (stat[i].description ? " — " + stat[i].description : ""));
+      }
+    }
+  } catch (e) { }
   try {
     var sigs = window.OpenUI && OpenUI.signatures;
-    if (sigs && sigs.length) {
+    if (!lines.length && sigs && sigs.length) {
       for (i = 0; i < sigs.length; i++) {
         lines.push("- " + sigs[i].signature + (sigs[i].description ? " — " + sigs[i].description : ""));
       }

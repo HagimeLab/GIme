@@ -8,6 +8,9 @@ build.local.cmd
 .DS_Store
 app/build/
 
+# openui-bundle 的构建依赖：npm install 现拉，锁文件（package-lock.json）才入库
+tools/openui-bundle/node_modules/
+
 # 发布签名密钥与口令：一旦入库就等于公开私钥，绝不提交
 signing/
 *.jks

@@ -977,14 +977,17 @@ html.swap, html.swap * { transition: none !important; }
   border: 1px solid var(--line);
   box-shadow: none;
   color: var(--text);
-  font-size: 14px;
+  /* 字号跟两处设置走：rem 吃「我的 → 字号」（html font-size 按百分比缩放），
+     var(--chat-fs) 吃「对话字号」，与气泡 .msg .bubble 同一口径。
+     卡片内部字号一律用 em，跟着这一行缩放；别再写死 px。 */
+  font-size: calc(.875rem * var(--chat-fs, 1));
 }
 .oui-warn {
   margin-top: 10px;
   padding-top: 8px;
   border-top: 1px dashed var(--stroke);
   color: var(--muted);
-  font-size: 12px;
+  font-size: .8571em;
 }
 
 /* 卡片在气泡里的落点：innerHTML 塞不进 DOM，先占位、挂载完成后再画进去 */
@@ -1008,6 +1011,8 @@ html.swap, html.swap * { transition: none !important; }
    （P0 验收 D-1/D-2；原来那格写的是免责声明行，2026-11-02 按裁定删掉了）。 */
 .oui-slot { display: block; width: 100%; margin: 10px 0; }
 .oui-slot:empty { display: none; }   /* 画不出来就当没这张卡，不留空框 */
+/* 一条回答里画多张卡时，相邻槽位只留一次间距（两个 10px 会叠成 20px） */
+.oui-slot + .oui-slot { margin-top: 0; }
 
 /* 卡片本体就是展开的点击区（不再有单独的展开条）。
    按下去给一点边框反馈，不然用户不知道这张卡可以点。
@@ -1072,6 +1077,11 @@ html.swap, html.swap * { transition: none !important; }
 .oui-stack > * + * {
   margin-top: 10px;
 }
+/* Stack 的 gap 参数：schema 里声明了 sm/md，渲染层以前没接，模型写了等于白写。
+   md 就是默认的 10px，只给 sm 单独一档。 */
+.oui-stack.gap-sm > * + * {
+  margin-top: 6px;
+}
 
 .oui-row {
   display: flex;
@@ -1090,7 +1100,7 @@ html.swap, html.swap * { transition: none !important; }
 
 .oui-card-t {
   margin-bottom: 8px;
-  font-size: 14px;
+  font-size: 1em;
   font-weight: 700;
 }
 .oui-list { margin: 4px 0 0; padding-left: 1.2em; }
@@ -1098,42 +1108,42 @@ html.swap, html.swap * { transition: none !important; }
 .oui-steps { list-style: none; margin: 0; padding: 0; }
 .oui-steps li { display: flex; align-items: flex-start; margin: 8px 0; }
 .oui-steps i { flex: 0 0 22px; width: 22px; height: 22px; margin-right: 10px; border-radius: 50%;
-               background: var(--ink); color: var(--paper); font-style: normal; font-size: 12px;
+               background: var(--ink); color: var(--paper); font-style: normal; font-size: .8571em;
                line-height: 22px; text-align: center; }
 .oui-steps span { flex: 1; min-width: 0; line-height: 1.6; }
-.oui-callout { padding: 10px 12px; border-radius: 12px; background: var(--surface);
+.oui-callout { padding: 10px 12px; border-radius: 12px; background: var(--surface-2);
                border-left: 3px solid var(--ink-3); }
-.oui-callout.warn { border-left-color: #D14343; }
-.oui-callout.success { border-left-color: #2E7D4F; }
-.oui-callout-t { display: block; margin-bottom: 3px; font-size: 13px; }
-.oui-callout-x { font-size: 13px; line-height: 1.6; color: var(--ink-2); }
+.oui-callout.warn { border-left-color: var(--warn); }
+.oui-callout.success { border-left-color: var(--ok); }
+.oui-callout-t { display: block; margin-bottom: 3px; font-size: .9286em; }
+.oui-callout-x { font-size: .9286em; line-height: 1.6; color: var(--ink-2); }
 .oui-chart { width: 100%; }
 .oui-bars { display: flex; align-items: flex-end; height: 130px; margin: 0 -4px; padding-top: 8px; }
 .oui-bar { flex: 1; min-width: 0; margin: 0 4px; display: flex; flex-direction: column;
            align-items: center; height: 100%; justify-content: flex-end; }
-.oui-bar b { margin-bottom: 3px; font-size: 11px; color: var(--ink-2); }
+.oui-bar b { margin-bottom: 3px; font-size: .7857em; color: var(--ink-2); }
 .oui-bar i { display: block; width: 70%; max-width: 34px; min-height: 3px;
              border-radius: 8px 8px 3px 3px; background: var(--ink); }
-.oui-bar span { max-width: 100%; margin-top: 4px; font-size: 11px; color: var(--ink-2);
+.oui-bar span { max-width: 100%; margin-top: 4px; font-size: .7857em; color: var(--ink-2);
                 white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .oui-line { width: 100%; height: 110px; color: var(--ink); }
 .oui-chart-x { display: flex; justify-content: space-between; margin-top: 4px;
-               font-size: 11px; color: var(--ink-2); }
+               font-size: .7857em; color: var(--ink-2); }
 
 .oui-title.l1 {
-  font-size: 18px;
+  font-size: 1.2857em;
   font-weight: 700;
   line-height: 1.35;
 }
 
 .oui-title.l2 {
-  font-size: 16px;
+  font-size: 1.1429em;
   font-weight: 700;
   line-height: 1.35;
 }
 
 .oui-title.l3 {
-  font-size: 14px;
+  font-size: 1em;
   font-weight: 700;
 }
 
@@ -1151,7 +1161,7 @@ html.swap, html.swap * { transition: none !important; }
   border-radius: 999px;
   background: var(--surface-3);
   color: var(--muted);
-  font-size: 12px;
+  font-size: .8571em;
 }
 
 .oui-div {
@@ -1159,6 +1169,31 @@ html.swap, html.swap * { transition: none !important; }
   margin: 2px 0;
   border: 0;
   border-top: 1px solid var(--stroke);
+}
+
+/* 图片：宽度跟卡片，高度封顶（否则一张长图能把气泡撑到几屏） */
+.oui-figure { margin: 0; }
+.oui-img { display: block; width: 100%; max-height: 260px; object-fit: contain;
+           border-radius: 12px; background: var(--surface-2); }
+.oui-img-bad { padding: 14px; border-radius: 12px; background: var(--surface-2);
+               color: var(--muted); font-size: .8571em; text-align: center; }
+.oui-cap { margin-top: 6px; color: var(--muted); font-size: .8571em; }
+
+/* 链接：颜色跟正文，只靠下划线区分（黑白界面里不再引一种蓝） */
+.oui-link { color: var(--text); text-decoration: underline; text-underline-offset: 2px; }
+
+/* 骨架占位：宽度递减的灰条 + 轻呼吸，表示这块还在生成 */
+.oui-skel { display: flex; flex-direction: column; }
+.oui-skel i { display: block; height: 12px; border-radius: 6px; background: var(--surface-3);
+              animation: ouiSkel 1.4s ease-in-out infinite; }
+.oui-skel i + i { margin-top: 8px; }
+.oui-skel i:nth-child(2) { width: 86%; }
+.oui-skel i:nth-child(3) { width: 62%; }
+.oui-skel i:nth-child(4) { width: 74%; }
+.oui-skel i:nth-child(n + 5) { width: 50%; }
+@keyframes ouiSkel { 0%, 100% { opacity: .55; } 50% { opacity: 1; } }
+@media (prefers-reduced-motion: reduce) {
+  .oui-skel i { animation: none; }
 }
 
 .oui-metric {
@@ -1171,19 +1206,19 @@ html.swap, html.swap * { transition: none !important; }
 
 .oui-metric-k {
   color: var(--muted);
-  font-size: 12px;
+  font-size: .8571em;
 }
 
 .oui-metric-v {
   margin-top: 2px;
-  font-size: 20px;
+  font-size: 1.4286em;
   font-weight: 700;
 }
 
 .oui-metric-h {
   margin-top: 2px;
   color: var(--muted);
-  font-size: 12px;
+  font-size: .8571em;
 }
 
 .oui-progress {
@@ -1196,7 +1231,7 @@ html.swap, html.swap * { transition: none !important; }
 
 .oui-progress-t {
   color: var(--muted);
-  font-size: 12px;
+  font-size: .8571em;
 }
 
 .oui-progress-bar {
@@ -1216,7 +1251,7 @@ html.swap, html.swap * { transition: none !important; }
 .oui-btn {
   padding: 10px 16px;
   border-radius: var(--r-pill);
-  font-size: 14px;
+  font-size: 1em;
   font-weight: 600;
 }
 
@@ -1246,7 +1281,7 @@ html.swap, html.swap * { transition: none !important; }
 
 .oui-label {
   color: var(--muted);
-  font-size: 12px;
+  font-size: .8571em;
 }
 
 .oui-input {
@@ -1257,7 +1292,7 @@ html.swap, html.swap * { transition: none !important; }
   background: var(--surface-2);
   color: var(--text);
   font: inherit;
-  font-size: 14px;
+  font-size: 1em;
   outline: none;
 }
 
@@ -1276,7 +1311,7 @@ html.swap, html.swap * { transition: none !important; }
   background: var(--surface-2);
   color: var(--text);
   font: inherit;
-  font-size: 14px;
+  font-size: 1em;
   text-align: left;
 }
 
@@ -1305,7 +1340,7 @@ html.swap, html.swap * { transition: none !important; }
 .oui-toggle {
   display: flex;
   align-items: center;
-  font-size: 14px;
+  font-size: 1em;
 }
 .oui-toggle > * + * {
   margin-left: 8px;
@@ -1319,7 +1354,7 @@ html.swap, html.swap * { transition: none !important; }
 /* 表格默认折成一行「表格 · N 列 M 行」，点开才占版面 */
 .oui-fold { max-width: 100%; }
 .oui-fold > summary { cursor: pointer; list-style: none; display: flex; align-items: center;
-                      min-height: 44px; font-size: 13px; color: var(--muted);
+                      min-height: 44px; font-size: .9286em; color: var(--muted);
                       border-bottom: 1px solid var(--stroke); outline: none;
                       -webkit-tap-highlight-color: transparent; }
 .oui-fold > summary::-webkit-details-marker { display: none; }
@@ -1331,7 +1366,7 @@ html.swap, html.swap * { transition: none !important; }
 .oui-table {
   width: 100%;
   border-collapse: collapse;
-  font-size: 13px;
+  font-size: .9286em;
 }
 
 .oui-table th,
@@ -1352,6 +1387,12 @@ html.swap, html.swap * { transition: none !important; }
   font-weight: 600;
 }
 
+/* 整列都是数字时右对齐（渲染层按列判定后加 .num）：
+   窄屏上「3 / 12 / 100」左对齐看不出量级差 */
+.oui-table .num {
+  text-align: right;
+}
+
 .oui-form {
   display: flex;
   flex-direction: column;
@@ -1359,6 +1400,118 @@ html.swap, html.swap * { transition: none !important; }
 .oui-form > * + * {
   margin-top: 10px;
 }
+
+/* ---- 表格单元格语义 + 分页 ---- */
+/* 前缀 ! / + / ~ 在渲染层剥掉后落到这三个类上：错题行能标红、重点行能强调 */
+.oui-table td.danger { color: var(--warn); font-weight: 600; }
+.oui-table td.ok { color: var(--ok); font-weight: 600; }
+.oui-table td.muted { color: var(--muted); }
+.oui-tablebox { max-width: 100%; }
+.oui-pager { display: flex; align-items: center; justify-content: center; margin-top: 6px; }
+.oui-pager-b { width: 34px; height: 34px; border-radius: 999px; background: var(--surface-2);
+               color: var(--text); font-size: 1.1429em; line-height: 1; }
+.oui-pager-b[disabled] { opacity: .3; }
+.oui-pager-t { margin: 0 10px; color: var(--muted); font-size: .8571em; }
+
+/* ---- 饼图（占比） ---- */
+.oui-pie-box { display: flex; align-items: center; }
+.oui-pie { flex: 0 0 92px; width: 92px; height: 92px; border-radius: 50%; }
+.oui-pie-lg { flex: 1; min-width: 0; margin-left: 12px; }
+.oui-pie-k { display: flex; align-items: baseline; font-size: .8571em; line-height: 1.75; }
+.oui-pie-k > i { flex: 0 0 8px; width: 8px; height: 8px; margin-right: 6px; border-radius: 2px; }
+.oui-pie-l { flex: 1; min-width: 0; color: var(--muted); }
+.oui-pie-v { font-weight: 600; }
+.oui-pie-d1, .oui-progress-l > .oui-pie-d1, .oui-progress-bar .seg1 { background: var(--pie-1); }
+.oui-pie-d2, .oui-progress-l > .oui-pie-d2, .oui-progress-bar .seg2 { background: var(--pie-2); }
+.oui-pie-d3, .oui-progress-l > .oui-pie-d3, .oui-progress-bar .seg3 { background: var(--pie-3); }
+.oui-pie-d4, .oui-progress-l > .oui-pie-d4, .oui-progress-bar .seg4 { background: var(--pie-4); }
+.oui-pie-d5, .oui-progress-l > .oui-pie-d5, .oui-progress-bar .seg5 { background: var(--pie-5); }
+
+/* ---- 堆叠柱（多系列） ---- */
+/* 段高靠 flex 比例分配，整列高度按「该列合计 / 最大合计」算，不用在 JS 里算百分比 */
+.oui-bar .oui-col { display: flex; flex-direction: column-reverse; width: 70%; max-width: 34px;
+                    min-height: 2px; border-radius: 8px 8px 3px 3px; overflow: hidden;
+                    background: var(--surface-3); }
+.oui-bar .oui-col i { display: block; width: 100%; min-height: 2px; border-radius: 0; }
+.oui-bar .oui-col i.s1 { background: var(--pie-1); }
+.oui-bar .oui-col i.s2 { background: var(--pie-2); }
+.oui-bar .oui-col i.s3 { background: var(--pie-3); }
+.oui-bar .oui-col i.s4 { background: var(--pie-4); }
+.oui-bar .oui-col i.s5 { background: var(--pie-5); }
+.oui-legend { display: flex; flex-wrap: wrap; margin-top: 6px; }
+.oui-legend > span { display: inline-flex; align-items: center; margin: 0 12px 0 0;
+                     color: var(--muted); font-size: .7857em; }
+.oui-legend > span > i { width: 8px; height: 8px; margin-right: 5px; border-radius: 2px; }
+
+/* ---- 折叠块嵌套：缩进 + 细线，深一层看得出层级，也不至于把宽度吃光 ---- */
+.oui-details .oui-details { margin-left: 10px; padding-left: 10px;
+                            border-left: 2px solid var(--stroke-2); border-bottom: none; }
+.oui-details .oui-details > summary { min-height: 34px; font-size: .9286em; font-weight: 500; }
+
+/* ---- 指标涨跌 ---- */
+.oui-metric-d { margin-top: 2px; color: var(--muted); font-size: .8571em; font-weight: 600; }
+.oui-metric-d.up { color: var(--ok); }
+.oui-metric-d.down { color: var(--warn); }
+
+/* ---- 分段进度 ---- */
+.oui-progress-bar.parts { display: flex; }
+.oui-progress-bar.parts i { border-radius: 0; }
+.oui-progress-bar.parts i:first-child { border-radius: 999px 0 0 999px; }
+.oui-progress-bar.parts i:last-child { border-radius: 0 999px 999px 0; }
+.oui-progress-lg { display: flex; flex-wrap: wrap; }
+.oui-progress-l { display: inline-flex; align-items: center; margin: 0 12px 0 0;
+                  color: var(--muted); font-size: .7857em; }
+.oui-progress-l > i { width: 8px; height: 8px; margin-right: 5px; border-radius: 2px; }
+
+/* ---- 代码块 ---- */
+.oui-code { border-radius: 12px; background: var(--surface-2); overflow: hidden; }
+.oui-code-h { display: flex; align-items: center; padding: 6px 8px 6px 12px; }
+.oui-code-l { flex: 1; min-width: 0; color: var(--muted); font-size: .7857em; letter-spacing: .5px;
+              text-transform: uppercase; }
+.oui-code-c { flex: 0 0 auto; padding: 4px 10px; border-radius: 999px; background: var(--surface-3);
+              color: var(--text); font-size: .7857em; }
+.oui-code-b { margin: 0; padding: 0 12px 12px; overflow-x: auto; -webkit-overflow-scrolling: touch; }
+.oui-code-b::-webkit-scrollbar { display: none; }
+.oui-code-b code { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+                   font-size: .8571em; line-height: 1.65; white-space: pre; }
+
+/* ---- 流程链（时序 / 依赖） ---- */
+.oui-flow { display: flex; flex-direction: column; }
+.oui-flow-i { position: relative; display: flex; padding-bottom: 14px; }
+.oui-flow-i:last-child { padding-bottom: 0; }
+.oui-flow-i:not(:last-child):after { content: ""; position: absolute; left: 10px; top: 22px; bottom: 2px;
+                                     width: 2px; background: var(--stroke-2); }
+.oui-flow-n { flex: 0 0 22px; width: 22px; height: 22px; margin-right: 10px; border-radius: 50%;
+              background: var(--text); color: var(--on-accent); font-size: .7857em; font-style: normal;
+              font-weight: 700; line-height: 22px; text-align: center; }
+.oui-flow.check .oui-flow-n { background: var(--ok); }
+.oui-flow-t { flex: 1; min-width: 0; font-size: .9286em; line-height: 1.55; }
+
+/* ---- 网格 ---- */
+.oui-grid { display: grid; grid-template-columns: repeat(var(--oui-grid-n, 2), minmax(0, 1fr)); gap: 10px; }
+
+/* ---- 折叠块 ---- */
+.oui-details { border-bottom: 1px solid var(--stroke); }
+.oui-details > summary { cursor: pointer; list-style: none; display: flex; align-items: center;
+                         min-height: 40px; font-size: .9286em; font-weight: 600; outline: none;
+                         -webkit-tap-highlight-color: transparent; }
+.oui-details > summary::-webkit-details-marker { display: none; }
+.oui-details > summary:before { content: "▸"; margin-right: 7px; color: var(--muted); }
+.oui-details[open] > summary:before { content: "▾"; }
+.oui-details > .oui-stack { padding-bottom: 10px; }
+
+/* ---- 滑块 ---- */
+.oui-slider { width: 100%; height: 30px; -webkit-appearance: none; background: transparent; }
+.oui-slider::-webkit-slider-runnable-track { height: 6px; border-radius: 999px; background: var(--surface-3); }
+.oui-slider::-webkit-slider-thumb { -webkit-appearance: none; width: 20px; height: 20px; margin-top: -7px;
+                                    border-radius: 50%; background: var(--text); }
+.oui-slider-v { font-weight: 700; }
+
+/* 多行输入 */
+.oui-input.multi { resize: none; line-height: 1.6; }
+
+/* 长串（URL、英文术语）不撑破卡片 */
+.oui-text, .oui-callout-x, .oui-title { overflow-wrap: anywhere; }
 
 /* ---- 选择面板（可选，见上方说明） ---- */
 /* 选择面板：黑白列表，当前值整行反色并打勾 */
@@ -1377,7 +1530,7 @@ html.swap, html.swap * { transition: none !important; }
   width: 100%;
   padding: 15px 16px;
   color: var(--text);
-  font-size: 15px;
+  font-size: .9375rem;
   text-align: left;
 }
 
@@ -1399,7 +1552,7 @@ html.swap, html.swap * { transition: none !important; }
 .pick-ok {
   flex: 0 0 auto;
   margin-left: 12px;
-  font-size: 14px;
+  font-size: .875rem;
   font-style: normal;
 }
 
@@ -1426,6 +1579,16 @@ html.swap, html.swap * { transition: none !important; }
   --muted: #8b8b92;
   --on-accent: #ffffff;
   --bar: #111113;
+  /* 提示块的语义色：原来直接写死在 .oui-callout.warn/.success 上，
+     暗色下同一个 hex 对比度不够，也没法跟着主题走。 */
+  --warn: #D14343;
+  --ok: #2E7D4F;
+  /* 饼图 / 分段进度的 5 档灰阶：黑白界面里彩色扇区太扎眼，用明度阶梯区分 */
+  --pie-1: #111113;
+  --pie-2: #5a5a62;
+  --pie-3: #8b8b92;
+  --pie-4: #b9b9c0;
+  --pie-5: #dcdce1;
   --stroke: rgba(17, 17, 19, 0.07);
   --stroke-2: rgba(17, 17, 19, 0.14);
   --r-pill: 999px;
@@ -1444,6 +1607,15 @@ html.swap, html.swap * { transition: none !important; }
   --muted: #9a9aa2;
   --on-accent: #111113;
   --bar: #f3f3f5;
+  /* 暗底上把提示色提亮，3px 竖条才看得出来（亮色沿用原值，不改变观感） */
+  --warn: #E8797A;
+  --ok: #63C08D;
+  /* 暗色下把灰阶反过来：最亮的一段打头，扇区在深底上才分得开 */
+  --pie-1: #f3f3f5;
+  --pie-2: #b9b9c0;
+  --pie-3: #8b8b92;
+  --pie-4: #5a5a62;
+  --pie-5: #3a3a40;
   --stroke: rgba(255, 255, 255, 0.08);
   --stroke-2: rgba(255, 255, 255, 0.16);
   --shadow: 0 4px 16px rgba(0, 0, 0, 0.3);

@@ -18,10 +18,14 @@ const ASSETS = path.join(ROOT, "app/src/main/assets");
 const HTML = path.join(ASSETS, "index.html");
 const BANK_JS = path.join(ASSETS, "bank.js");
 const CSS_FILE = path.join(ASSETS, "style.css");
-/* 页面已拆成 index.html 骨架 + style.css + 五个脚本，按页面里的真实加载顺序列出。
-   ui/openui-*.js 是并入的 OpenUI 渲染器（core 是官方 UMD bundle，ui 是宿主适配层），
-   它们必须在 app-chat.js 之前就位，因为气泡渲染要用 window.renderOpenUI。 */
-const JS_FILES = ["ui/openui-core.js", "ui/openui-ui.js", "app-core.js", "app-admin.js", "app-plan.js", "app-chat.js"];
+/* 页面已拆成 index.html 骨架 + style.css + 六个脚本，按页面里的真实加载顺序列出。
+   ui/openui-core.js（533KB）已改成按需加载：index.html 不再同步引它，由
+   app-chat.js 的 ouiEnsureCore() 在第一次真要画卡时注入。所以它不进 JS_FILES，
+   但测试仍要把它装进 sandbox——parse / signatures 这些接口得真跑一遍。
+   ui/openui-signatures.js 是构建时从 bundle 导出的小文件（约 3.5KB），
+   系统提示靠它拿组件签名，因此必须同步加载。 */
+const CORE_JS = "ui/openui-core.js";
+const JS_FILES = ["ui/openui-signatures.js", "ui/openui-ui.js", "app-core.js", "app-admin.js", "app-plan.js", "app-chat.js"];
 
 let pass = 0;
 const fails = [];
@@ -37,17 +41,21 @@ function section(t) { console.log("\n" + t); }
    让断言不必关心代码究竟落在哪个文件。各段之间补一个换行，避免相邻两段首尾粘成一行。 */
 const skeletonHtml = fs.readFileSync(HTML, "utf8");
 const cssSource = fs.readFileSync(CSS_FILE, "utf8");
+const coreSource = fs.readFileSync(path.join(ASSETS, CORE_JS), "utf8");
 const jsSources = JS_FILES.map((f) => fs.readFileSync(path.join(ASSETS, f), "utf8"));
 
 section("[1] 页面脚本语法");
 try {
   /* 每个脚本单独编译，文件名带上真实文件，语法错时日志直接指到对的文件。 */
+  new vm.Script(coreSource, { filename: CORE_JS });
   JS_FILES.forEach((f, i) => new vm.Script(jsSources[i], { filename: f }));
   ok("页面脚本可编译", true);
 } catch (e) {
   ok("页面脚本可编译", false, e.message);
   process.exit(1);
 }
+/* html 是「页面源码」的合并串，不含按需加载的 core：
+   拿它做「找得到/找不到某段代码」的断言时，别让 534KB 的第三方产物干扰。 */
 const html = [cssSource].concat([skeletonHtml]).concat(jsSources).join("\n");
 
 /* ---------- 最小 DOM 桩 ---------- */
@@ -58,7 +66,10 @@ function makeElement(id) {
   const style = new Proxy({ setProperty: (k, v) => { style[k] = String(v); } },
     { get: (t, k) => t[k] ?? "", set: (t, k, v) => { t[k] = v; return true; } });
   const el = {
-    id, style, innerHTML: "", textContent: "", value: "", disabled: false, onclick: null,
+    id, style, innerHTML: "", value: "", disabled: false, onclick: null,
+    /* dataset 也是渲染层要用的：Input/Select/Slider 靠 dataset.fname 让 readForm 认得，
+       nearestForm 靠 dataset.form 找表单。桩里缺它，一渲染表单组件就抛。 */
+    dataset: {},
     offsetWidth: 0, offsetHeight: 0, scrollHeight: 0, children: [],
     classList: {
       add: (c) => cls.add(c), remove: (c) => cls.delete(c), contains: (c) => cls.has(c),
@@ -72,7 +83,9 @@ function makeElement(id) {
     },
     setAttribute: (k, v) => { el["attr_" + k] = v; },
     getAttribute: (k) => el["attr_" + k],
-    appendChild: (c) => { el.children.push(c); c.parentNode = el; return c; },
+    appendChild: (c) => { el.children.push(c); if (c) c.parentNode = el; return c; },
+    /* 渲染层用的是 append（多参），只实现 appendChild 的话卡片在测试里根本画不出来 */
+    append: (...cs) => { for (const c of cs) if (c) { el.children.push(c); c.parentNode = el; } },
     remove: () => {},
     querySelector: () => null,
     querySelectorAll: () => [],
@@ -82,6 +95,14 @@ function makeElement(id) {
     animate: () => ({ finished: Promise.resolve() }),
     closest: () => null
   };
+  /* textContent 要是访问器：真 DOM 里赋值会清空子节点，表格分页正是靠这个
+     清 tbody 再重画。做成普通属性的话，翻页断言会看到两页的行叠在一起。 */
+  let textVal = "";
+  Object.defineProperty(el, "textContent", {
+    get: () => textVal,
+    set: (v) => { textVal = String(v == null ? "" : v); el.children.length = 0; },
+    enumerable: true, configurable: true
+  });
   return el;
 }
 
@@ -94,6 +115,10 @@ const doc = {
   querySelector: () => null,
   querySelectorAll: () => [],
   createElement: (t) => makeElement("new-" + t),
+  /* 渲染层还要这三种：文本节点、SVG（折线图）、文档片段（children 收集） */
+  createTextNode: (t) => ({ nodeType: 3, textContent: String(t), children: [] }),
+  createElementNS: (ns, t) => makeElement("svg-" + t),
+  createDocumentFragment: () => makeElement("frag"),
   addEventListener: () => {},
   documentElement: makeElement("html")
 };
@@ -127,13 +152,27 @@ vm.runInNewContext(fs.readFileSync(BANK_JS, "utf8"), sandbox, { filename: "bank.
 
 section("[2] 页面脚本装载");
 try {
-  /* 三个脚本共用一个 sandbox，等价于它们在同一个页面里先后执行。 */
+  /* 共用一个 sandbox，等价于它们在同一个页面里先后执行。
+     core 先装（页面里是后注入的，但测试要它的 parse/signatures 接口）。 */
+  vm.runInNewContext(coreSource, sandbox, { filename: CORE_JS });
   JS_FILES.forEach((f, i) => vm.runInNewContext(jsSources[i], sandbox, { filename: f }));
   ok("脚本在 DOM 桩上启动", true);
 } catch (e) {
   ok("脚本在 DOM 桩上启动", false, e.stack);
   process.exit(1);
 }
+ok("core 不进页面同步加载（由 ouiEnsureCore 按需注入）",
+   !/<script[^>]+ui\/openui-core\.js/.test(skeletonHtml) &&
+   /ui\/openui-signatures\.js/.test(skeletonHtml) &&
+   /function ouiEnsureCore/.test(html) && /openui-core\.js/.test(html));
+ok("静态签名与 bundle 实测一致（加组件忘了重打就会在这儿报）", (() => {
+  try {
+    const stat = (sandbox.OPENUI_SIGNATURES || []);
+    const live = (sandbox.OpenUI && sandbox.OpenUI.signatures) || [];
+    if (!stat.length || !live.length || stat.length !== live.length) return false;
+    return stat.every((s, i) => s.name === live[i].name && s.signature === live[i].signature);
+  } catch (e) { return false; }
+})());
 
 /* ---------- 3. 内置题库已移除 ----------
    v1.0.3 起所有题库都由用户导入。bank.js 只剩一个合法的空壳，
@@ -2567,6 +2606,209 @@ ok("OpenUI 组件签名来自 schema（参数顺序正确）", (() => {
 })());
 ok("OpenUI 新组件已接渲染器", ["List", "Steps", "Callout", "Chart"].every((n) =>
   new RegExp("case '" + n + "'").test(jsSources[1])));
+/* 22 个组件的第二批：Image / Link / Skeleton（schema + 渲染器 + 样式三处都要在） */
+ok("Image/Link/Skeleton 三处齐（schema 由 signatures 覆盖）", (() => {
+  const js = jsSources[1];
+  return /case 'Image'/.test(js) && /case 'Link'/.test(js) && /case 'Skeleton'/.test(js) &&
+         /\.oui-img\s*\{[^}]*max-height/.test(cssSource) &&
+         /\.oui-link\s*\{[^}]*underline/.test(cssSource) &&
+         /\.oui-skel i\s*\{[^}]*animation/.test(cssSource);
+})());
+ok("Image 只放行 http(s)/data:image（卡片源码来自模型，不能塞 file://）",
+   jsSources[1].indexOf("^https?:\\/\\/") >= 0 && jsSources[1].indexOf("data:image\\/") >= 0);
+ok("Link 走宿主统一链接出口（data-md-href），WebView 不自己导航",
+   /setAttribute\('data-md-href'/.test(jsSources[1]) && /oui-link/.test(cssSource));
+ok("提示块背景用 --surface-2（暗色下 --surface 与卡面几乎同色）",
+   /\.oui-callout \{[^}]*background:\s*var\(--surface-2\)/.test(cssSource));
+/* ---------- 第五轮：大肥鱼点出的组件缺陷，逐条钉住 ----------
+   以前这些断言只看源码字符串；这一轮把 DOM 桩补齐（append / createTextNode /
+   createElementNS / createDocumentFragment），改成真渲染再断言节点形状。
+   列数对齐这种 bug 只靠正则看不出来——它不报错，只是把表画歪。 */
+const uiCollect = (root, pred) => {
+  const out = [];
+  (function walk(n) {
+    if (!n) return;
+    if (pred(n)) out.push(n);
+    const ch = n.children || [];
+    for (let i = 0; i < ch.length; i++) walk(ch[i]);
+  })(root);
+  return out;
+};
+const uiRender = (src) => W.renderOpenUI(src, {});
+const uiCls = (n) => String(n.className || "");
+const uiText = (n) => uiCollect(n, () => true).map((x) => x.textContent || "").join("|");
+
+ok("表格按表头对齐列数（多的丢、缺的补空，不再静默错位）", (() => {
+  const box = uiRender('root = Table(["A","B","C"], [["1","2","3","4"],["5"]])');
+  const trs = uiCollect(box, (n) => n.id === "new-tr");
+  return trs.length === 3 && trs.every((tr) => tr.children.length === 3);
+})());
+ok("表格单元格支持 ! / + / ~ 语义前缀", (() => {
+  const box = uiRender('root = Table(["项"], [["!危险"],["+重点"],["~次要"]])');
+  const tds = uiCollect(box, (n) => n.id === "new-td");
+  const cls = tds.map(uiCls).join("|");
+  return cls.indexOf("danger") >= 0 && cls.indexOf("ok") >= 0 && cls.indexOf("muted") >= 0 &&
+         tds.every((td) => td.textContent.indexOf("!") < 0 && td.textContent.indexOf("+") < 0);
+})());
+ok("Table 支持分页（只画一页 + 翻页条）", (() => {
+  const box = uiRender('root = Table(["n"], [["1"],["2"],["3"],["4"],["5"]], 2)');
+  const pager = uiCollect(box, (n) => uiCls(n) === "oui-pager");
+  const tds = uiCollect(box, (n) => n.id === "new-td");
+  return pager.length === 1 && tds.length === 2;
+})());
+ok("Chart 支持 pie（conic-gradient + 百分比图例）", (() => {
+  const box = uiRender('root = Chart("pie", ["甲","乙"], [3, 1])');
+  const pie = uiCollect(box, (n) => uiCls(n) === "oui-pie")[0];
+  return !!pie && String(pie.style.background).indexOf("conic-gradient") >= 0 &&
+         uiText(box).indexOf("75%") >= 0;
+})());
+/* 堆叠柱：values 传二维（每行一个类别），段高靠 flex 比例，图例来自 names */
+ok("Chart 支持 stack（二维 values + 系列图例）", (() => {
+  const box = uiRender('root = Chart("stack", ["周一","周二"], [[3,1],[2,2]], ["新学","复习"])');
+  const cols = uiCollect(box, (n) => uiCls(n) === "oui-col");
+  const segs = uiCollect(box, (n) => /^s[1-5]$/.test(uiCls(n)));
+  const legend = uiCollect(box, (n) => uiCls(n) === "oui-legend")[0];
+  return cols.length === 2 && segs.length === 4 &&
+         cols[0].children.length === 2 && String(cols[0].children[0].style.flex) === "3" &&
+         !!legend && legend.children.length === 2 &&
+         uiText(box).indexOf("新学") >= 0 && uiText(box).indexOf("周一") >= 0;
+})());
+ok("stack 行/名字不齐也不丢图例（缺的按 0 补、显示「系列 N」）", (() => {
+  const box = uiRender('root = Chart("stack", ["甲","乙"], [[3,1,2],[2]], ["新学"])');
+  const legend = uiCollect(box, (n) => uiCls(n) === "oui-legend")[0];
+  const cols = uiCollect(box, (n) => uiCls(n) === "oui-col");
+  const t = uiText(legend);
+  return !!legend && legend.children.length === 3 &&
+         t.indexOf("系列 2") >= 0 && t.indexOf("系列 3") >= 0 &&
+         cols.length === 2 && cols[1].children.length === 1;
+})());
+ok("Chart 签名接受二维 values（number[] | number[][]）", (() => {
+  try {
+    const sig = (W.OpenUI.signatures || []).find((x) => x.name === "Chart") || {};
+    return String(sig.signature).indexOf("number[][]") >= 0 &&
+           String(sig.signature).indexOf("stack") >= 0 &&
+           String(sig.signature).indexOf("names?") >= 0;
+  } catch (e) { return false; }
+})());
+ok("Image 描述里写明可用 SMIL/CSS 动画（不放开脚本与外链）", (() => {
+  try {
+    const sig = (W.OpenUI.signatures || []).find((x) => x.name === "Image") || {};
+    const d = String(sig.description || "");
+    return d.indexOf("SMIL") >= 0 && d.indexOf("动画") >= 0 && d.indexOf("脚本") >= 0;
+  } catch (e) { return false; }
+})());
+ok("嵌套折叠块有缩进与层级线（不至于把宽度吃光）",
+   /\.oui-details \.oui-details\s*\{[^}]*margin-left:\s*10px/.test(cssSource) &&
+   /\.oui-details \.oui-details\s*\{[^}]*border-left:\s*2px solid var\(--stroke-2\)/.test(cssSource));
+ok("堆叠柱样式齐（段色走灰阶令牌、列有圆角）", (() => {
+  return /\.oui-bar \.oui-col\s*\{[^}]*flex-direction:\s*column-reverse/.test(cssSource) &&
+         /\.oui-bar \.oui-col i\.s1\s*\{[^}]*var\(--pie-1\)/.test(cssSource) &&
+         /\.oui-legend\s*\{[^}]*flex-wrap:\s*wrap/.test(cssSource);
+})());
+ok("Metric 支持涨跌标注（正绿负红）", (() => {
+  const up = uiRender('root = Metric("本周", "120", "较上周", "+12%")');
+  const down = uiRender('root = Metric("本周", "120", "较上周", "-3")');
+  return uiCollect(up, (n) => uiCls(n) === "oui-metric-d up").length === 1 &&
+         uiCollect(down, (n) => uiCls(n) === "oui-metric-d down").length === 1 &&
+         /\.oui-metric-d\.up\s*\{[^}]*var\(--ok\)/.test(cssSource) &&
+         /\.oui-metric-d\.down\s*\{[^}]*var\(--warn\)/.test(cssSource);
+})());
+ok("Progress 支持分段（parts）", (() => {
+  const box = uiRender('root = Progress("", 0, ["完成:40","进行中:20"])');
+  const bar = uiCollect(box, (n) => uiCls(n) === "oui-progress-bar parts")[0];
+  return !!bar && bar.children.length === 2 &&
+         /\.oui-progress-bar\.parts\s*\{[^}]*display:\s*flex/.test(cssSource);
+})());
+ok("新组件都画得出来（Code/Flow/Grid/Details/Slider）", (() => {
+  const box = uiRender('root = Stack([Code("SELECT 1", "sql"), Flow(["甲","乙"]), Grid(2, [Text("a")]), Details("展开看", [Text("b")]), Slider("days","天数",1,30)])');
+  const cls = uiCollect(box, () => true).map(uiCls).join("|");
+  return ["oui-code", "oui-flow", "oui-grid", "oui-details", "oui-slider"].every((c) => cls.indexOf(c) >= 0);
+})());
+ok("Button 的 copy: 在渲染层就地完成（不落到「动作不支持」）",
+   /\/\^copy:\/i\.test\(act\)/.test(jsSources[1]) && /function ouiCopy/.test(jsSources[1]) &&
+   /Android\.copyText/.test(jsSources[1]));
+ok("Input 支持 date / multiline", (() => {
+  const d = uiCollect(uiRender('root = Input("d","日期","","date")'), (n) => n.id === "new-input")[0];
+  const m = uiCollect(uiRender('root = Input("m","备注","","multiline")'), (n) => n.id === "new-textarea")[0];
+  return !!d && d.type === "date" && !!m;
+})());
+ok("Link 只放行 http(s)（javascript:/intent:// 交给 ACTION_VIEW 很危险）", (() => {
+  const bad = uiRender('root = Link("点我", "javascript:alert(1)")');
+  const good = uiRender('root = Link("点我", "https://example.com")');
+  return uiCollect(bad, (n) => n["attr_data-md-href"] !== undefined).length === 0 &&
+         uiCollect(good, (n) => n["attr_data-md-href"] === "https://example.com").length === 1 &&
+         uiText(bad).indexOf("不支持") >= 0;
+})());
+ok("Image 支持 svg: 前缀（裸 SVG 包成 data:image/svg+xml）", (() => {
+  const box = uiRender('root = Image("svg:<svg/>")');
+  const img = uiCollect(box, (n) => n.id === "new-img")[0];
+  return !!img && String(img.src).indexOf("data:image/svg+xml") === 0;
+})());
+ok("新组件样式齐（饼图/流程/网格/折叠/代码/滑块/分页/灰阶令牌）", (() => {
+  const need = ["\\.oui-pie\\s*\\{", "\\.oui-flow-n\\s*\\{", "\\.oui-grid\\s*\\{",
+                "\\.oui-details\\s*\\{", "\\.oui-code\\s*\\{", "\\.oui-slider\\s*\\{",
+                "\\.oui-pager\\s*\\{", "--pie-1:"];
+  return need.every((p) => new RegExp(p).test(cssSource));
+})());
+ok("长串不撑破卡片（URL / 英文术语）",
+   /\.oui-text,\s*\.oui-callout-x,\s*\.oui-title\s*\{[^}]*overflow-wrap:\s*anywhere/.test(cssSource));
+
+/* 三道一致性：schema（模型能写）→ 渲染器（画得出来）→ 裸围栏（漏标签也认）。
+   加组件时最容易漏的是后两处，所以在这里钉死，别等真机上才发现。 */
+ok("渲染器覆盖 signatures 里的每个组件", (() => {
+  try {
+    const sigs = W.OpenUI.signatures || [];
+    return sigs.length >= 19 && sigs.every((s) => new RegExp("case '" + s.name + "'").test(jsSources[1]));
+  } catch (e) { return false; }
+})());
+ok("裸围栏兜底认得全部组件（名单从 signatures 现取，不手写）", (() => {
+  try {
+    const sigs = W.OpenUI.signatures || [];
+    if (!sigs.length) return false;
+    return sigs.every((s, i) => {
+      const r = W.ouiSplit({ id: "bare_cov_" + i, text: "```\nroot = " + s.name + "()\n```" });
+      return r.src.indexOf(s.name + "()") >= 0;
+    });
+  } catch (e) { return false; }
+})());
+ok("Stack 的 gap 参数已接通（渲染器带 gap-sm，CSS 有对应档）",
+   /' gap-sm'/.test(jsSources[1]) &&
+   /\.oui-stack\.gap-sm > \* \+ \* \{[^}]*margin-top:\s*6px/.test(cssSource));
+ok("卡片字号跟随「对话字号」与全局字号（.oui 用 calc，内部不再写死 px）",
+   /\.oui\s*\{[^}]*font-size:\s*calc\(\.875rem \* var\(--chat-fs, 1\)\)/.test(cssSource) &&
+   !/\.oui-[\w.-]+\s*\{[^}]*font-size:\s*[0-9.]+px/.test(cssSource));
+/* 一条回答画两张卡：以前只 match 第一段围栏，第二段会被 mdToHtml 当代码块渲染成源码 */
+const multiUi = W.ouiSplit({
+  id: "multi_fence",
+  text: '总览：\n\n```openui-lang\nroot = Title("一")\n```\n\n明细：\n\n```openui-lang\nroot = Title("二")\n```'
+});
+ok("多段围栏全部抽出来，正文不残留源码",
+   multiUi.srcs.length === 2 && multiUi.srcs[1].indexOf('Title("二")') >= 0 &&
+   multiUi.text.indexOf("openui-lang") < 0 && multiUi.text.indexOf("总览") === 0,
+   JSON.stringify(multiUi).slice(0, 200));
+ok("每条围栏各占一个槽位（键为 消息id#序号）", (() => {
+  const h = W.ouiSlotHtml({
+    id: "multi_slot",
+    text: '```openui-lang\nroot = Title("1")\n```\n\n```openui-lang\nroot = Title("2")\n```'
+  });
+  return (h.match(/data-oui=/g) || []).length === 2 &&
+         h.indexOf('data-oui="multi_slot#0"') >= 0 &&
+         h.indexOf('data-oui="multi_slot#1"') >= 0;
+})());
+ok("表格三行以内直接摊开，长表才折叠",
+   /rows\.length <= 3\) return wrap/.test(jsSources[1]) &&
+   /make\('details', 'oui-fold'\)/.test(jsSources[1]));
+ok("整列是数字时右对齐",
+   /const num = cols\.map/.test(jsSources[1]) && /'num' : null/.test(jsSources[1]) &&
+   /\.oui-table \.num\s*\{[^}]*text-align:\s*right/.test(cssSource));
+ok("按钮改成抬起才算点（从按钮起手也能滚动）",
+   /addEventListener\('touchstart'[\s\S]{0,300}passive: true/.test(jsSources[1]) &&
+   /addEventListener\('touchend'/.test(jsSources[1]) &&
+   /addEventListener\('touchcancel'/.test(jsSources[1]) &&
+   /now - lastFire < 450/.test(jsSources[1]));
+ok("提示块语义色走令牌（暗色单独提亮）",
+   /\.oui-callout\.warn\s*\{[^}]*var\(--warn\)/.test(cssSource) &&
+   /--warn:\s*#E8797A/.test(cssSource) && /--ok:\s*#63C08D/.test(cssSource));
 ok("OpenUI 按钮同一次点击只触发一次", /now - lastFire < 450/.test(jsSources[1]));
 ok("思考流重绘保持滚动到底", /atThinkBottom/.test(html) && /newThink\.scrollTop/.test(html));
 
@@ -2652,7 +2894,7 @@ ok("只有收尾后的回答才挂卡片占位", (() => {
   return typeof W.chatRender === "function"
       && html.indexOf('data-oui="') >= 0
       && html.indexOf("chatOuiMount(list)") >= 0
-      && /ouiSplit\(m\)\.src\s*\?/.test(html);
+      && /ouiSlotHtml\(m\)/.test(html);
 })());
 ok("思考链不影响卡片挂载", (() => {
   /* 真机踩过：模型先想再答，reasoning 非空；旧条件把它排除，卡片就永远不出现。 */
@@ -2846,7 +3088,7 @@ ok("页面重载后原生补灌一次安全区（--sat/--sab 不靠运气管）"
    /window\.__insets&&window\.__insets\(/.test(mainSrc));
 /* 展开/收回的入口就是卡片本体和窗口外那一片，不再摆一条展开按钮 */
 ok("点卡片本体展开、点窗口外收回（没有多余的展开条）",
-   /function bindOuiOpen/.test(html) && /slot\.appendChild\(card\); bindOuiOpen\(card, id\)/.test(html) &&
+   /function bindOuiOpen/.test(html) && /slot\.appendChild\(card\); bindOuiOpen\(card, key\)/.test(html) &&
    /onclick="chatOuiScrimTap\(\)"/.test(skeletonHtml) &&
    !/ouiWinBar|展开成悬浮窗/.test(html));
 ok("拦截层压在对话（990）之上、窗口（995）之下，卡片按下去有边框反馈",
@@ -4622,28 +4864,26 @@ delete W.byId["mrtr_a-0"]; delete W.byId["mrtr_b-0"];
 section("[19b] OpenUI bundle 指纹一致性");
 {
   const depList = path.join(ROOT, "develop/依赖清单.md");
-  const coreFile = path.join(ASSETS, "ui/openui-core.js");
-  let actual = "";
-  try {
-    actual = crypto.createHash("sha256").update(fs.readFileSync(coreFile)).digest("hex");
-  } catch (e) {
-    actual = "";
+  const depText = (() => { try { return fs.readFileSync(depList, "utf8"); } catch (e) { return ""; } })();
+  /* 清单 §2 一行登记一个文件：文件名 + 32 位 MD5 + 64 位 SHA-256，按行取 SHA-256。 */
+  const recordedFor = (name) => {
+    const line = depText.split(/\r?\n/).find((l) => l.indexOf(name) >= 0 && /[0-9a-f]{64}/.test(l));
+    if (!line) return "";
+    const m = line.match(/([0-9a-f]{64})/);
+    return m ? m[1] : "";
+  };
+  /* 两个文件都要校验：core 是可重打产物，ui 是自写渲染层，改完都得回写清单。
+     只盯 core 的后果是 ui 的指纹过期了半年也没人发现。 */
+  for (const rel of ["ui/openui-core.js", "ui/openui-ui.js", "ui/openui-signatures.js"]) {
+    const abs = path.join(ASSETS, rel);
+    let actual = "";
+    try { actual = crypto.createHash("sha256").update(fs.readFileSync(abs)).digest("hex"); } catch (e) { actual = ""; }
+    const recorded = recordedFor(rel.split("/").pop());
+    ok("依赖清单里登记了 " + rel + " 的指纹", recorded.length === 64, "recorded=" + recorded);
+    ok(rel + " 实际指纹与依赖清单一致（改完须更新依赖清单）",
+       recorded.length === 64 && recorded === actual,
+       "recorded=" + recorded + " actual=" + actual);
   }
-  let recorded = "";
-  try {
-    const text = fs.readFileSync(depList, "utf8");
-    const line = text.split(/\r?\n/).find((l) => l.indexOf("openui-core.js") >= 0 &&
-        /[0-9a-f]{64}/.test(l));
-    if (line) {
-      const m = line.match(/([0-9a-f]{64})/);
-      if (m) recorded = m[1];
-    }
-  } catch (e) { recorded = ""; }
-  ok("依赖清单里登记了 openui-core.js 的指纹", recorded.length === 64,
-     "recorded=" + recorded);
-  ok("openui-core.js 实际指纹与依赖清单一致（重打后须更新依赖清单）",
-     recorded.length === 64 && recorded === actual,
-     "recorded=" + recorded + " actual=" + actual);
   const lock = path.join(ROOT, "tools/openui-bundle/package-lock.json");
   ok("openui-bundle 有锁文件（版本可复算）", fs.existsSync(lock), lock);
 }

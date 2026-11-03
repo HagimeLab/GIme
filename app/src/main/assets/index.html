@@ -212,7 +212,11 @@
 <div class="fs" id="planPage"></div>
 
 <script src="bank.js"></script>
-<script src="ui/openui-core.js"></script>
+<!-- OpenUI：core（533KB）改成按需加载，由 app-chat.js 的 ouiEnsureCore() 在需要时注入。
+     这里只同步加载两样小东西：
+     - openui-signatures.js（约 3.5KB，构建时从 bundle 导出）：系统提示要的组件签名；
+     - openui-ui.js（17KB，宿主适配层）：出口 window.renderOpenUI，不依赖 core 就能解析完。 -->
+<script src="ui/openui-signatures.js"></script>
 <script src="ui/openui-ui.js"></script>
 <script src="app-core.js"></script>
 <script src="app-admin.js"></script>

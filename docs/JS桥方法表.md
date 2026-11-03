@@ -85,7 +85,7 @@
 | # | 方法 | 入参 | 返回 | 级别 | P0 校验 | 说明 |
 | --- | --- | --- | --- | --- | --- | --- |
 | 31 | `copyText(text)` | `text` | `boolean` | L1 | — | 写系统剪贴板（设置页复制地址/口令） |
-| 32 | `ouiAction(action, payloadJson)` | `action`、`payloadJson` | `void` | L1 | — | OpenUI 卡片按钮点击；P0 只打一行 `GImeOui` 日志留痕，动作路由留到 P1 |
+| 32 | `ouiAction(action, payloadJson)` | `action`、`payloadJson` | `void` | L1 | — | OpenUI 卡片按钮点击；原生侧只打一行 `GImeOui` 日志留痕，不猜业务语义。动作路由在页面侧 `chatOuiRoute`（send/value/submit/nav/approve/adjust/toggle/insight/hitl） |
 
 ### 提醒与系统权限（P1）
 
