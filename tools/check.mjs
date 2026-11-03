@@ -88,7 +88,7 @@ function makeElement(id) {
   const style = new Proxy({ setProperty: (k, v) => { style[k] = String(v); } },
     { get: (t, k) => t[k] ?? "", set: (t, k, v) => { t[k] = v; return true; } });
   const el = {
-    id, style, innerHTML: "", value: "", disabled: false, onclick: null,
+    id, style, innerHTML: "", disabled: false, onclick: null,
     /* dataset 也是渲染层要用的：Input/Select/Slider 靠 dataset.fname 让 readForm 认得，
        nearestForm 靠 dataset.form 找表单。桩里缺它，一渲染表单组件就抛。 */
     dataset: {},
@@ -123,6 +123,22 @@ function makeElement(id) {
   Object.defineProperty(el, "textContent", {
     get: () => textVal,
     set: (v) => { textVal = String(v == null ? "" : v); el.children.length = 0; },
+    enumerable: true, configurable: true
+  });
+  /* range 的 value 也不能直存：浏览器会把初值吸附到 min+n*step 网格并夹在 min..max 里
+     （min=1 step=5 写 20 → 实际 21）。桩里照做，才测得出「标签写的数」和「提交回来的数」错位。 */
+  let val = "";
+  Object.defineProperty(el, "value", {
+    get: () => val,
+    set: (v) => {
+      val = String(v == null ? "" : v);
+      if (el.type !== "range" || val === "") return;
+      const n = Number(val), mn = Number(el.min), mx = Number(el.max), st = Number(el.step) || 1;
+      if (!Number.isFinite(n)) return;
+      let snapped = Number.isFinite(mn) ? mn + Math.round((n - mn) / st) * st : Math.round(n / st) * st;
+      if (Number.isFinite(mx)) snapped = Math.min(mx, Math.max(Number.isFinite(mn) ? mn : -Infinity, snapped));
+      val = String(Math.round(snapped * 1e6) / 1e6);
+    },
     enumerable: true, configurable: true
   });
   return el;
@@ -2746,6 +2762,14 @@ ok("新组件都画得出来（Code/Flow/Grid/Details/Slider）", (() => {
   const cls = uiCollect(box, () => true).map(uiCls).join("|");
   return ["oui-code", "oui-flow", "oui-grid", "oui-details", "oui-slider"].every((c) => cls.indexOf(c) >= 0);
 })());
+/* 浏览器会把 range 的初值吸到 min+n*step 网格上（min=1 step=5 写 20 → 实际 21）。
+   显示若照抄源码里的 20，用户看到的就是一个提交不回来的数。桩里的 value 访问器会吸附。 */
+ok("Slider 初值显示读回的是吸附后的真值（标签 = 提交值）", (() => {
+  const box = uiRender('root = Slider("per","每天题量",1,100,5,20)');
+  const r = uiCollect(box, (n) => uiCls(n) === "oui-slider")[0];
+  const out = uiCollect(box, (n) => uiCls(n) === "oui-slider-v")[0];
+  return !!r && !!out && r.value === "21" && uiText(out) === "21";
+})());
 /* ---- 卡片驱动 App：Tap / Chart.action / Table.rowAction + 四个 App 动词 ---- */
 ok("Tap 画出可点区域（role=button、带 data-oui-act、子树照常渲染）", (() => {
   const box = uiRender('root = Tap([Text("看错题")], "wrong:全部")');
@@ -3280,16 +3304,17 @@ ok("卡片展开与卡内控件用同一对阈值（否则「卡里点不动、�
   return ui.indexOf("OUI_TAP_MOVE") >= 0 && chat.indexOf("OUI_TAP_MOVE") >= 0 &&
          chat.indexOf("var OUI_TAP_MOVE") < 0;
 })());
-ok("静止态标识齐（Tab / Empty / 柱值 / 多子 Tap / 卡片把手）", (() => {
+ok("静止态标识齐（Tab / Empty / 数值 / 饼图行 / 多子 Tap / 卡片把手）", (() => {
   return /\.oui-tab-t:not\(\.on\)::after \{[^}]*content: "›"/.test(cssSource) &&
          /\.oui-empty\.tap::after \{[^}]*content: "点一下 ›"/.test(cssSource) &&
-         /\.oui-bar b\.oui-seg-tap::after \{[^}]*content: "›"/.test(cssSource) &&
+         /\.oui-chart b\.oui-seg-tap::after \{[^}]*content: "›"/.test(cssSource) &&
+         /\.oui-pie-k\.oui-seg-tap::after \{[^}]*content: "›"/.test(cssSource) &&
          /\.oui-tap:not\(\.oui-tap-line\)::after \{[^}]*content: "›"/.test(cssSource) &&
          /\.oui-card-t::after[^}]*content: "⤢"/.test(cssSource);
 })());
 ok("标识全走灰阶令牌，不引新颜色", (() => {
-  const marks = cssSource.match(/\.oui-tab-t:not\(\.on\)::after[^}]*\}|\.oui-empty\.tap::after[^}]*\}|\.oui-bar b\.oui-seg-tap::after[^}]*\}|\.oui-tap:not\(\.oui-tap-line\)::after[^}]*\}|\.oui-card-t::after[^}]*\}/g) || [];
-  return marks.length === 5 && marks.every((b) => /var\(--ink-3\)/.test(b) && !/#[0-9a-fA-F]{3,6}/.test(b));
+  const marks = cssSource.match(/\.oui-tab-t:not\(\.on\)::after[^}]*\}|\.oui-empty\.tap::after[^}]*\}|\.oui-chart b\.oui-seg-tap::after[^}]*\}|\.oui-pie-k\.oui-seg-tap::after[^}]*\}|\.oui-tap:not\(\.oui-tap-line\)::after[^}]*\}|\.oui-card-t::after[^}]*\}/g) || [];
+  return marks.length === 6 && marks.every((b) => /var\(--ink-3\)/.test(b) && !/#[0-9a-fA-F]{3,6}/.test(b));
 })());
 ok("按钮触点提到 44px（原实测 37px，低于 App 自己的标准）",
    /\.oui-btn \{[^}]*min-height: 44px/.test(cssSource) &&
@@ -3355,6 +3380,80 @@ ok("系统提示改成「只用位置参数，空位写空值」（真机证明�
   return src.indexOf("不要写 key: value") >= 0 && src.indexOf("多计一个") >= 0 &&
          src.indexOf("拿不准顺序就用具名写法") < 0 && !/或直接用具名/.test(descs);
 })());
+
+/* ---- 排错①：矩阵跑出来的三条 ---- */
+ok("折线图不再静默失效：x 标签可点、数值标在标签上并带单位", (() => {
+  const box = uiRender('root = Chart("line", ["周一","周二"], [3, 8], [], "wrong:{label}", "题")');
+  const cells = uiCollect(box, (n) => uiCls(n) === "oui-chart-xi");
+  const vals = uiCollect(box, (n) => uiCls(n).indexOf("oui-chart-v") >= 0).map((n) => String(n.textContent));
+  const segs = uiCollect(box, (n) => uiCls(n).indexOf("oui-seg-tap") >= 0);
+    return cells.length === 2 && vals.join("|").indexOf("3题") >= 0 && vals.indexOf("8题") >= 0 &&
+         segs.length === 4 && segs.every((n) => String(n["attr_data-oui-act"] || "").indexOf("wrong:") === 0);
+})());
+ok("饼图图例行有可点标识且行高按 44px（以前 21px、无标识）",
+   /\.oui-pie-k \{[^}]*min-height: 44px/.test(cssSource) &&
+   /\.oui-pie-k\.oui-seg-tap::after \{[^}]*content: "›"/.test(cssSource));
+ok("数值可点标识的选择器覆盖折线（.oui-chart 而不是只 .oui-bar）",
+   /\.oui-chart b\.oui-seg-tap::after \{[^}]*content: "›"/.test(cssSource) &&
+   !/\.oui-bar b\.oui-seg-tap::after/.test(cssSource));
+ok("Chart 的描述写明四种 kind 都吃 action（模型不会再写 line 却点了没反应）", (() => {
+  const c = (W.OpenUI.signatures || []).find((x) => x.name === "Chart") || {};
+  return String(c.description || "").indexOf("四种 kind 都吃 action") >= 0;
+})());
+
+/* ---------- 排错④：中途「停止」留下的那条 ---------- */
+section("[30b-5] 排错④：停止留下已流出的字 / 半截围栏不亮源码");
+
+const half1 = W.ouiSplit({ id: "ui_half_1",
+  text: '先给结论。\n\n```openui-lang\nroot = Stack([Card("复习五步", [Tap([Text("一、挑出错题")' });
+ok("未闭合的卡片源码整段藏掉（停止时不再亮半截 root =）",
+   half1.text === "先给结论。" && half1.srcs.length === 0, JSON.stringify(half1));
+const half2 = W.ouiSplit({ id: "ui_half_2",
+  text: '前面。\n\n```openui-lang\nroot = Title("好卡")\n```\n\n中间。\n\n```openui-lang\nroot = Stack([Ti' });
+ok("完整卡照常挂、后面那半截仍然藏掉",
+   half2.srcs.length === 1 && half2.text === "前面。\n\n中间。", JSON.stringify(half2));
+const plainHalf = W.ouiSplit({ id: "ui_half_3", text: "普通代码块：\n\n```js\nvar a = 1;\n```" });
+ok("普通代码块不受影响（只认 openui 围栏和 root = 裸围栏）",
+   plainHalf.text.indexOf("var a = 1;") >= 0, JSON.stringify(plainHalf.text));
+
+{
+  const agentSnap = W.set.agent, convsSnap = JSON.parse(JSON.stringify(W.chatConvs || []));
+  const curSnap = W.chatCurId, lsChat = W.store.read("stk.chat.v1", null);
+  W.set.agent = { base: "builtin://deepseek", model: "deepseek-web", key: "", mode: "login" };
+  W.Android = W.Android || {};
+  W.Android.chatApi = () => {};
+  W.chatMsgs = [];
+  W.chatBusy = true;
+  const pStop = W.chatSendText("讲长一点", true);
+  await new Promise((r) => setTimeout(r, 30));
+  W.onChatStream(W.chatLastId, "content", "已经写出来的第一段。");
+  await new Promise((r) => setTimeout(r, 30));
+  W.chatStop();
+  await pStop;
+  const kept = W.chatMsgs.filter((m) => m.role === "assistant").pop() || {};
+  ok("停止后已流出的正文留在对话里（以前整条被抹掉）",
+     String(kept.text || "").indexOf("已经写出来的第一段") >= 0, JSON.stringify(W.chatMsgs.map((m) => m.role)));
+  ok("留下的那条收成了非流式态", kept.live === false, String(kept.live));
+  ok("停止照旧给一条「已停止这次回答。」",
+     W.chatMsgs.some((m) => m.role === "error" && String(m.text).indexOf("已停止") >= 0));
+  /* 网络类失败仍走原路：整轮重发，不留半截 */
+  W.chatMsgs = [];
+  W.chatBusy = true;
+  W.__netRetryMax = 0;                /* 桩只回第一条请求，这里关掉自动重试 */
+  const pNet2 = W.chatSendText("再来一次", true);
+  await new Promise((r) => setTimeout(r, 30));
+  W.onChatStream(W.chatLastId, "content", "半截就被断线打断。");
+  await new Promise((r) => setTimeout(r, 30));
+  W.onChatApi(W.chatLastId, 0, "");
+  await pNet2;
+  delete W.__netRetryMax;
+  ok("非「停止」的失败不留半截（重发才不会重复一遍）",
+     !W.chatMsgs.some((m) => m.role === "assistant" && String(m.text).indexOf("半截就被断线打断") >= 0),
+     JSON.stringify(W.chatMsgs.map((m) => m.role)));
+  W.chatConvs = convsSnap; W.chatCurId = curSnap; W.chatBusy = false; W.chatMsgs = [];
+  W.store.write("stk.chat.v1", lsChat || { messages: [] });
+  W.set.agent = agentSnap;
+}
 
 /* ---------- 30c. OpenUI 卡片动作路由：点了要真的接回对话 ---------- */
 

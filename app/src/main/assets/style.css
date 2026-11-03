@@ -1445,8 +1445,11 @@ html.swap, html.swap * { transition: none !important; }
 .oui-pie-box { display: flex; align-items: center; }
 .oui-pie { flex: 0 0 92px; width: 92px; height: 92px; border-radius: 50%; }
 .oui-pie-lg { flex: 1; min-width: 0; margin-left: 12px; }
-.oui-pie-k { display: flex; align-items: baseline; font-size: .8571em; line-height: 1.75; }
+.oui-pie-k { display: flex; align-items: center; min-height: 44px; font-size: .8571em; line-height: 1.75; }
 .oui-pie-k > i { flex: 0 0 8px; width: 8px; height: 8px; margin-right: 6px; border-radius: 2px; }
+/* 饼图的可点区就是这些图例行（扇区是一整块 conic-gradient 点不准），
+   所以行尾也要有 › —— 以前只有柱状图的数值带标识，图例行看着不像能点 */
+.oui-pie-k.oui-seg-tap::after { content: "›"; margin-left: auto; padding-left: 8px; color: var(--ink-3); }
 .oui-pie-l { flex: 1; min-width: 0; color: var(--muted); }
 .oui-pie-v { font-weight: 600; }
 .oui-pie-d1, .oui-progress-l > .oui-pie-d1, .oui-progress-bar .seg1 { background: var(--pie-1); }
@@ -1667,7 +1670,10 @@ html.swap, html.swap * { transition: none !important; }
 .oui-tab-t:not(.on)::after { content: "›"; margin-left: 5px; color: var(--ink-3); font-weight: 400; }
 .oui-empty.tap::after { content: "点一下 ›"; display: block; margin-top: 7px;
                         font-size: .7857em; color: var(--ink-3); }
-.oui-bar b.oui-seg-tap::after { content: "›"; margin-left: 2px; color: var(--ink-3); }
+.oui-chart b.oui-seg-tap::after { content: "›"; margin-left: 2px; color: var(--ink-3); }
+/* 折线图：数值标在每个 x 标签上方（以前只有一根线，看不出每天是多少），标签与数值都可点 */
+.oui-chart-xi { display: flex; flex-direction: column; align-items: center; min-width: 0; }
+.oui-chart-v { font-size: .7857em; color: var(--ink-2); }
 /* 多子节点的 Tap：整块可点但看不出边界，右端补一个居中的 ›，并给它留出位子 */
 .oui-tap:not(.oui-tap-line) { padding-right: 16px; }
 .oui-tap:not(.oui-tap-line)::after { content: "›"; position: absolute; right: 2px; top: 50%;

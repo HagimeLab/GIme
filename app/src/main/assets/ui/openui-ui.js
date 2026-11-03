@@ -524,8 +524,17 @@ function renderNode(node, ctx) {
         d.append(bars);
       }
       if (p.kind === 'line' && labels.length) {
+        /* 折线以前只有一根线：数值没处标，action 也无处可点（写了等于没写，静默失效）。
+           现在每个 x 标签上方标数值，标签与数值都可点，{label} 照换。 */
         const x = make('div', 'oui-chart-x');
-        for (const label of labels) x.append(makeText('span', '', label));
+        labels.forEach((label, i) => {
+          const cell = make('div', 'oui-chart-xi');
+          const v = makeText('b', 'oui-chart-v', withUnit(values[i]));
+          const nm = makeText('span', '', textOf(label));
+          cell.append(v, nm);
+          segTap([v, nm], label);
+          x.append(cell);
+        });
         d.append(x);
       }
       return d;
@@ -1047,17 +1056,21 @@ function renderNode(node, ctx) {
       const name = textOf(p.name);
       const min = Number(p.min) || 0;
       const max = Number(p.max) || 100;
-      const cur = hasKey(ctx.values, name) ? Number(ctx.values[name]) : (Number(p.value) || min);
+      const want = hasKey(ctx.values, name) ? Number(ctx.values[name]) : (Number(p.value) || min);
       const head = make('span', 'oui-label');
       head.append(document.createTextNode(textOf(p.label || p.name) + ' '));
-      const out = makeText('b', 'oui-slider-v', String(cur));
+      const out = makeText('b', 'oui-slider-v', '');
       head.append(out);
       const r = make('input', 'oui-slider');
       r.type = 'range';
       r.min = String(min);
       r.max = String(max);
       r.step = String(Number(p.step) || 1);
-      r.value = String(cur);
+      r.value = String(want);
+      /* range 会把初值吸附到 min+n*step 网格上（写 20、min=1 step=5 → 实际 21），
+         所以显示和回写都读 r.value，不读 want：否则标签数字和提交值对不上 */
+      const cur = Number(r.value);
+      out.textContent = String(cur);
       r.name = name;
       r.dataset.fname = name;
       r.dataset.flabel = textOf(p.label || p.name);

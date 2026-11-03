@@ -135,7 +135,7 @@ const components = [
     text: z.string(),
     tone: z.enum(["info", "warn", "success"]).optional(),
   }),
-  comp("Chart", "图表；kind 取 bar / line / pie（占比）/ stack（堆叠）。labels 与 values 等长；stack 时 values 传二维（每行一个类别的各系列数值，行短了按 0 补），names 为系列名（缺的显示为「系列 N」）。action 让柱/扇区/图例可点，{label} 替换成被点那一项的标签（如 wrong:{label}）。unit 给数值加单位（如「题」「%」「分钟」，柱顶和图例都会带上）；legend 取 top/bottom 调图例位置（触屏没有悬停 tooltip，数值直接标在项上）。" +
+  comp("Chart", "图表；kind 取 bar / line / pie（占比）/ stack（堆叠）。labels 与 values 等长；stack 时 values 传二维（每行一个类别的各系列数值，行短了按 0 补），names 为系列名（缺的显示为「系列 N」）。action 让柱/扇区/图例可点，{label} 替换成被点那一项的标签（如 wrong:{label}）。四种 kind 都吃 action：bar/stack 点数值、柱体或标签，pie 点图例行，line 点 x 标签或标在标签上的数值。unit 给数值加单位（如「题」「%」「分钟」，柱顶和图例都会带上）；legend 取 top/bottom 调图例位置（触屏没有悬停 tooltip，数值直接标在项上）。" +
     "位次是 kind, labels, values, names, action, unit, legend：只想给数值加单位就写 Chart(\"bar\", 标签, 数值, [], \"\", \"题\")，不要改用具名写法（具名会被解析器多计一个参数）；第 4 位误写成字符串（如 Chart(\"bar\", 标签, 数值, \"题\")）也按单位收", {
     kind: z.enum(["bar", "line", "pie", "stack"]).optional(),
     labels: z.array(z.string()),

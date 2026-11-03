@@ -808,13 +808,18 @@ function ouiSplit(m) {
     out.src = out.srcs[0];
     var rest = text;
     for (var i = 0; i < raws.length; i++) rest = rest.replace(raws[i], "");
-    out.text = rest.replace(/\n{3,}/g, "\n\n").trim();
+    /* 剩下的那段里再出现 ```openui 一定是没闭合的（闭合的上面已被整段摘掉）：
+       中途「停止」留下的半截源码不是给用户读的东西，和流式期间一样藏掉 */
+    out.text = stripUIFence(rest).replace(/\n{3,}/g, "\n\n").trim();
   } else {
     var loose = ouiBareFence(text);
     if (loose) {
       out.src = loose.src;
       out.srcs = [loose.src];
-      out.text = text.replace(loose.raw, "").replace(/\n{3,}/g, "\n\n").trim();
+      out.text = stripUIFence(text.replace(loose.raw, "")).replace(/\n{3,}/g, "\n\n").trim();
+    } else {
+      var cut = stripUIFence(text);
+      if (cut !== text) out.text = cut;
     }
   }
   if (Object.keys(OUI_CACHE).length > 60) OUI_CACHE = {};
@@ -2820,7 +2825,13 @@ async function chatRun(cfg, attachMeta, imgMeta, imgIds) {
         try { chatLivePaint(live); } catch (x) { }
       });
     } catch (e) {
-      chatDrop(live);
+      /* 「停止」是用户主动收手：已经流出来的字他读过了，整条抹掉等于把他看到的删了。
+         这里把气泡收口成一条正常回答，后面那条「已停止这次回答。」照旧。
+         其它异常仍按原样丢掉：网络重发会整轮重来，留半截只会重复一遍。 */
+      if (String((e && e.message) || e) === "已停止" && String(live.text || "").trim()) {
+        chatSave();
+        chatLiveSettle(live);
+      } else chatDrop(live);
       throw e;
     }
     var msg = data && data.choices && data.choices[0] && data.choices[0].message;
