@@ -2762,15 +2762,20 @@ ok("单行 Tap 画成「可点条目」（带边框箭头，用户才知道能�
 ok("Chart.action 把 {label} 换成被点那一项的标签（点柱子跳错题）", (() => {
   const box = uiRender('root = Chart("bar", ["概念","计算"], [60,40], ["甲","乙"], "wrong:{label}")');
   const segs = uiCollect(box, (n) => uiCls(n).indexOf("oui-seg-tap") >= 0);
-  return segs.length === 2 &&
-         segs[0]["attr_data-oui-act"] === "wrong:概念" &&
-         segs[1]["attr_data-oui-act"] === "wrong:计算";
+  const cols = uiCollect(box, (n) => uiCls(n) === "oui-bar");
+  /* 可点区 = 数值 + 柱体 + 标签三块看得见的（每列 3 块）；整列含矮柱上方空白不算点 */
+  return segs.length === 6 && cols.length === 2 &&
+         cols.every((c) => uiCls(c).indexOf("oui-seg-tap") < 0) &&
+         segs.slice(0, 3).every((n) => n["attr_data-oui-act"] === "wrong:概念") &&
+         segs.slice(3).every((n) => n["attr_data-oui-act"] === "wrong:计算");
 })());
-ok("堆叠柱的每一列也能点（仍按列标签替换）", (() => {
+ok("堆叠柱的每一列也能点（仍按列标签替换，同样只点可见部分）", (() => {
   const box = uiRender('root = Chart("stack", ["周一","周二"], [[3,1],[2,2]], ["新学","复习"], "wrong:{label}")');
   const segs = uiCollect(box, (n) => uiCls(n).indexOf("oui-seg-tap") >= 0);
-  return segs.length === 2 && segs[0]["attr_data-oui-act"] === "wrong:周一" &&
-         segs[1]["attr_data-oui-act"] === "wrong:周二";
+  const cols = uiCollect(box, (n) => uiCls(n) === "oui-bar");
+  return segs.length === 6 && cols.every((c) => uiCls(c).indexOf("oui-seg-tap") < 0) &&
+         segs.slice(0, 3).every((n) => n["attr_data-oui-act"] === "wrong:周一") &&
+         segs.slice(3).every((n) => n["attr_data-oui-act"] === "wrong:周二");
 })());
 ok("Table.rowAction 整行可点，{1}..{n} 换成这一行各列文字", (() => {
   const box = uiRender('root = Table(["题型","错题"], [["概念","60"]], 1, "wrong:{1}")');
@@ -3242,6 +3247,44 @@ ok("Toast 的 action 说明进了 Button / Tap 的描述（模型知道有这条
   return /toast:<文本>/.test(find("Button").description || "") &&
          /confirm:<标题>\|<说明>/.test(find("Button").description || "") &&
          /toast:<文本>/.test(find("Tap").description || "");
+})());
+
+/* ---------- 30b-3. OpenUI 第九轮：一击判定窗 + 可点件的静止态标识 ---------- */
+section("[30b-3] OpenUI 第九轮（点击误触 / 可点标识）");
+
+ok("一击判定窗只有一个出处（8px / 350ms），旧的 12px/600ms 字面量已清干净", (() => {
+  return /var OUI_TAP_MOVE = 8, OUI_TAP_MS = 350;/.test(jsSources[1]) &&
+         /dt > OUI_TAP_MS/.test(jsSources[1]) && /OUI_TAP_MOVE\) return/.test(jsSources[1]) &&
+         /moved < OUI_TAP_MOVE && dt < OUI_TAP_MS/.test(jsSources[5]) &&
+         !/dt > 600/.test(jsSources[1]) && !/moved < 12/.test(jsSources[5]);
+})());
+ok("卡片展开与卡内控件用同一对阈值（否则「卡里点不动、卡外却展开」）", (() => {
+  const ui = jsSources[1], chat = jsSources[5];
+  return ui.indexOf("OUI_TAP_MOVE") >= 0 && chat.indexOf("OUI_TAP_MOVE") >= 0 &&
+         chat.indexOf("var OUI_TAP_MOVE") < 0;
+})());
+ok("静止态标识齐（Tab / Empty / 柱值 / 多子 Tap / 卡片把手）", (() => {
+  return /\.oui-tab-t:not\(\.on\)::after \{[^}]*content: "›"/.test(cssSource) &&
+         /\.oui-empty\.tap::after \{[^}]*content: "点一下 ›"/.test(cssSource) &&
+         /\.oui-bar b\.oui-seg-tap::after \{[^}]*content: "›"/.test(cssSource) &&
+         /\.oui-tap:not\(\.oui-tap-line\)::after \{[^}]*content: "›"/.test(cssSource) &&
+         /\.oui-card-t::after[^}]*content: "⤢"/.test(cssSource);
+})());
+ok("标识全走灰阶令牌，不引新颜色", (() => {
+  const marks = cssSource.match(/\.oui-tab-t:not\(\.on\)::after[^}]*\}|\.oui-empty\.tap::after[^}]*\}|\.oui-bar b\.oui-seg-tap::after[^}]*\}|\.oui-tap:not\(\.oui-tap-line\)::after[^}]*\}|\.oui-card-t::after[^}]*\}/g) || [];
+  return marks.length === 5 && marks.every((b) => /var\(--ink-3\)/.test(b) && !/#[0-9a-fA-F]{3,6}/.test(b));
+})());
+ok("按钮触点提到 44px（原实测 37px，低于 App 自己的标准）",
+   /\.oui-btn \{[^}]*min-height: 44px/.test(cssSource) &&
+   /\.oui-btn \{[^}]*align-items: center/.test(cssSource));
+ok("横排芯片间距 12px，容器负 margin 同步（不然整排会超出卡片）",
+   /\.oui-row > \*\s*\{[^}]*margin: 6px/.test(cssSource) &&
+   /\.oui-row \{[^}]*margin: -6px/.test(cssSource));
+ok("Empty 给了 action 才带 .tap 类（没 action 不装可点）", (() => {
+  const withAct = uiRender('root = Empty("还没有错题", "挑 10 题", "send:挑 10 题")');
+  const without = uiRender('root = Empty("还没有错题")');
+  return uiCollect(withAct, (n) => uiCls(n).indexOf("oui-empty tap") >= 0).length === 1 &&
+         uiCollect(without, (n) => uiCls(n).indexOf("tap") >= 0).length === 0;
 })());
 
 /* ---------- 30c. OpenUI 卡片动作路由：点了要真的接回对话 ---------- */

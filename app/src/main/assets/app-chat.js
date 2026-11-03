@@ -1293,7 +1293,9 @@ function ouiWinSlot(mid) {
 }
 /* 点卡片本体就展开。不能用 openui-ui 的 bindTap：它 preventDefault，会把从卡片上
    起手的滚动手势一起吃掉（卡片很高，用户正是从卡片上往下滑）。这里按「按下到抬起
-   位移小且快」判点，滚动和长按都不算；卡里的交互件（按钮/输入/下拉/折叠行）另算。 */
+   位移小且快」判点，滚动和长按都不算；卡里的交互件（按钮/输入/下拉/折叠行）另算。
+   阈值取渲染层的 OUI_TAP_MOVE / OUI_TAP_MS（同一个数写在两处，迟早不同步）：
+   整张卡都是这一击的命中区，「卡里点不动、卡外却展开了」这种不一致一定会被看出来。 */
 var OUI_INNER = "button,input,textarea,select,label,summary,a,.oui-tap,.oui-seg-tap,.oui-row-tap";
 function bindOuiOpen(node, mid) {
   var sx = 0, sy = 0, st = 0, lastTouch = 0;
@@ -1302,7 +1304,7 @@ function bindOuiOpen(node, mid) {
     if (!st) return;
     var moved = Math.abs(x - sx) + Math.abs(y - sy), dt = Date.now() - st;
     st = 0;
-    if (moved < 12 && dt < 600) chatOuiExpand(mid);
+    if (moved < OUI_TAP_MOVE && dt < OUI_TAP_MS) chatOuiExpand(mid);
   }
   node.addEventListener("touchstart", function (e) {
     lastTouch = Date.now();

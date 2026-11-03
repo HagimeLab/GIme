@@ -8,6 +8,11 @@ const make = (tag, cls) => {
 
 const textOf = (v) => (v == null ? '' : String(v));
 
+/* 一击的判定窗（卡片本体展开走的是同一对常量，见 app-chat.js 的 bindOuiOpen）：
+   这台机 320dpi、dpr=2，1 CSS px≈0.16mm —— 原来的 12px/600ms 等于
+   「手指滑到近 2mm、按住 0.6 秒仍算点」，误触就是这么来的。 */
+var OUI_TAP_MOVE = 8, OUI_TAP_MS = 350;
+
 // 按下即触发：收键盘会让布局在按下与抬起之间上移，走 click 会点空
 // guard(target)：返回 true 表示这一击属于内层控件（按钮/输入/嵌套 Tap），外层不要接。
 function bindTap(node, fn, guard) {
@@ -35,8 +40,8 @@ function bindTap(node, fn, guard) {
   };
   /* 不在 touchstart 上直接触发：那一版要 preventDefault 才能挡住合成 click，
      代价是从按钮起手往下滑滚不动（卡片很高时很明显）。改成「按下记坐标、
-     抬起时位移小且够快才算点」，判据与卡片本体的 bindOuiOpen 同一套。
-     收键盘导致的布局上移不影响判断——比的是手指坐标，不是落点元素。 */
+     抬起时位移小且够快才算点」，判据与卡片本体的 bindOuiOpen 同一套（阈值见文件头的
+     OUI_TAP_MOVE / OUI_TAP_MS）。收键盘导致的布局上移不影响判断——比的是手指坐标，不是落点元素。 */
   node.addEventListener('touchstart', (e) => {
     lastTouch = Date.now();
     if (blocked(e.target)) { st = 0; return; }
@@ -52,8 +57,8 @@ function bindTap(node, fn, guard) {
     const dt = Date.now() - st;
     st = 0;
     if (blocked(e.target)) return;
-    if (!p || dt > 600) return;
-    if (Math.abs(p.clientX - sx) + Math.abs(p.clientY - sy) > 12) return;
+    if (!p || dt > OUI_TAP_MS) return;
+    if (Math.abs(p.clientX - sx) + Math.abs(p.clientY - sy) > OUI_TAP_MOVE) return;
     fire(e);
   });
   node.addEventListener('touchcancel', () => { st = 0; });
@@ -381,18 +386,22 @@ function renderNode(node, ctx) {
       const values = is2D ? [] : raw.map(Number);
       if (!raw.length) return d;
       /* action：点某根柱 / 某个图例项就执行，{label} 换成该项标签。
-         饼图是一整块 conic-gradient 画不出可点的扇区，可点的是下面的图例行。 */
+         命中区给的是「看得见的部分」（数值、柱体、标签），不是整列：
+         整列高 122px，矮柱上方的空白也算点，真机上点不准（实测误触源之一）。
+         饼图是一整块 conic-gradient 画不出可点的扇区，可点的一直是图例行。 */
       const cAct = textOf(p.action);
-      const segTap = (el, label) => {
-        if (!cAct) return el;
+      const segTap = (els, label) => {
+        if (!cAct) return els;
         const a = actOf(cAct, { label: textOf(label) });
-        el.setAttribute('data-oui-act', a);
-        el.className = (el.className ? el.className + ' ' : '') + 'oui-seg-tap';
-        bindTap(el, (e) => {
-          e.stopPropagation();
-          ctx.onAction(a, el, nearestForm(el));
-        });
-        return el;
+        for (const el of els) {
+          el.setAttribute('data-oui-act', a);
+          el.className = (el.className ? el.className + ' ' : '') + 'oui-seg-tap';
+          bindTap(el, (e) => {
+            e.stopPropagation();
+            ctx.onAction(a, el, nearestForm(el));
+          });
+        }
+        return els;
       };
       if (p.kind === 'pie') {
         /* 占比：柱/折线画不出「占多少」，用 conic-gradient 画饼，
@@ -417,7 +426,8 @@ function renderNode(node, ctx) {
           row.append(makeText('span', 'oui-pie-l', l));
           row.append(makeText('b', 'oui-pie-v',
             withUnit(values[i]) + '（' + Math.round((vals[i] / total) * 100) + '%）'));
-          lg.append(segTap(row, l));
+          segTap([row], l);
+          lg.append(row);
         });
         const box = make('div', 'oui-pie-box' + (lgTop ? ' lg-top' : ''));
         if (lgTop) box.append(lg, pie); else box.append(pie, lg);
@@ -440,7 +450,7 @@ function renderNode(node, ctx) {
         const bars = make('div', 'oui-bars');
         rows.forEach((r, i) => {
           const col = make('div', 'oui-bar');
-          col.append(makeText('b', '', withUnit(Math.round(totals[i] * 10) / 10)));
+          const total = makeText('b', '', withUnit(Math.round(totals[i] * 10) / 10));
           const stack = make('div', 'oui-col');
           stack.style.height = Math.max(2, (totals[i] / maxT) * 100) + '%';
           for (let s = 0; s < nS; s++) {
@@ -451,8 +461,11 @@ function renderNode(node, ctx) {
             seg.title = (names[s] || '系列 ' + (s + 1)) + ' ' + v;
             stack.append(seg);
           }
-          col.append(stack, makeText('span', '', labels[i] || ''));
-          bars.append(segTap(col, labels[i] || ''));
+          const lab = makeText('span', '', labels[i] || '');
+          col.append(total, stack, lab);
+          /* 可点的是「总量 + 柱体 + 标签」这三块看得见的，整列空白不算 */
+          segTap([total, stack, lab], labels[i] || '');
+          bars.append(col);
         });
         const lg = nS ? make('div', 'oui-legend') : null;
         if (lg) {
@@ -492,10 +505,14 @@ function renderNode(node, ctx) {
         const bars = make('div', 'oui-bars');
         values.forEach((v, i) => {
           const col = make('div', 'oui-bar');
+          const val = makeText('b', '', withUnit(v));
           const fill = make('i', '');
           fill.style.height = Math.max(0, Math.min(100, (Math.max(0, v) / max) * 100)) + '%';
-          col.append(makeText('b', '', withUnit(v)), fill, makeText('span', '', labels[i] || ''));
-          bars.append(segTap(col, labels[i] || ''));
+          const lab = makeText('span', '', labels[i] || '');
+          col.append(val, fill, lab);
+          /* 数值、柱体、标签可点；矮柱上方的空白不再算点 */
+          segTap([val, fill, lab], labels[i] || '');
+          bars.append(col);
         });
         d.append(bars);
       }

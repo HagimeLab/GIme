@@ -1086,10 +1086,11 @@ html.swap, html.swap * { transition: none !important; }
 .oui-row {
   display: flex;
   flex-wrap: wrap;
-  margin: -4px;
+  margin: -6px;
 }
 .oui-row > * {
-  margin: 4px;
+  /* 芯片间距 8px→12px：快捷发送常是两三颗并排，间隔太小就会点到隔壁那颗 */
+  margin: 6px;
 }
 
 .oui-card {
@@ -1644,6 +1645,26 @@ html.swap, html.swap * { transition: none !important; }
 /* 图例换到图上/饼左：DOM 已经按 legend 参数改了顺序，这里只把原来的边距扳回来 */
 .oui-chart > .oui-legend:first-child { margin-top: 0; margin-bottom: 6px; }
 .oui-pie-box.lg-top .oui-pie-lg { margin-left: 0; margin-right: 12px; }
+
+/* ---- 第九轮：可点件的静止态标识 + 触点尺寸 ---- */
+/* 触屏上没有 cursor:pointer，静止态不画点什么，用户就不知道这块能点。
+   统一用 App 已有的语言：右端一个细 ›（.oui-tap-line 本来就是这个）。 */
+.oui-tab-t:not(.on)::after { content: "›"; margin-left: 5px; color: var(--ink-3); font-weight: 400; }
+.oui-empty.tap::after { content: "点一下 ›"; display: block; margin-top: 7px;
+                        font-size: .7857em; color: var(--ink-3); }
+.oui-bar b.oui-seg-tap::after { content: "›"; margin-left: 2px; color: var(--ink-3); }
+/* 多子节点的 Tap：整块可点但看不出边界，右端补一个居中的 ›，并给它留出位子 */
+.oui-tap:not(.oui-tap-line) { padding-right: 16px; }
+.oui-tap:not(.oui-tap-line)::after { content: "›"; position: absolute; right: 2px; top: 50%;
+                                    transform: translateY(-50%); color: var(--ink-3); }
+/* 卡片本体一击展开浮窗（热区是整张卡），右上角给个把手，别让它是个隐形操作 */
+.oui-card-t::after, .oui > .oui-stack > .oui-title:first-child::after {
+  content: "⤢"; float: right; margin-left: 8px; color: var(--ink-3); font-size: .85em; font-weight: 400;
+}
+
+/* 触点：按钮原来实测只有 37px 高，低于 App 自己的 44px 标准（快捷发送就靠它，
+   点不准就发到隔壁那颗上）。 */
+.oui-btn { display: inline-flex; align-items: center; justify-content: center; min-height: 44px; }
 
 /* ---- 选择面板（可选，见上方说明） ---- */
 /* 选择面板：黑白列表，当前值整行反色并打勾 */
