@@ -25,7 +25,14 @@ const components = [
     justify: z.enum(["start", "center", "end", "between"]).optional(),
     padding: z.enum(["sm", "md"]).optional(),
   }),
-  comp("Row", "横向容器；children 为子组件数组。align/padding 同 Stack（align 在横排里管纵向对齐）", {
+  /* Row 的参数位次与 Stack 对齐（gap/align/justify/padding）。
+     真机抓到模型按 Stack 的写法给 Row 传 7 个位置参数 → 「Row takes 3 arg(s), got 7」整排被丢。
+     两边位次一致，模型怎么写都不会多出来。 */
+  /* Row 的位次保持 (children, align, padding)，不跟 Stack 对齐：
+     真机试过对齐——历史源码里模型一直写 Row(children, "center")，
+     位次一改变成 gap，就报「expects one of ["sm","md"] but got "center"」，等于把本来正常的卡改坏。
+     要 gap/justify 的排布用 Stack。 */
+  comp("Row", "横向容器；children 为子组件数组。align 取 start/center/end（横排里管纵向对齐），padding 取 sm/md；要 gap/justify 用 Stack", {
     children: kids(),
     align: z.enum(["start", "center", "end"]).optional(),
     padding: z.enum(["sm", "md"]).optional(),
@@ -128,17 +135,23 @@ const components = [
     text: z.string(),
     tone: z.enum(["info", "warn", "success"]).optional(),
   }),
-  comp("Chart", "图表；kind 取 bar / line / pie（占比）/ stack（堆叠）。labels 与 values 等长；stack 时 values 传二维（每行一个类别的各系列数值，行短了按 0 补），names 为系列名（缺的显示为「系列 N」）。action 让柱/扇区/图例可点，{label} 替换成被点那一项的标签（如 wrong:{label}）。unit 给数值加单位（如「题」「%」「分钟」，柱顶和图例都会带上）；legend 取 top/bottom 调图例位置（触屏没有悬停 tooltip，数值直接标在项上）", {
+  comp("Chart", "图表；kind 取 bar / line / pie（占比）/ stack（堆叠）。labels 与 values 等长；stack 时 values 传二维（每行一个类别的各系列数值，行短了按 0 补），names 为系列名（缺的显示为「系列 N」）。action 让柱/扇区/图例可点，{label} 替换成被点那一项的标签（如 wrong:{label}）。unit 给数值加单位（如「题」「%」「分钟」，柱顶和图例都会带上）；legend 取 top/bottom 调图例位置（触屏没有悬停 tooltip，数值直接标在项上）。" +
+    "位次是 kind, labels, values, names, action, unit, legend：只想给数值加单位就写 Chart(\"bar\", 标签, 数值, [], \"\", \"题\")，不要改用具名写法（具名会被解析器多计一个参数）；第 4 位误写成字符串（如 Chart(\"bar\", 标签, 数值, \"题\")）也按单位收", {
     kind: z.enum(["bar", "line", "pie", "stack"]).optional(),
     labels: z.array(z.string()),
     values: z.union([z.array(z.number()), z.array(z.array(z.number()))]),
-    names: z.array(z.string()).optional(),
+    /* names 允许字符串：真机抓到模型把单位写在第 4 位（Chart("bar", 标签, 数值, "题")），
+       zod 报「field "/names" expects array but got string」，整条 names 被丢、单位也没了。
+       字符串永远不可能是系列名数组，所以在渲染层按单位收（见 openui-ui.js 的 Chart 分支）。 */
+    names: z.union([z.array(z.string()), z.string()]).optional(),
     action: z.string().optional(),
     unit: z.string().optional(),
     legend: z.enum(["top", "bottom"]).optional(),
   }),
   comp("Divider", "分隔线", {}),
-  comp("Image", "图片；src 接受 http(s)、data:image，或写成 svg:<svg .../> 直接画示意图。SVG 里可用 SMIL / CSS 做动画（<animate>、@keyframes），但不支持脚本与外链", {
+  comp("Image", "图片；src 接受 http(s)、data:image，或写成 svg:<svg .../> 直接画示意图。SVG 里可用 SMIL / CSS 做动画（<animate>、@keyframes），但不支持脚本与外链。" +
+    "SVG 的颜色只用灰阶（fill/stroke 取 #111113、#62676F、#A2A7AF、#dcdce1、#EDEEF1、#ffffff 这一档，深浅靠明度拉开），" +
+    "不要写蓝/橙/红这类彩色，也不要给整块底色铺深蓝——这个 App 是黑白界面，彩色示意图会很扎眼", {
     src: z.string(),
     alt: z.string().optional(),
     caption: z.string().optional(),

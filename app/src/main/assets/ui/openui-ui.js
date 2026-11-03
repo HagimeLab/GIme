@@ -381,7 +381,10 @@ function renderNode(node, ctx) {
       const raw = listOf(p.values);
       /* unit / legend：数值单位（题、%、分钟）以前只能塞进 labels，柱顶就丢了；
          触屏没有 hover，所以不做 tooltip，数值本来就标在项上。 */
-      const unit = textOf(p.unit).trim();
+      const unit = textOf(p.unit).trim() ||
+        /* 第 4 位（names）被写成字符串时按单位收：模型常写 Chart("bar", 标签, 数值, "题")，
+           以前 zod 直接报 expects array、names 与单位一起丢 */
+        (typeof p.names === 'string' ? p.names.trim() : '');
       const withUnit = (s) => (unit ? s + unit : String(s));
       const lgTop = p.legend === 'top';
       /* stack 传的是二维（每行一个类别、每列一个系列）：对数组做 Number() 会变 NaN，
@@ -445,7 +448,7 @@ function renderNode(node, ctx) {
           const n = Number(x);
           return isFinite(n) ? Math.max(0, n) : 0;
         }) : []));
-        const names = listOf(p.names).map(textOf);
+        const names = Array.isArray(p.names) ? p.names.map(textOf) : [];
         /* 系列数取「最长一行」与 names 的较大值：模型偶尔少写一行数值或少写一个系列名，
            按 0 补 / 显示成「系列 N」总比「有一截颜色没有图例」强。 */
         const nS = rows.reduce((n, r) => Math.max(n, r.length), names.length);
@@ -1097,6 +1100,38 @@ function readForm(form) {
   return out;
 }
 
+/* 横向溢出提示：宽表格 / 长公式在 360dp 上一定超宽，容器自己会横滑，
+   但用户看不出来还能滑——末列被从中间切断时，那画面和「文字超出边框」一模一样。
+   必须在节点进文档之后调用（布局宽度这时候才有值）。 */
+const OUI_SX_SEL = '.oui-tablewrap, .md-table, .oui-math.disp';
+function ouiMarkScrollX(root) {
+  if (!root || !root.querySelectorAll) return 0;
+  let n = 0;
+  for (const el of Array.prototype.slice.call(root.querySelectorAll(OUI_SX_SEL))) {
+    const over = el.scrollWidth - el.clientWidth;
+    const tip = el.nextElementSibling;
+    if (over > 2) {
+      let t = tip && String(tip.className) === 'oui-sx-tip' ? tip : null;
+      if (!t) {
+        t = make('div', 'oui-sx-tip');
+        el.parentNode.insertBefore(t, el.nextSibling);
+        el.addEventListener('scroll', () => {
+          const cur = el.nextElementSibling;
+          if (cur && String(cur.className).indexOf('oui-sx-tip') >= 0) {
+            cur.className = el.scrollLeft + el.clientWidth >= el.scrollWidth - 2 ? 'oui-sx-tip gone' : 'oui-sx-tip';
+          }
+        }, { passive: true });
+      }
+      t.textContent = String(el.className).indexOf('oui-math') >= 0 ? '← 公式超宽，可左右滑 →' : '← 这一栏比屏幕宽，可左右滑 →';
+      t.className = 'oui-sx-tip';
+      n++;
+    } else if (tip && String(tip.className).indexOf('oui-sx-tip') >= 0) {
+      tip.remove();
+    }
+  }
+  return n;
+}
+
 function renderOpenUI(source, opts) {
   if (!source || !window.OpenUI) return null;
   let res = null;
@@ -1135,3 +1170,4 @@ function renderOpenUI(source, opts) {
 // —— 非 module 版的出口（GIme 以 classic script 从 file:///android_asset/ 加载，不能用 import/export）——
 window.renderOpenUI = renderOpenUI;
 window.readForm = readForm;
+window.ouiMarkScrollX = ouiMarkScrollX;

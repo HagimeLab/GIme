@@ -1578,6 +1578,11 @@ html.swap, html.swap * { transition: none !important; }
 .oui-text.md pre { background: var(--surface-2); border-color: var(--stroke-2); }
 .oui-text.md th { background: var(--surface-2); }
 
+/* 横滑提示：宽表格/长公式在 360dp 上一定超宽，容器自己会滑，但末列被切在边线上
+   看着和「文字超出边框」一样；滑到尽头这行字自己收掉 */
+.oui-sx-tip { margin-top: 5px; font-size: .7857em; line-height: 1.5; color: var(--muted); text-align: center; }
+.oui-sx-tip.gone { display: none; }
+
 /* KaTeX：字号跟正文走；display 档单独成行且允许横滚——长公式在 360dp 上一定超宽。
    官方样式表把 .katex-display 居中并带上下 margin，卡片里靠左、margin 由我们给。 */
 .oui-math { font-size: 1.02em; }

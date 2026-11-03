@@ -3307,6 +3307,55 @@ ok("Empty 给了 action 才带 .tap 类（没 action 不装可点）", (() => {
          uiCollect(without, (n) => uiCls(n).indexOf("tap") >= 0).length === 0;
 })());
 
+/* ---------- 30b-4. OpenUI 第九轮续：解析告警收紧 + 横滑提示 ---------- */
+section("[30b-4] OpenUI 第九轮续（模型写坏的三类）");
+
+ok("Row 的位次是 (children, align, padding)：模型写 Row(children, \"center\") 必须照常过", (() => {
+  /* 这条是踩过坑才加的：曾把 Row 的位次改成跟 Stack 一致（第 2 位变 gap），
+     结果历史源码里的 Row([...], "center") 全部报 expects one of ["sm","md"] —— 兼容比整齐重要。 */
+  let errs = [];
+  try { errs = (W.OpenUI.parse('root = Row([Text("甲"), Text("乙")], "center")').meta || {}).errors || []; }
+  catch (e) { return false; }
+  const sig = (W.OpenUI.signatures || []).find((x) => x.name === "Row") || {};
+  return errs.length === 0 && String(sig.signature || "").indexOf("align") >= 0 &&
+         String(sig.signature || "").indexOf("gap") < 0;
+})());
+ok("Chart 第 4 位写成字符串时按单位收（不再 expects array 整条丢）", (() => {
+  let r = null;
+  try { r = W.OpenUI.parse('root = Chart("bar", ["甲","乙"], [3, 5], "题")'); } catch (e) { return false; }
+  const errs = (r.meta && r.meta.errors) || [];
+  const box = W.renderOpenUI('root = Chart("bar", ["甲","乙"], [3, 5], "题")', {});
+  const vals = uiCollect(box, (n) => n.id === "new-b").map((n) => String(n.textContent));
+  return errs.length === 0 && vals.join("|").indexOf("3题") >= 0;
+})());
+ok("Chart 的 names 仍是数组时照常当系列名", (() => {
+  const box = W.renderOpenUI('root = Chart("stack", ["甲"], [[2,1]], ["新学","复习"])', {});
+  const lg = uiCollect(box, (n) => uiCls(n) === "oui-legend")[0];
+  return !!lg && uiText(lg).indexOf("新学") >= 0 && uiText(lg).indexOf("复习") >= 0;
+})());
+ok("横滑提示：渲染层有 ouiMarkScrollX，挂载/展开/收回三处都重算", (() => {
+  const calls = (jsSources[5].match(/ouiMarkScrollX\(card\)/g) || []).length;
+  return /function ouiMarkScrollX\(root\)/.test(jsSources[1]) &&
+         /window\.ouiMarkScrollX = ouiMarkScrollX/.test(jsSources[1]) &&
+         /bindOuiOpen\(card, key\); ouiMarkScrollX\(card\)/.test(jsSources[5]) &&
+         /if \(slot\) ouiMarkScrollX\(card\)/.test(jsSources[5]) &&
+         calls === 3;
+})());
+ok("横滑提示的样式与收掉都在（滑到尽头不再挡路）",
+   /\.oui-sx-tip \{[^}]*color: var\(--muted\)/.test(cssSource) &&
+   /\.oui-sx-tip\.gone \{[^}]*display: none/.test(cssSource));
+ok("Image 的描述要求灰阶（模型自画的 SVG 不再上彩色）", (() => {
+  const img = (W.OpenUI.signatures || []).find((x) => x.name === "Image") || {};
+  const d = String(img.description || "");
+  return d.indexOf("灰阶") >= 0 && d.indexOf("不要写蓝") >= 0;
+})());
+ok("系统提示改成「只用位置参数，空位写空值」（真机证明具名参数会被多计一个）", (() => {
+  const src = String(W.chatAgentRules);
+  const descs = (W.OpenUI.signatures || []).map((x) => String(x.description)).join("|");
+  return src.indexOf("不要写 key: value") >= 0 && src.indexOf("多计一个") >= 0 &&
+         src.indexOf("拿不准顺序就用具名写法") < 0 && !/或直接用具名/.test(descs);
+})());
+
 /* ---------- 30c. OpenUI 卡片动作路由：点了要真的接回对话 ---------- */
 
 section("[30c] OpenUI 卡片动作路由");

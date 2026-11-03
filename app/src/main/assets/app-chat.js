@@ -1273,7 +1273,7 @@ function chatOuiMount(root) {
       });
       /* 卡片是挂载后才撑高的；用户原本在底部时跟着它走，别让最后一张卡被截掉半截 */
       var near = root.scrollHeight - root.scrollTop - root.clientHeight < 160;
-      if (card) { slot.appendChild(card); bindOuiOpen(card, key); }
+      if (card) { slot.appendChild(card); bindOuiOpen(card, key); ouiMarkScrollX(card); }
       if (card && near) root.scrollTop = root.scrollHeight;
     } catch (e) { /* 画不出来就当没有这张卡：正文那段 Markdown 还在 */ }
   }
@@ -1353,6 +1353,9 @@ function chatOuiExpand(mid) {
   chatOuiScrim(true);
   chatOuiMaxSet(false);
   win.classList.add("on");
+  /* 窗口比气泡里的槽位宽得多，横滑提示要按新宽度重算——必须在 .on 之后量，
+     窗口没显示时 clientWidth 是 0，会把每张卡都误判成「超宽」 */
+  ouiMarkScrollX(card);
 }
 /* 拦截层：窗口开着时铺满整屏（压在窗口下面），点它=收回 */
 function chatOuiScrim(on) {
@@ -1371,6 +1374,7 @@ function chatOuiCollapse() {
        不然它会一直浮在窗口里，下次展开另一张时叠成两张卡 */
     if (slot) slot.appendChild(card);
     else card.remove();
+    if (slot) ouiMarkScrollX(card);   /* 回到气泡宽度，提示按窄的那边重算 */
   }
   chatOuiScrim(false);
   if (win) win.classList.remove("on");
@@ -3197,7 +3201,9 @@ function chatAgentRules() {
          "建计划先 create_plan，拿到返回的 plan.id 后再用 update_plan 填日程；" +
          "用户要求提醒或通知时，最后调用 notify_phone。write_answers / write_explanations / " +
          "delete_plan 会先弹预览卡，未批准不要重复调用。" +
-         "需要交互卡片时只用 ```openui-lang：首行 root = Stack([...])，参数按位置，带 ? 的可省略；" +
+         "需要交互卡片时只用 ```openui-lang：首行 root = Stack([...])，**参数一律按签名的位置写，不要写 key: value**——" +
+         "这个解析器会把一个具名参数多计一个，Text/Row 这类参数少的组件会直接报「takes N arg(s), got M」并把多出来的整条丢掉；" +
+         "中间那几位用不上就写空值：Chart(\"bar\", 标签, 数值, [], \"\", \"题\")、Row(子组件, \"start\", \"sm\")；" +
          "组件签名（由官方 schema 生成）：\n" + ouiSignatureLines() + "\n" +
          "Button 的 action 取 send:/value:/copy:/nav:/approve:/adjust:/toggle:/insight:/toast:/confirm:。" +
          "**每个 Button 都必须带 action**——没写 action 的按钮点了没反应，会被降级成纯文字，等于白画；" +
