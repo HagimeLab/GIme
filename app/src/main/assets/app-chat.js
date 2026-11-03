@@ -1289,6 +1289,7 @@ function chatOuiFallbackAll(root) {
    renderOpenUI 返回的是 DOM 元素，拼不进字符串，只能后挂。 */
 function chatOuiMount(root) {
   if (!root || !root.querySelectorAll) return;
+  ouiBindScrollDismiss();
   if (!window.OpenUI) {
     /* 卡片源码已经在屏幕上了，core 还在路上：拉一次再回来挂（同一份 root 复用）。
        __ouiWaiting 防重入，否则两次渲染会把同一张卡挂两遍。 */
@@ -1316,8 +1317,13 @@ function chatOuiMount(root) {
     var parts = (ouiSplit(m).srcs) || [];
     var src = ouiNormalize(parts[idx] || "");
     if (!src) continue;
-    /* 这张卡正浮在悬浮窗里：节点还活在窗口里，槽位空着（CSS 会收起来），别在这儿重画 */
-    if (key === _ouiWinMid) continue;
+    /* 这张卡正浮在悬浮窗里：节点还活在窗口里，槽位空着（CSS 会收起来），别在这儿重画。
+       但要把它原来的高度占住，不然重画一下页面就整体上移，下一击就点歪了。 */
+    if (key === _ouiWinMid) {
+      slot.classList.add("oui-slot-held");
+      if (_ouiWinH > 0) slot.style.minHeight = _ouiWinH + "px";
+      continue;
+    }
     if (!window.renderOpenUI) { ouiFallbackInto(slot, src); continue; }
     /* 卡片里的表单值按「消息 → 第几张卡 → 字段」分层存。
        以前整条消息共用一个对象、只按字段名区分：同一条回答里两张卡都有 name="amount"
@@ -1339,7 +1345,14 @@ function chatOuiMount(root) {
       });
       /* 卡片是挂载后才撑高的；用户原本在底部时跟着它走，别让最后一张卡被截掉半截 */
       var near = root.scrollHeight - root.scrollTop - root.clientHeight < 160;
-      if (card) { slot.appendChild(card); bindOuiOpen(card, key); ouiMarkScrollX(card); }
+      if (card) {
+        /* 一个槽只放一张卡：重复挂载（比如 core 晚到又回调了一次）会让槽里堆两张，
+           之后 slot.querySelector('.oui') 永远拿到先挂的那张，浮窗就老显示别的卡。 */
+        var old = slot.querySelectorAll(".oui");
+        for (var oi = 0; oi < old.length; oi++) { if (old[oi] !== card) old[oi].parentNode.removeChild(old[oi]); }
+        card.setAttribute("data-oui-key", key);   /* 卡片自己带着身份，浮窗/收回都认它 */
+        slot.appendChild(card); bindOuiOpen(card, key); ouiMarkScrollX(card);
+      }
       else { ouiFallbackInto(slot, src); }
       if (card && near) root.scrollTop = root.scrollHeight;
     } catch (e) { ouiFallbackInto(slot, src); }
@@ -1353,6 +1366,11 @@ var _ouiWinMid = "";
 /* 悬浮窗这张卡属于哪个会话。切会话后旧窗口还压在页面上，
    上一段对话的组件就会被当成新对话的组件展开——所以按会话核对。 */
 var _ouiWinConv = "";
+/* 浮窗里那张卡在气泡宽度下有多高。它被搬进窗口后槽位是空的，
+   CSS 会把空槽收成 0 高，下面的内容整体往上跳——用户这时再点「下一张」，
+   手指落点已经换成了另一张卡，就成了「点下一个、出来上一个」。
+   所以展开时按原高度给槽位占位，收回时再撤掉。 */
+var _ouiWinH = 0;
 function ouiWinSlot(mid) {
   if (!mid) return null;
   var slots = document.querySelectorAll("[data-oui]");
@@ -1398,11 +1416,51 @@ function bindOuiOpen(node, mid) {
   });
 }
 /* 悬浮窗背后的拦截层：点窗口外任意处收回。
-   选择面板压在窗口上时，这一击先还给面板，不能隔着面板把卡收走。 */
-function chatOuiScrimTap() {
+   选择面板压在窗口上时，这一击先还给面板，不能隔着面板把卡收走。
+   ---- 点「另一张卡」要能一次换过去 ----
+   拦截层铺满整屏，用户想展开下一张卡时，这一击其实打在拦截层上：
+   只把手上这张收回，屏幕上那张（他刚点的）并不会打开；更糟的是空槽一收一放
+   会把列表整体位移，第二下就落到别的卡上——「点下一个却开了上一个」。
+   所以这里先把卡收回，再按手指坐标看下面是不是另一张卡的槽位，是就直接展开它。 */
+function chatOuiScrimTap(e) {
   var top = openLayers.length ? openLayers[openLayers.length - 1] : null;
   if (top && top.id !== "chat") { closeTop(); return; }
+  var x = e && typeof e.clientX === "number" ? e.clientX : -1;
+  var y = e && typeof e.clientY === "number" ? e.clientY : -1;
+  /* 要展开哪张卡，必须在收起之前量。
+     收起会把窗口里的卡塞回列表，列表整体高度变化、滚动位置也跟着变；
+     拿旧坐标去命中，摸到的往往已经是隔壁那张卡——「点这张，展开的却是上/下一张」
+     就是这么来的。elementsFromPoint 会穿透窗口和拦截层给整摞元素，
+     跳过浮窗/拦截层自身，第一个带 data-oui 的就是指尖底下真正那张卡。
+     注意不能用 elementFromPoint + 临时隐藏：拦截层有过渡，藏不掉。 */
+  var key = "";
+  if (x >= 0 && y >= 0) {
+    try {
+      var stack = document.elementsFromPoint ? document.elementsFromPoint(x, y) : [];
+      for (var i = 0; i < stack.length; i++) {
+        var el = stack[i];
+        if (el.closest && (el.closest("#ouiWin") || el.closest("#ouiScrim"))) continue;
+        var sl = el.closest ? el.closest("[data-oui]") : null;
+        if (sl) { key = sl.getAttribute("data-oui") || ""; break; }
+      }
+    } catch (err) { key = ""; }
+  }
+  var was = _ouiWinMid;
   chatOuiCollapse();
+  /* 点的是已经浮着的那张：收起来就够。点的是别的卡：一次点击直接换过去。 */
+  if (key && key !== was) chatOuiExpand(key);
+}
+/* 列表一滚动就把浮窗收起。
+   浮窗是贴底的，正好压住下面半屏的卡片：不收的话用户点「下一张」其实点在浮窗上，
+   屏幕当然还是上一张的内容——这也是「点下一个、显示上一个」的成因之一。
+   滚动本来就是要换视野，顺手收起浮窗既符合直觉，也让被压住的卡能点到。 */
+function ouiBindScrollDismiss() {
+  var sc = document.getElementById("chatList");
+  if (!sc || sc.__ouiScrollBound) return;
+  sc.__ouiScrollBound = true;
+  sc.addEventListener("scroll", function () {
+    if (_ouiWinMid) chatOuiCollapse();
+  }, { passive: true });
 }
 /* 一次只浮一张：展开新的之前先把手上这张收回原位 */
 function chatOuiExpand(mid) {
@@ -1410,8 +1468,10 @@ function chatOuiExpand(mid) {
   var win = document.getElementById("ouiWin");
   var body = document.getElementById("ouiWinBody");
   var slot = ouiWinSlot(mid);
-  var card = slot && slot.querySelector(".oui");
+  /* 优先拿「自己带着这把钥匙」的那张卡，槽里混进来的别家卡一律不认 */
+  var card = slot && (slot.querySelector('.oui[data-oui-key="' + mid + '"]') || slot.querySelector(".oui"));
   if (!win || !body || !card) return;
+  var h0 = card.offsetHeight || 0;
   /* 标题拿这张卡自己的 Card 标题/Title，认不出就叫「卡片」。
      被拿到头部的那一行在窗口里不再重复出现（标记只在 .oui-win-body 里生效）。 */
   var t = card.querySelector(".oui-card-t") || card.querySelector(".oui-title");
@@ -1421,6 +1481,9 @@ function chatOuiExpand(mid) {
   body.appendChild(card);              /* 移动节点，不重建 */
   _ouiWinMid = mid;
   _ouiWinConv = chatCurId || "";
+  /* 槽位留出原来的高度，页面别跳（跳了下一击就点歪，见 _ouiWinH 注释） */
+  _ouiWinH = h0;
+  if (slot) { slot.classList.add("oui-slot-held"); if (h0 > 0) slot.style.minHeight = h0 + "px"; }
   chatOuiScrim(true);
   chatOuiMaxSet(false);
   win.classList.add("on");
@@ -1438,15 +1501,31 @@ function chatOuiCollapse() {
   var win = document.getElementById("ouiWin");
   var body = document.getElementById("ouiWinBody");
   var card = body && body.querySelector(".oui");
-  var slot = ouiWinSlot(_ouiWinMid);
+  /* 卡片自己记着它是哪条消息第几张；万一 _ouiWinMid 被别的路径清过，也靠它找对槽位 */
+  var key = (card && card.getAttribute && card.getAttribute("data-oui-key")) || _ouiWinMid;
+  var slot = ouiWinSlot(key);
   _ouiWinMid = "";
   _ouiWinConv = "";
+  _ouiWinH = 0;
   if (card) {
     /* 那条消息还在就原路放回去；已经不在了（切了会话）就丢掉，
        不然它会一直浮在窗口里，下次展开另一张时叠成两张卡 */
-    if (slot) slot.appendChild(card);
-    else card.remove();
-    if (slot) ouiMarkScrollX(card);   /* 回到气泡宽度，提示按窄的那边重算 */
+    if (slot) {
+      slot.classList.remove("oui-slot-held");
+      slot.style.minHeight = "";
+      slot.appendChild(card);
+      ouiMarkScrollX(card);   /* 回到气泡宽度，提示按窄的那边重算 */
+    } else card.remove();
+  }
+  /* 窗口里若有别的残卡（历史 bug 叠进来的），一并清掉，别留给下一次 */
+  if (body) {
+    var rest = body.querySelectorAll(".oui");
+    for (var i = 0; i < rest.length; i++) {
+      var rk = rest[i].getAttribute("data-oui-key") || "";
+      var rs = rk ? ouiWinSlot(rk) : null;
+      if (rs) { rs.classList.remove("oui-slot-held"); rs.style.minHeight = ""; rs.appendChild(rest[i]); }
+      else rest[i].parentNode.removeChild(rest[i]);
+    }
   }
   chatOuiScrim(false);
   if (win) win.classList.remove("on");

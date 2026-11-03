@@ -3364,7 +3364,7 @@ ok("横滑提示：渲染层有 ouiMarkScrollX，挂载/展开/收回三处都�
   return /function ouiMarkScrollX\(root\)/.test(jsSources[1]) &&
          /window\.ouiMarkScrollX = ouiMarkScrollX/.test(jsSources[1]) &&
          /bindOuiOpen\(card, key\); ouiMarkScrollX\(card\)/.test(jsSources[5]) &&
-         /if \(slot\) ouiMarkScrollX\(card\)/.test(jsSources[5]) &&
+         /slot\.appendChild\(card\);\s*\r?\n\s*ouiMarkScrollX\(card\);/.test(jsSources[5]) &&
          calls === 3;
 })());
 ok("横滑提示的样式与收掉都在（滑到尽头不再挡路）",
@@ -3678,7 +3678,7 @@ ok("页面重载后原生补灌一次安全区（--sat/--sab 不靠运气管）"
 /* 展开/收回的入口就是卡片本体和窗口外那一片，不再摆一条展开按钮 */
 ok("点卡片本体展开、点窗口外收回（没有多余的展开条）",
    /function bindOuiOpen/.test(html) && /slot\.appendChild\(card\); bindOuiOpen\(card, key\)/.test(html) &&
-   /onclick="chatOuiScrimTap\(\)"/.test(skeletonHtml) &&
+   /onclick="chatOuiScrimTap\(event\)"/.test(skeletonHtml) &&
    !/ouiWinBar|展开成悬浮窗/.test(html));
 ok("拦截层压在对话（990）之上、窗口（995）之下，卡片按下去有边框反馈",
    /\.oui-scrim \{[^}]*z-index: 994/.test(cssText) &&
@@ -5588,6 +5588,27 @@ ok("收回卡片时清空会话标记，避免下次误判",
    html.indexOf('_ouiWinMid = "";\n  _ouiWinConv = "";') >= 0);
 
 /* ---------- 结果 ---------- */
+section("[30b-10] 点「下一张卡」一次就换过去，且浮窗永远认自己那张卡");
+ok("拦截层把点击坐标传进来，收起前先按坐标定卡，一次点击换到指尖下那张卡",
+   html.indexOf('chatOuiScrimTap(event)') >= 0 &&
+   html.indexOf('function chatOuiScrimTap(e)') >= 0 &&
+   html.indexOf('var stack = document.elementsFromPoint ? document.elementsFromPoint(x, y) : [];') >= 0 &&
+   html.indexOf('if (key && key !== was) chatOuiExpand(key);') >= 0);
+ok("列表一滚动就收起浮窗（浮窗贴底会压住下一张卡，不收就永远只看到上一张）",
+   html.indexOf('function ouiBindScrollDismiss()') >= 0 &&
+   html.indexOf('if (_ouiWinMid) chatOuiCollapse();') >= 0);
+ok("卡片搬走后槽位按原高度占位（.oui-slot-held + _ouiWinH），列表不再整体上跳",
+   html.indexOf('var _ouiWinH = 0;') >= 0 &&
+   html.indexOf('slot.classList.add("oui-slot-held")') >= 0 &&
+   html.indexOf('slot.style.minHeight = h0 + "px"') >= 0 &&
+   html.indexOf('.oui-slot.oui-slot-held { display: block; }') >= 0);
+ok("卡片自带 data-oui-key 身份，展开/收回都按它找槽；槽里多余的卡会被清掉（防一槽两卡张冠李戴）",
+   html.indexOf('card.setAttribute("data-oui-key", key);') >= 0 &&
+   html.indexOf("slot.querySelector('.oui[data-oui-key=\"' + mid + '\"]')") >= 0 &&
+   html.indexOf('var key = (card && card.getAttribute && card.getAttribute("data-oui-key")) || _ouiWinMid;') >= 0 &&
+   html.indexOf('var rest = body.querySelectorAll(".oui");') >= 0);
+
+/* ---------- 结果 ---------- */
 console.log("\n" + "=".repeat(46));
 if (fails.length) {
   console.log("失败 " + fails.length + " 项：");
@@ -5595,3 +5616,4 @@ if (fails.length) {
   process.exit(1);
 }
 console.log("全部通过：" + pass + " 项");
+

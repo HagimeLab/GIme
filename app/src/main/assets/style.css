@@ -1011,6 +1011,9 @@ html.swap, html.swap * { transition: none !important; }
    （P0 验收 D-1/D-2；原来那格写的是免责声明行，2026-11-02 按裁定删掉了）。 */
 .oui-slot { display: block; width: 100%; margin: 10px 0; }
 .oui-slot:empty { display: none; }   /* 画不出来就当没这张卡，不留空框 */
+/* 卡片浮到悬浮窗里时槽位是空的，但要按原高度占位：
+   不然空槽一收，下面内容整体上跳，用户下一击就点到别的卡上（点下一个开上一个）。 */
+.oui-slot.oui-slot-held { display: block; }
 /* 一条回答里画多张卡时，相邻槽位只留一次间距（两个 10px 会叠成 20px） */
 .oui-slot + .oui-slot { margin-top: 0; }
 
