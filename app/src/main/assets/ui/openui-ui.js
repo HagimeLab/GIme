@@ -113,7 +113,7 @@ function actOf(tpl, map) {
 }
 
 /* 内层可点件的边界：外层 Tap 与「点整卡展开」都要让开它们 */
-const TAP_INNER = 'button,input,textarea,select,label,summary,a,.oui-tap,.oui-seg-tap,.oui-row-tap';
+const TAP_INNER = 'button,input,textarea,select,label,summary,a,.md-link,.oui-empty,.oui-tap,.oui-seg-tap,.oui-row-tap';
 function tapInner(t, self) {
   const el = t && t.closest ? t.closest(TAP_INNER) : null;
   return !!(el && el !== self);
@@ -249,13 +249,20 @@ function renderNode(node, ctx) {
     case 'Tap': {
       /* 可点容器：让卡片里的图表 / 表格 / 整块文字反过来驱动 App。
          内层按钮会自己 stopPropagation，这里再加一道 guard 兜住嵌套 Tap。 */
+      const act = textOf(p.action);
+      /* 无 action 时和 Button 一样降级成纯文本：否则会渲染出一个“看着能点、
+         点了只弹不支持”的 role=button，无障碍语义也是错的 */
+      if (!act.trim()) {
+        const plain = make('div', 'oui-tap-plain');
+        plain.append(kids(p.children));
+        return plain;
+      }
       const d = make('div', 'oui-tap');
       d.setAttribute('role', 'button');
       /* 只包一行内容的 Tap 当成「可点条目」：加边框 + 右侧箭头，用户才知道能点 */
       const only = Array.isArray(p.children) ? p.children.length : 1;
       if (only === 1) d.className += ' oui-tap-line';
       d.append(kids(p.children));
-      const act = textOf(p.action);
       d.setAttribute('data-oui-act', act);
       bindTap(d, (e) => {
         e.stopPropagation();
@@ -390,7 +397,13 @@ function renderNode(node, ctx) {
       /* stack 传的是二维（每行一个类别、每列一个系列）：对数组做 Number() 会变 NaN，
          所以先认出二维，单系列的 values 才走 map(Number)。 */
       const is2D = raw.length > 0 && Array.isArray(raw[0]);
-      const values = is2D ? [] : raw.map(Number);
+      /* 模型偶尔把数值写成「暂无」「12题」「N/A」，Number() 得到 NaN：NaN 会顺着
+         max / 柱高把整张图的几何污染成 NaN，柱顶和折线标签还会印出「NaN」。
+         统一口径：几何一律 numOf 用 0 兜底；显示用 shown——能转数字就带单位，
+         转不了就照原文显示，绝不把 NaN / undefined 印给用户。 */
+      const numOf = (x) => { const n = Number(x); return isFinite(n) ? n : 0; };
+      const values = is2D ? [] : raw.map(numOf);
+      const shown = (i) => { const n = Number(raw[i]); return isFinite(n) ? withUnit(n) : textOf(raw[i]); };
       if (!raw.length) return d;
       /* action：点某根柱 / 某个图例项就执行，{label} 换成该项标签。
          命中区给的是「看得见的部分」（数值、柱体、标签），不是整列：
@@ -432,7 +445,7 @@ function renderNode(node, ctx) {
           row.append(make('i', 'oui-pie-d' + ((i % 5) + 1)));
           row.append(makeText('span', 'oui-pie-l', l));
           row.append(makeText('b', 'oui-pie-v',
-            withUnit(values[i]) + '（' + Math.round((vals[i] / total) * 100) + '%）'));
+            shown(i) + '（' + Math.round((vals[i] / total) * 100) + '%）'));
           segTap([row], l);
           lg.append(row);
         });
@@ -512,7 +525,7 @@ function renderNode(node, ctx) {
         const bars = make('div', 'oui-bars');
         values.forEach((v, i) => {
           const col = make('div', 'oui-bar');
-          const val = makeText('b', '', withUnit(v));
+          const val = makeText('b', '', shown(i));
           const fill = make('i', '');
           fill.style.height = Math.max(0, Math.min(100, (Math.max(0, v) / max) * 100)) + '%';
           const lab = makeText('span', '', labels[i] || '');
@@ -529,10 +542,13 @@ function renderNode(node, ctx) {
         const x = make('div', 'oui-chart-x');
         labels.forEach((label, i) => {
           const cell = make('div', 'oui-chart-xi');
-          const v = makeText('b', 'oui-chart-v', withUnit(values[i]));
+          const v = makeText('b', 'oui-chart-v', shown(i));
           const nm = makeText('span', '', textOf(label));
           cell.append(v, nm);
-          segTap([v, nm], label);
+          /* 命中区原来只有数值 b 和标签 span（真机实测 18×14 / 22×18，都不到 44dp，
+             点不准）。把整格 cell 也纳入可点，cell 内空白处也能点；b/nm 仍是内层，
+             tapInner 会拦住，不会重复触发。 */
+          segTap([cell, v, nm], label);
           x.append(cell);
         });
         d.append(x);
@@ -986,6 +1002,12 @@ function renderNode(node, ctx) {
       const sum = make('summary');
       sum.textContent = '表格 · ' + nCol + ' 列 ' + rows.length + ' 行';
       fold.append(sum, wrap);
+      /* 长表默认折叠，wrap 在 display:none 下 clientWidth 为 0，mount 时的
+         ouiMarkScrollX 量不到宽度、不会给「可左右滑」提示；展开后也没人再量。
+         这里在展开时补一次，否则列多的长表一打开就是一排被裁掉的列、还没有提示。 */
+      fold.addEventListener('toggle', () => {
+        if (fold.open) { try { window.ouiMarkScrollX(fold); } catch (e) { } }
+      });
       return fold;
     }
     case 'Form': {
@@ -1096,7 +1118,9 @@ function makeText(tag, cls, text) {
 function nearestForm(node) {
   let n = node;
   while (n) {
-    if (n.dataset && n.dataset.form) return n;
+    /* 用 'form' in dataset 判定：空名字表单的 dataset.form 是 ""（falsy），
+       直接 if (n.dataset.form) 会跳过它，导致无名表单里自定义按钮提交拿不到值 */
+    if (n.dataset && ('form' in n.dataset)) return n;
     n = n.parentElement;
   }
   return null;
@@ -1153,8 +1177,13 @@ function renderOpenUI(source, opts) {
   } catch (e) {
     return null;
   }
-  if (!res || !res.root) return null;
+  if (!res) return null;
   const errors = (res.meta && res.meta.errors) || [];
+  /* 解析彻底失败时（根组件名写错、必填字段缺失、根节点类型不符），
+     root 建不起来但 meta.errors 有内容；以前这里直接 return null，整张卡
+     凭空消失、连「格式问题」提示都没有。有错误就照常出提示卡，
+     根节点缺失只当「没内容」，不要连错误一起丢掉。 */
+  if (!res.root && !errors.length) return null;
   const box = make('div', 'oui');
   /* 每张卡一个 gid：radio 的原生 name 只在同 name 的 input 之间互斥，
      不带 gid 的话两条消息里同名字段的选项会互相抢选中态。 */
@@ -1171,7 +1200,9 @@ function renderOpenUI(source, opts) {
      把 meta.errors 亮出来，别让用户对着一张空白卡猜。 */
   if (errors.length) {
     const warn = make('div', 'oui-warn');
-    warn.textContent = '卡片有 ' + errors.length + ' 处格式问题，已跳过无法识别的部分';
+    warn.textContent = node
+      ? ('卡片有 ' + errors.length + ' 处格式问题，已跳过无法识别的部分')
+      : ('卡片解析失败（' + errors.length + ' 处格式问题），请让大肥鱼重新生成一次');
     box.append(warn);
     box.setAttribute('data-oui-errors', String(errors.length));
     try { if (window.console && console.warn) console.warn('[OpenUI]', errors); } catch (e) { }

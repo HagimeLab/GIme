@@ -55,6 +55,10 @@ var localApproved = {};
 var HITL_TOOLS = { write_answers: 1, write_explanations: 1, delete_plan: 1 };
 var chatWait = {};
 var chatLastId = "", chatGuard = 0;
+/* 每次 run 递增；chatStop 也递增。run 内的所有 await 断点比对自身 epoch，
+   一旦落后就立刻收手——这样「停止」落在 settle/工具轮间隙也真正停得住，
+   不会出现旧流程继续发起新请求、或与用户新发消息并发跑两个 run。 */
+var chatRunEpoch = 0;
 /* ---- 会话（历史对话）----
    一个会话 = {id, title, at, msgs[]}。当前会话的 id 存在 LS.cv 里，
    旧的单会话数据（LS.c 里只有 messages）在首次加载时自动收编成第一个会话，
@@ -624,7 +628,7 @@ function mdInline(s) {
   t = t.replace(/\[([^\]\n]+)\]\(([^)\s]+)\)/g, function (_, label, url) {
     var safe = mdSafeUrl(url);
     if (!safe) return label + " (" + url + ")";
-    holds.push('<span class="md-link" data-md-href="' + esc(safe) + '">' + label + "</span>");
+    holds.push('<span class="md-link" data-md-href="' + safe + '">' + label + "</span>");
     return "\u0000H" + (holds.length - 1) + "\u0000";
   });
   t = t.replace(/\*\*([^*\n]+)\*\*/g, "<strong>$1</strong>");
@@ -739,7 +743,7 @@ function mdToHtml(src) {
 }
 /* ---- OpenUI 卡片：正文里的 ```openui-lang 围栏画成可点组件 ----
    围栏交给 ui/openui-ui.js（window.renderOpenUI）画，余下的正文照旧走 Markdown；
-   源码永远不进气泡 —— 解析不出来就整条按纯 Markdown 显示，也不留空框。
+   解析不出来就把源码原样回填到槽位里（不静默丢内容），绝不留给用户一块空框。
    缓存按「消息 id + 原文」失效，和 MD_CACHE 一个路子。 */
 var UI_FENCE = /```(?:openui-lang|openui)[^\n]*\n([\s\S]*?)```/i;
 /* N-1：模型偶尔漏掉语言标签，裸 ``` 里其实是 OpenUI DSL。
@@ -1231,10 +1235,41 @@ function ouiEnsureMath() {
   });
   return _ouiMathPromise;
 }
+/* 卡片渲染不出来时，把源码原样回填到槽位，做真正的「Markdown 兜底」，
+   绝不留一块空框（否则 ouiSplit 已把围栏从正文摘走，内容就两头落空）。 */
+function ouiFallbackInto(slot, src) {
+  if (!slot || slot.__ouiFb) return;
+  slot.__ouiFb = true;
+  var pre = document.createElement("pre");
+  pre.className = "oui-fallback";
+  pre.textContent = String(src || "").trim();
+  slot.innerHTML = "";
+  slot.appendChild(pre);
+}
+function chatOuiFallbackAll(root) {
+  if (!root || !root.querySelectorAll) return;
+  var ss = root.querySelectorAll("[data-oui]");
+  for (var i = 0; i < ss.length; i++) {
+    var slot = ss[i];
+    if (slot.firstChild) continue;
+    var key = (slot.getAttribute && slot.getAttribute("data-oui")) || "";
+    var cut = key.lastIndexOf("#");
+    var id = cut < 0 ? key : key.slice(0, cut);
+    var idx = cut < 0 ? 0 : (parseInt(key.slice(cut + 1), 10) || 0);
+    var m = null;
+    for (var j = 0; j < chatMsgs.length; j++) {
+      if (chatMsgs[j] && chatMsgs[j].id === id) { m = chatMsgs[j]; break; }
+    }
+    if (!m) continue;
+    var parts = (ouiSplit(m).srcs) || [];
+    var src = ouiNormalize(parts[idx] || "");
+    if (src) ouiFallbackInto(slot, src);
+  }
+}
 /* 气泡的 innerHTML 落地后再把围栏里的界面挂成真组件：
    renderOpenUI 返回的是 DOM 元素，拼不进字符串，只能后挂。 */
 function chatOuiMount(root) {
-  if (!root || !root.querySelectorAll || !window.renderOpenUI) return;
+  if (!root || !root.querySelectorAll) return;
   if (!window.OpenUI) {
     /* 卡片源码已经在屏幕上了，core 还在路上：拉一次再回来挂（同一份 root 复用）。
        __ouiWaiting 防重入，否则两次渲染会把同一张卡挂两遍。 */
@@ -1242,7 +1277,7 @@ function chatOuiMount(root) {
     root.__ouiWaiting = true;
     ouiEnsureCore().then(function (ok) {
       root.__ouiWaiting = false;
-      if (ok) chatOuiMount(root);
+      if (ok) chatOuiMount(root); else chatOuiFallbackAll(root);
     });
     return;
   }
@@ -1264,6 +1299,7 @@ function chatOuiMount(root) {
     if (!src) continue;
     /* 这张卡正浮在悬浮窗里：节点还活在窗口里，槽位空着（CSS 会收起来），别在这儿重画 */
     if (key === _ouiWinMid) continue;
+    if (!window.renderOpenUI) { ouiFallbackInto(slot, src); continue; }
     if (!m.formValues) m.formValues = {};
     try {
       var card = window.renderOpenUI(src, {
@@ -1279,8 +1315,9 @@ function chatOuiMount(root) {
       /* 卡片是挂载后才撑高的；用户原本在底部时跟着它走，别让最后一张卡被截掉半截 */
       var near = root.scrollHeight - root.scrollTop - root.clientHeight < 160;
       if (card) { slot.appendChild(card); bindOuiOpen(card, key); ouiMarkScrollX(card); }
+      else { ouiFallbackInto(slot, src); }
       if (card && near) root.scrollTop = root.scrollHeight;
-    } catch (e) { /* 画不出来就当没有这张卡：正文那段 Markdown 还在 */ }
+    } catch (e) { ouiFallbackInto(slot, src); }
   }
 }
 /* ---- OpenUI 卡片悬浮窗 ----
@@ -1301,7 +1338,7 @@ function ouiWinSlot(mid) {
    位移小且快」判点，滚动和长按都不算；卡里的交互件（按钮/输入/下拉/折叠行）另算。
    阈值取渲染层的 OUI_TAP_MOVE / OUI_TAP_MS（同一个数写在两处，迟早不同步）：
    整张卡都是这一击的命中区，「卡里点不动、卡外却展开了」这种不一致一定会被看出来。 */
-var OUI_INNER = "button,input,textarea,select,label,summary,a,.oui-tap,.oui-seg-tap,.oui-row-tap";
+var OUI_INNER = "button,input,textarea,select,label,summary,a,.md-link,.oui-empty,.oui-tap,.oui-seg-tap,.oui-row-tap";
 function bindOuiOpen(node, mid) {
   var sx = 0, sy = 0, st = 0, lastTouch = 0;
   function down(x, y) { sx = x; sy = y; st = Date.now(); }
@@ -2732,6 +2769,7 @@ async function chatSendText(text, silent) {
   }
 }
 async function chatRun(cfg, attachMeta, imgMeta, imgIds) {
+  var runEpoch = ++chatRunEpoch;
   var ctx = chatQuestionCtx();
   /* 带附件这一次是「模型识别」：正文要上行、题目要分几批交回来，
      额度比闲聊宽——多给几轮工具调用，也让它一次能写完一批题。 */
@@ -2793,6 +2831,7 @@ async function chatRun(cfg, attachMeta, imgMeta, imgIds) {
     return m;
   }
   for (var round = 0; round < rounds; round++) {
+    if (runEpoch !== chatRunEpoch) throw new Error("已停止");
     /* 最后一轮不再给工具定义：逼模型直接作答，省掉那几百 token 的 schema，
        也避免它没完没了地继续调工具。 */
     var lastRound = round === rounds - 1;
@@ -2845,6 +2884,7 @@ async function chatRun(cfg, attachMeta, imgMeta, imgIds) {
     if (needSettle) {
       var prevText = "", stableTicks = 0;
       for (var settle = 0; settle < 60; settle++) {
+        if (runEpoch !== chatRunEpoch) throw new Error("已停止");
         await new Promise(function (r) { setTimeout(r, 50); });
         var nowText = String(live.text || "");
         if (nowText !== prevText) { prevText = nowText; stableTicks = 0; continue; }
@@ -2852,6 +2892,8 @@ async function chatRun(cfg, attachMeta, imgMeta, imgIds) {
       }
       if (prevText.length > String(msg.content || "").length) msg.content = prevText;
     }
+    /* 用户可能刚好在 settle 这 0~3 秒里点了停止：这里必须收手，别再往下解析/开新请求 */
+    if (runEpoch !== chatRunEpoch) throw new Error("已停止");
     /* 预算按上游 usage 记；没有 usage 就按消息与正文长度粗估，宁可早停不晚停 */
     var usage = (data && data.usage) || {};
     var pt = usage.prompt_tokens || Math.round(JSON.stringify(messages).length / 2);
@@ -2932,6 +2974,7 @@ async function chatRun(cfg, attachMeta, imgMeta, imgIds) {
       messages.push({ role: "assistant", content: msg.content || "", tool_calls: calls });
       var blocked = false;
       for (var i = 0; i < calls.length; i++) {
+        if (runEpoch !== chatRunEpoch) throw new Error("已停止");
         var call = calls[i], fn = call.function || {}, args = {};
         if (fn.arguments && typeof fn.arguments === "object") args = fn.arguments;
         else if (typeof fn.arguments === "string") {
@@ -2964,15 +3007,19 @@ async function chatRun(cfg, attachMeta, imgMeta, imgIds) {
             chatPush({ role: "step", hidden: true, text: "变更预览失败：" + (pvErr || "未知原因") }, true);
             continue;
           }
+          /* 上一张还没处理的变更卡先落定，避免旧按钮继续可点 */
+          if (chatPendingTool) chatHitlSettle(chatPendingTool, "已被新的变更取代");
           chatHitlSeq++;
-          chatPendingTool = { id: "h" + chatHitlSeq, name: fn.name, args: args,
-                              preview: pv, signature: gate.signature };
-          chatPush({ role: "assistant",
+          var pend = { id: "h" + chatHitlSeq, name: fn.name, args: args,
+                       preview: pv, signature: gate.signature };
+          var hm = chatPush({ role: "assistant",
                      text: "这次要改数据，先确认：\n\n```openui-lang\n" +
-                           chatHitlCard(chatPendingTool) + "\n```" }, true);
+                           chatHitlCard(pend) + "\n```" }, true);
+          pend.msgId = hm.id;
+          chatHitlPaused = true;
+          chatPendingTool = pend;
           chatPush({ role: "step", hidden: true,
                      text: "待确认：批准后才会执行，未批准不会落盘" }, true);
-          chatHitlPaused = true;
           chatSave();
           chatRender();
           return;
@@ -3672,6 +3719,24 @@ function chatHitlCard(pend) {
          "ok = Button(\"批准执行\", \"hitl:ok:" + pend.id + "\")\n" +
          "no = Button(\"取消\", \"hitl:no:" + pend.id + "\")";
 }
+/* 变更卡一旦「批准 / 取消 / 被新变更取代」，就不再是活按钮了：把它改写成一张
+   静态说明卡。否则用户还能再点一次，只会弹出「这次变更已过期」的困惑提示（老问题 ⑧）。 */
+function chatHitlCardDone(pend, status) {
+  var text = chatHitlText(pend.name, pend.preview);
+  return "root = Card(\"待确认变更\", [Text(" +
+         JSON.stringify(text + " → " + status) + ")])";
+}
+function chatHitlSettle(pend, status) {
+  if (!pend || !pend.msgId || pend._settled) return;
+  pend._settled = true;
+  for (var i = 0; i < chatMsgs.length; i++) {
+    if (chatMsgs[i] && chatMsgs[i].id === pend.msgId) {
+      chatMsgs[i].text = "这次要改数据，先确认：\n\n```openui-lang\n" +
+        chatHitlCardDone(pend, status) + "\n```";
+      break;
+    }
+  }
+}
 
 function chatHitlAction(arg) {
   var s = String(arg || ""), cut = s.indexOf(":");
@@ -3682,6 +3747,7 @@ function chatHitlAction(arg) {
     agentCall("deny", { signature: p.signature });
     chatPendingTool = null;
     chatHitlPaused = false;
+    chatHitlSettle(p, "已取消，没有落盘");
     chatPush({ role: "note", text: "已取消这次变更，没有落盘。" });
     chatRender();
     toast("已取消");
@@ -3700,6 +3766,7 @@ function chatHitlAction(arg) {
   if (!err && out && typeof out === "object") out.receipt = "r" + Date.now().toString(36);
   chatPendingTool = null;
   chatHitlPaused = false;
+  chatHitlSettle(p, err ? "执行失败，未落盘" : "已执行");
   chatPush({ role: "note", text: err ? "执行失败：" + err :
     (p.name === "delete_plan" ? "已删除方案「" + ((out.deleted && out.deleted.title) || "") + "」" :
       "已执行：共 " + ((out && out.updated) || 0) + " 条" + (p.name === "write_answers" ? "答案" : "解析/参考答案")) +
@@ -3783,6 +3850,7 @@ function chatStop() {
     try { if (window.Android && Android.dsCancel) Android.dsCancel(id); } catch (e) { }
   }
   chatBusy = false;
+  chatRunEpoch++;      /* 让还在 await 里的旧 run 全部作废 */
   chatRender();
   toast("已停止");
   var nx = chatInterrupt;

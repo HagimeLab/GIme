@@ -3384,11 +3384,14 @@ ok("系统提示改成「只用位置参数，空位写空值」（真机证明�
 /* ---- 排错①：矩阵跑出来的三条 ---- */
 ok("折线图不再静默失效：x 标签可点、数值标在标签上并带单位", (() => {
   const box = uiRender('root = Chart("line", ["周一","周二"], [3, 8], [], "wrong:{label}", "题")');
-  const cells = uiCollect(box, (n) => uiCls(n) === "oui-chart-xi");
+  const cells = uiCollect(box, (n) => uiCls(n).indexOf("oui-chart-xi") >= 0);
   const vals = uiCollect(box, (n) => uiCls(n).indexOf("oui-chart-v") >= 0).map((n) => String(n.textContent));
   const segs = uiCollect(box, (n) => uiCls(n).indexOf("oui-seg-tap") >= 0);
+  /* 整个 x 单元格（cell + 数值 + 标签）都是点击热区，2 个单元格 → 6 个 seg */
+  const cellsWithAct = cells.filter((n) => String(n["attr_data-oui-act"] || "").indexOf("wrong:") === 0).length;
     return cells.length === 2 && vals.join("|").indexOf("3题") >= 0 && vals.indexOf("8题") >= 0 &&
-         segs.length === 4 && segs.every((n) => String(n["attr_data-oui-act"] || "").indexOf("wrong:") === 0);
+         cellsWithAct === 2 && segs.length === 6 &&
+         segs.every((n) => String(n["attr_data-oui-act"] || "").indexOf("wrong:") === 0);
 })());
 ok("饼图图例行有可点标识且行高按 44px（以前 21px、无标识）",
    /\.oui-pie-k \{[^}]*min-height: 44px/.test(cssSource) &&
@@ -5487,6 +5490,43 @@ section("[19b] OpenUI bundle 指纹一致性");
     return urls.length > 0 && urls.every((u) => /url\((['"]?)fonts\/[^)]*\1\)/.test(u));
   })());
 }
+
+/* ---------- 排错⑤：本轮真机排错（OpenUI 命中区 + 卡片兜底 + 停止竞态 + HITL 落定）回归 ---------- */
+section("[30b-6] 排错⑤：本轮真机排错修复回归");
+const acSrc = jsSources[5], uiSrc = jsSources[1];
+ok("停止竞态：每个 run 独立 epoch、run 内多处断点校验、停止即作废旧 run",
+   /var runEpoch = \+\+chatRunEpoch;/.test(acSrc) &&
+   /chatRunEpoch\+\+;/.test(acSrc) &&
+   (acSrc.match(/runEpoch !== chatRunEpoch/g) || []).length >= 4);
+ok("OpenUI 渲染失败把源码回填槽位，不再静默空卡",
+   /function ouiFallbackInto/.test(acSrc) &&
+   /else \{ ouiFallbackInto\(slot, src\); \}/.test(acSrc) &&
+   /ouiFallbackInto\(slot, src\); continue;/.test(acSrc) &&
+   /\.oui-fallback\s*\{/.test(cssSource));
+ok("HITL 变更卡处理后被改写成静态卡，按钮不再可点",
+   /function chatHitlCardDone/.test(acSrc) && /function chatHitlSettle/.test(acSrc) &&
+   (acSrc.match(/chatHitlSettle\(/g) || []).length >= 4 &&
+   (() => { const i = acSrc.indexOf("function chatHitlCardDone");
+            const blk = acSrc.slice(i, i + 420);
+            return blk.indexOf("待确认变更") >= 0 && blk.indexOf("Button(") < 0; })());
+ok("markdown 链接(.md-link)与可点 Empty(.oui-empty) 在内层点击守卫里",
+   /TAP_INNER = '[^']*\.md-link[^']*\.oui-empty/.test(uiSrc) &&
+   /OUI_INNER = "[^"]*\.md-link[^"]*\.oui-empty/.test(acSrc));
+ok("markdown 链接 href 不再二次转义（带 & 的地址不变形）",
+   acSrc.indexOf('data-md-href="\' + safe + \'"') >= 0 &&
+   acSrc.indexOf('data-md-href="\' + esc(safe) + \'"') < 0);
+ok("无名表单里自定义按钮提交仍能读到表单（nearestForm 用 'form' in dataset）",
+   uiSrc.indexOf("('form' in n.dataset)") >= 0);
+ok("无 action 的 Tap 有降级分支（解析器要求 action，属防御性兜底）",
+   uiSrc.indexOf("oui-tap-plain") >= 0 && uiSrc.indexOf("if (!act.trim())") >= 0);
+ok("Chart 缺值/非数字不再冒出 undefined/NaN", (() => {
+  const a = uiRender('root = Chart("line", ["一","二","三","四"], [3,6,2], [], "", "%")');
+  const b = uiRender('root = Chart("bar", ["a","b","c"], ["x",5,0], [], "", "题")');
+  if (!a || !b) return false;
+  const ta = uiCollect(a, () => true).map((n) => String(n.textContent)).join("|");
+  const tb = uiCollect(b, () => true).map((n) => String(n.textContent)).join("|");
+  return ta.indexOf("undefined") < 0 && tb.indexOf("NaN") < 0 && tb.indexOf("x") >= 0;
+})());
 
 /* ---------- 结果 ---------- */
 console.log("\n" + "=".repeat(46));

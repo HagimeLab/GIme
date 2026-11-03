@@ -1334,6 +1334,7 @@ html.swap, html.swap * { transition: none !important; }
   align-items: center;
   width: 100%;
   padding: 10px 12px;
+  min-height: 44px;
   border: 1px solid transparent;
   border-radius: 12px;
   background: var(--surface-2);
@@ -1545,7 +1546,7 @@ html.swap, html.swap * { transition: none !important; }
 /* ---- 折叠块 ---- */
 .oui-details { border-bottom: 1px solid var(--stroke); }
 .oui-details > summary { cursor: pointer; list-style: none; display: flex; align-items: center;
-                         min-height: 40px; font-size: .9286em; font-weight: 600; outline: none;
+                         min-height: 44px; font-size: .9286em; font-weight: 600; outline: none;
                          -webkit-tap-highlight-color: transparent; }
 .oui-details > summary::-webkit-details-marker { display: none; }
 .oui-details > summary:before { content: "▸"; margin-right: 7px; color: var(--muted); }
@@ -1672,7 +1673,7 @@ html.swap, html.swap * { transition: none !important; }
                         font-size: .7857em; color: var(--ink-3); }
 .oui-chart b.oui-seg-tap::after { content: "›"; margin-left: 2px; color: var(--ink-3); }
 /* 折线图：数值标在每个 x 标签上方（以前只有一根线，看不出每天是多少），标签与数值都可点 */
-.oui-chart-xi { display: flex; flex-direction: column; align-items: center; min-width: 0; }
+.oui-chart-xi { display: flex; flex-direction: column; align-items: center; justify-content: center; min-width: 0; min-height: 44px; }
 .oui-chart-v { font-size: .7857em; color: var(--ink-2); }
 /* 多子节点的 Tap：整块可点但看不出边界，右端补一个居中的 ›，并给它留出位子 */
 .oui-tap:not(.oui-tap-line) { padding-right: 16px; }
@@ -1874,3 +1875,11 @@ textarea.pl-field { resize: none; line-height: 1.6; }
 .pl-row span { flex: 1; }
 .pl-row button { flex: 0 0 auto; padding: 6px 10px; border-radius: 999px;
                  background: var(--surface); border: 1px solid var(--line); font-size: .75rem; }
+
+/* 卡片渲染失败时的兜底：把源码原样显示出来，别留空框 */
+.oui-fallback { white-space: pre-wrap; word-break: break-word; margin: 2px 0;
+                font-size: .8571em; line-height: 1.5; color: var(--ink-3);
+                background: var(--sink); border: 1px solid var(--line);
+                border-radius: 10px; padding: 10px 12px; overflow-x: auto; }
+/* 无 action 的 Tap 降级成纯文本，不再伪装成按钮 */
+.oui-tap-plain { display: block; }
