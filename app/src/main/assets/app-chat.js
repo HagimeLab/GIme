@@ -3280,14 +3280,14 @@ function ouiSignatureLines() {
   return OUI_SIG_CACHE;
 }
 function chatAgentRules() {
-  return "【回答形态·强约束】只要是在回答用户问题（知识点讲解、错题分析、学习规划、数据统计，甚至简短确认），" +
-         "都**必须**用 ```openui-lang 卡片把答案图文并茂地讲出来，**禁止整段纯文本回答**。" +
-         "固定结构：首行 root = Stack([...])；先给结论（Callout / Metric / Badge），再用 Rich 展开讲解，能上图就上图——" +
+  return "【回答形态·图文优先】回答用户问题时（知识点讲解、错题分析、学习规划、数据统计等），可以用文字讲解，" +
+         "但要**主动**结合 OpenUI 组件做「图文并茂」的讲解：能用图表/表格/步骤/公式/示意图表达的，就主动用组件呈现，别只发一段纯文字。" +
+         "推荐结构：首行 root = Stack([...])；先给结论（Callout / Metric / Badge），再用 Rich 或 Text 展开文字说明，能上图就配图——" +
          "对比用 Table，趋势/占比/分布用 Chart(bar/line/pie/stack)，步骤/流程用 Steps/Flow，并列多段用 Tab，" +
          "提醒用 Callout(warn)，公式用 Math 或 Rich 里的 $…$，简单示意图用 Image(\"svg:<svg…>\")。" +
-         "讲解类卡片**至少配 1 个可视化组件**（Table / Chart / Steps / Flow / Grid / Metric / Progress），不要只堆 Rich 文字；" +
+         "涉及数据对比、流程、公式、结构关系时**至少配 1 个可视化组件**（Table / Chart / Steps / Flow / Grid / Metric / Progress），不要只堆 Rich 文字；纯文字就能讲清的小问题可以不配图。" +
          "Callout / Text 是纯文本、不认 $…$ 公式（会原样显示美元符），公式一律用 Math(...) 或写进 Rich(...)。" +
-         "一张卡讲不完就在 Stack 里放多张 Card（每张带标题），不要退回大段纯文字；极短确认也要包一张卡（如 Callout(\"已记录\",\"…\")）。" +
+         "内容多就在 Stack 里放多张 Card（每张带标题），不要退回一大段纯文字；极短确认可以用一句话，也可以包一张 Callout。" +
          "Agent 执行规则：需要题库数据时先读（建计划只要 id 时用 compact:true）；" +
          "建计划先 create_plan，拿到返回的 plan.id 后再用 update_plan 填日程；" +
          "用户要求提醒或通知时，最后调用 notify_phone。write_answers / write_explanations / " +
@@ -3315,7 +3315,7 @@ function chatAgentRules() {
          "示例：root = Stack([Card(\"标题\", [Text(\"正文\"), Progress(\"完成度\", 50), Button(\"继续\", \"send:继续\")])])。" +
          "图文示范：root = Stack([Callout(\"结论\", \"勾股定理：a² + b² = c²\", \"info\"), Table([\"边\", \"长度\"], [[\"a\", \"3\"], [\"b\", \"4\"], [\"c\", \"5\"]]), Steps([\"先认直角边 a、b\", \"再算斜边 c = √(a² + b²)\"]), Button(\"出 3 道练习\", \"send:出三道勾股定理练习\")])。" +
          "不要用 Card { ... } 块语法，也不要在正文重复卡片内容。" +
-         "再次强调：任何一条回答都必须带 ```openui-lang 卡片，纯文字回复视为不合格。" +
+         "再次强调：可以正常用文字讲解，但该配图/表格/步骤/公式的时候要主动用 ```openui-lang 组件，别全程纯文字。" +
          (webSearchOn() ? "联网搜索已开启：用户问学习资料、最新信息或备考建议时，优先联网检索；" +
            "推荐资料要给出可点击链接、来源和适用场景，不要编造链接。" : "");
 }
