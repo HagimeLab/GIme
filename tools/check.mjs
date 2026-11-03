@@ -3041,23 +3041,23 @@ section("[30b-2] OpenUI 第八轮（渲染类缺口）");
 
 ok("Rich 真走 Markdown（加粗与行内代码画出来，不是原样亮源码）", (() => {
   const box = uiRender('root = Rich("**粗** 和 `x`")');
-  const n = uiCollect(box, (x) => uiCls(x).indexOf("oui-md") >= 0)[0];
+  const n = uiCollect(box, (x) => /(^|\s)md(\s|$)/.test(uiCls(x)))[0];
   return !!n && String(n.innerHTML).indexOf("<strong>粗</strong>") >= 0 &&
          String(n.innerHTML).indexOf("<code>x</code>") >= 0;
 })());
 ok("Text 的 md 参数接通（与 Rich 同一条路）", (() => {
   const box = uiRender('root = Text("题干 **重点**", false, true)');
-  const n = uiCollect(box, (x) => uiCls(x).indexOf("oui-md") >= 0)[0];
+  const n = uiCollect(box, (x) => /(^|\s)md(\s|$)/.test(uiCls(x)))[0];
   return !!n && String(n.innerHTML).indexOf("<strong>重点</strong>") >= 0;
 })());
 ok("没写 md 的 Text 仍是纯文本（老行为不变）", (() => {
   const box = uiRender('root = Text("**不是粗**")');
   const n = uiCollect(box, (x) => uiCls(x).indexOf("oui-text") >= 0)[0];
-  return !!n && n.textContent.indexOf("**不是粗**") >= 0 && uiCls(n).indexOf("oui-md") < 0;
+  return !!n && n.textContent.indexOf("**不是粗**") >= 0 && !/(^|\s)md(\s|$)/.test(uiCls(n));
 })());
 ok("卡片里的 $公式$ 先摘成占位，不被 Markdown 的强调规则吃掉", (() => {
   const box = uiRender('root = Rich("**粗** $x_1$ 与 $a*b$")');
-  const n = uiCollect(box, (x) => uiCls(x).indexOf("oui-md") >= 0)[0];
+  const n = uiCollect(box, (x) => /(^|\s)md(\s|$)/.test(uiCls(x)))[0];
   const h = String(n.innerHTML);
   return h.indexOf("oui-mh") >= 0 && h.indexOf("<em>") < 0 && h.indexOf("<strong>粗</strong>") >= 0;
 })());
@@ -3091,8 +3091,25 @@ ok("KaTeX 与 core 一样按需注入，冷启动不引它", (() => {
 ok("Markdown 样式表已放宽给卡片共用（不再有只认气泡的 .bubble.md）", (() => {
   return !/\.bubble\.md/.test(cssSource) && /\.md p \{[^}]*margin: 0 0 8px/.test(cssSource) &&
          /\.md code \{[^}]*ui-monospace/.test(cssSource) &&
-         /\.oui-text\.oui-md \{[^}]*line-height: 1\.7/.test(cssSource);
+         /\.oui-text\.md \{[^}]*line-height: 1\.7/.test(cssSource);
 })());
+/* 这条是第八轮漏的那一课：只断言「innerHTML 里有 <strong>」看不出样式有没有落地。
+   卡片容器必须带 `md` 这个类名本身，`.md ol` 的 padding-left、`.md code` 的等宽底才命中；
+   上一版给的是 oui-md，规则一条也不落，序号被全局 padding:0 甩到内容盒左边（真机截图为证）。 */
+ok("卡片 Markdown 容器带的是 md 类本身（气泡那套排版规则真的命中）", (() => {
+  const box = uiRender('root = Rich("- 甲\\n- 乙")');
+  const n = uiCollect(box, (x) => /(^|\s)md(\s|$)/.test(uiCls(x)))[0];
+  /* 沙箱里 innerHTML 是字符串、不会解析成节点，所以列表数的是字符串里的 <li> */
+  const li = String((n && n.innerHTML) || "").match(/<li>/g) || [];
+  return !!n && li.length === 2 &&
+         /\.md ul, \.md ol \{[^}]*padding-left: 1\.4em/.test(cssSource) &&
+         !/oui-md/.test(jsSources[1]) && !/\.oui-md/.test(cssSource);
+})());
+
+ok("卡片里的行内代码/代码块/表头不吃纯白 --surface（卡子树把它重定义成白底）",
+   /\.oui-text\.md code \{[^}]*background: var\(--surface-2\)/.test(cssSource) &&
+   /\.oui-text\.md pre \{[^}]*background: var\(--surface-2\)/.test(cssSource) &&
+   /\.oui-text\.md th \{[^}]*background: var\(--surface-2\)/.test(cssSource));
 
 ok("RadioGroup 画出全部选项行 + 一个隐藏域（readForm 的契约不动）", (() => {
   const box = uiRender('root = RadioGroup("题型", "题型", ["单选", "多选", "判断"], "多选")');
@@ -3230,7 +3247,7 @@ ok("签名表已含第八轮全部组件（模型写得出、渲染器画得出�
   const need = ["Rich", "Math", "RadioGroup", "CheckboxGroup", "Empty", "Error", "Tab"];
   const names = (W.OpenUI.signatures || []).map((s) => s.name);
   const clsNeed = ["oui-math", "oui-choices", "oui-choice", "oui-empty", "oui-error", "oui-tabs",
-                   "oui-md", "oui-spin", "oui-btn-i", "oui-th-sort", "oui-sort-c", "oui-tabs-h"];
+                   "oui-spin", "oui-btn-i", "oui-th-sort", "oui-sort-c", "oui-tabs-h"];
   return need.every((n) => names.indexOf(n) >= 0) &&
          W.OpenUI.signatures.length >= 35 &&
          clsNeed.every((c) => cssSource.indexOf("." + c) >= 0);
@@ -3277,9 +3294,12 @@ ok("标识全走灰阶令牌，不引新颜色", (() => {
 ok("按钮触点提到 44px（原实测 37px，低于 App 自己的标准）",
    /\.oui-btn \{[^}]*min-height: 44px/.test(cssSource) &&
    /\.oui-btn \{[^}]*align-items: center/.test(cssSource));
-ok("横排芯片间距 12px，容器负 margin 同步（不然整排会超出卡片）",
-   /\.oui-row > \*\s*\{[^}]*margin: 6px/.test(cssSource) &&
-   /\.oui-row \{[^}]*margin: -6px/.test(cssSource));
+ok("横排芯片间距 12px，且不再用横向负 margin 出血（顶到卡片边框外的那条根因）",
+   /\.oui-row > \*\s*\{[^}]*margin: 0 12px 12px 0/.test(cssSource) &&
+   /\.oui-row \{[^}]*margin: 0 0 -12px/.test(cssSource) &&
+   !/\.oui-row \{[^}]*margin: -\d/.test(cssSource) &&
+   /\.oui-bars \{[^}]*margin: 0[;}]/.test(cssSource) &&
+   !/\.oui-bars \{[^}]*margin: 0 -\d/.test(cssSource));
 ok("Empty 给了 action 才带 .tap 类（没 action 不装可点）", (() => {
   const withAct = uiRender('root = Empty("还没有错题", "挑 10 题", "send:挑 10 题")');
   const without = uiRender('root = Empty("还没有错题")');

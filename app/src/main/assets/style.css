@@ -1086,11 +1086,13 @@ html.swap, html.swap * { transition: none !important; }
 .oui-row {
   display: flex;
   flex-wrap: wrap;
-  margin: -6px;
+  /* 不用负 margin 出血：那会让整排芯片比正文列多出 6px、顶到卡片圆角边上去
+     （真机量的：芯片排右/左各超 5px，父 stack 的 scrollWidth 比 clientWidth 大 6px 且不滚）。
+     现在芯片与正文同列，负 margin 只留在纵向（纵向不出血、也不会被裁）。 */
+  margin: 0 0 -12px;
 }
 .oui-row > * {
-  /* 芯片间距 8px→12px：快捷发送常是两三颗并排，间隔太小就会点到隔壁那颗 */
-  margin: 6px;
+  margin: 0 12px 12px 0;
 }
 
 .oui-card {
@@ -1119,7 +1121,7 @@ html.swap, html.swap * { transition: none !important; }
 .oui-callout-t { display: block; margin-bottom: 3px; font-size: .9286em; }
 .oui-callout-x { font-size: .9286em; line-height: 1.6; color: var(--ink-2); }
 .oui-chart { width: 100%; }
-.oui-bars { display: flex; align-items: flex-end; height: 130px; margin: 0 -4px; padding-top: 8px; }
+.oui-bars { display: flex; align-items: flex-end; height: 130px; margin: 0; padding-top: 8px; }
 .oui-bar { flex: 1; min-width: 0; margin: 0 4px; display: flex; flex-direction: column;
            align-items: center; height: 100%; justify-content: flex-end; }
 .oui-bar b { margin-bottom: 3px; font-size: .7857em; color: var(--ink-2); }
@@ -1561,12 +1563,20 @@ html.swap, html.swap * { transition: none !important; }
 .oui-text, .oui-callout-x, .oui-title { overflow-wrap: anywhere; }
 
 /* ---- 第八轮：Markdown 块 / 公式 / 选项组 / 空态·错误态 / 分段 / 按钮状态 / 容器对齐 ---- */
-/* Rich 与气泡共用上面那套 .md 排版规则（原先挂在气泡类上的前缀已放宽成 .md，
-   抄两份的话气泡改了、卡片永远是旧的），这里只管卡片这边的边界。 */
-.oui-text.oui-md { line-height: 1.7; }
-.oui-md > *:first-child { margin-top: 0; }
-.oui-md > *:last-child { margin-bottom: 0; }
-.oui-md .md-table { max-width: 100%; }
+/* Rich 与气泡共用上面那套 .md 排版规则：渲染层给卡片容器同时挂 `md`。
+   （原先只挂 oui-md，`.md ol`、`.md code` 这些一条都不命中，
+   全局 `* { padding: 0 }` 把列表缩进清零，序号直接甩到内容盒左边。）
+   这里只管卡片这边的边界。 */
+.oui-text.md { line-height: 1.7; }
+.oui-text.md > *:first-child { margin-top: 0; }
+.oui-text.md > *:last-child { margin-bottom: 0; }
+.oui-text.md .md-table { max-width: 100%; }
+/* 借来的规则里底色写的是 var(--surface)，而卡片子树把 --surface 重定义成纯白
+   （:root .oui 那块），于是行内代码/代码块/表头在卡里就是白底白卡，看不见。
+   这三处按卡片自己的浅面 --surface-2 走，暗色下自动变 #26262a。 */
+.oui-text.md code { background: var(--surface-2); }
+.oui-text.md pre { background: var(--surface-2); border-color: var(--stroke-2); }
+.oui-text.md th { background: var(--surface-2); }
 
 /* KaTeX：字号跟正文走；display 档单独成行且允许横滚——长公式在 360dp 上一定超宽。
    官方样式表把 .katex-display 居中并带上下 margin，卡片里靠左、margin 由我们给。 */

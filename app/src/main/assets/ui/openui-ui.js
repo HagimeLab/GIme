@@ -270,13 +270,17 @@ function renderNode(node, ctx) {
     }
     case 'Text': {
       const cls = 'oui-text' + (p.muted ? ' muted' : '');
-      /* md:true 才走 Markdown：默认纯文本是老行为，模型漏写也不会突然把 * 当记号 */
+      /* md:true 才走 Markdown：默认纯文本是老行为，模型漏写也不会突然把 * 当记号。
+         容器必须同时带 App 的 `md` 类本身：气泡那套排版规则全挂在 `.md 子元素` 上
+         （.md ol 的 padding-left、.md code 的等宽底…）。类名带上前缀就不算 `md`，
+         规则一条也不命中，全局 `* { padding: 0 }` 会把列表缩进清零，
+         序号直接甩到内容盒左边（真机截图为证）。 */
       if (!p.md) return makeText('div', cls, p.text);
-      const d = make('div', cls + ' oui-md');
+      const d = make('div', cls + ' md');
       return ouiPaintMd(d, p.text);
     }
     case 'Rich': {
-      const d = make('div', 'oui-text oui-md' + (p.muted ? ' muted' : ''));
+      const d = make('div', 'oui-text md' + (p.muted ? ' muted' : ''));
       return ouiPaintMd(d, p.text);
     }
     case 'Math':
