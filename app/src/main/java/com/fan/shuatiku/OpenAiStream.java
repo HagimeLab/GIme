@@ -194,8 +194,18 @@ final class OpenAiStream {
                 if (id != null && !id.isEmpty() && call.optString("id").isEmpty()) call.put("id", id);
                 JSONObject fn = call.optJSONObject("function");
                 if (fn == null) fn = new JSONObject();
-                fn.put("name", fn.optString("name") + (name == null ? "" : name));
-                fn.put("arguments", fn.optString("arguments") + (argsChunk == null ? "" : argsChunk));
+                /* 函数名只在首帧给一次，后面重复给的同一名字不能再拼上去，否则 name 变重复串 */
+                if (fn.optString("name").isEmpty() && name != null && !name.isEmpty()) fn.put("name", name);
+                String prev = fn.optString("arguments");
+                String delta = argsChunk == null ? "" : argsChunk;
+                String merged;
+                /* 有的上游每帧把「到目前为止的全部 arguments」整段重发而不是增量：
+                   此时 delta 以已累计内容开头（或完全相等），直接以它为准，不能叠加，
+                   否则一次调用的参数会被拼成两份 JSON，页面解析工具调用直接失败。 */
+                if (prev.isEmpty()) merged = delta;
+                else if (delta.equals(prev) || delta.startsWith(prev)) merged = delta;
+                else merged = prev + delta;
+                fn.put("arguments", merged);
                 by.put(index, call.put("function", fn));
             } catch (Exception ignored) {
                 // 拼不动就少一条调用，不能让整条回复丢掉

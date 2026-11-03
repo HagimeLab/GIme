@@ -301,6 +301,9 @@ function renderNode(node, ctx) {
       d.append(makeText('div', 'oui-empty-t', p.text));
       if (p.hint) d.append(makeText('div', 'oui-empty-h', p.hint));
       const eAct = textOf(p.action).trim();
+      /* 无障碍：可点的空态是个按钮，不可点的是一条状态提示——以前一律 div，读屏只念内容 */
+      d.setAttribute('role', eAct ? 'button' : 'status');
+      if (eAct) d.setAttribute('tabindex', '0');
       if (eAct) {
         d.className += ' tap';
         d.setAttribute('data-oui-act', eAct);
@@ -338,7 +341,9 @@ function renderNode(node, ctx) {
       if (!labels.length) return make('div', 'oui-tabs');
       const box = make('div', 'oui-tabs');
       const head = make('div', 'oui-tabs-h');
+      head.setAttribute('role', 'tablist');
       const body = make('div', 'oui-tabs-b');
+      body.setAttribute('role', 'tabpanel');
       let cur = 0;
       const paint = () => {
         head.textContent = '';
@@ -346,6 +351,8 @@ function renderNode(node, ctx) {
         labels.forEach((l, i) => {
           const t = make('button', 'oui-tab-t' + (i === cur ? ' on' : ''));
           t.type = 'button';
+          t.setAttribute('role', 'tab');
+          t.setAttribute('aria-selected', i === cur ? 'true' : 'false');
           t.textContent = l;
           bindTap(t, (e) => {
             e.stopPropagation();
@@ -898,10 +905,17 @@ function renderNode(node, ctx) {
         const thead = document.createElement('thead');
         const tr = document.createElement('tr');
         cols.forEach((c, ci) => {
-          if (!p.sortable) { tr.append(makeText('th', num[ci] ? 'num' : null, c)); return; }
+          if (!p.sortable) {
+            const th0 = makeText('th', num[ci] ? 'num' : null, c);
+            th0.setAttribute('scope', 'col');
+            tr.append(th0);
+            return;
+          }
           const th = make('th', (num[ci] ? 'num ' : '') + 'oui-th-sort');
           th.append(document.createTextNode(c), make('i', 'oui-sort-c'));
           th.setAttribute('data-oui-col', String(ci));
+          th.setAttribute('scope', 'col');
+          th.setAttribute('aria-sort', 'none');
           bindTap(th, (e) => { e.stopPropagation(); sortBy(ci); });
           tr.append(th);
         });

@@ -5,8 +5,22 @@ var BANK = window.BANK || { subjects: [], questions: [] };
 var LS = { p: "stk.progress.v2", s: "stk.settings.v2", j: "stk.session.v2", u: "stk.update.v1", c: "stk.chat.v1", r: "stk.resume.v1" };
 var store = {
   read: function (k, d) { try { var v = localStorage.getItem(k); return v ? JSON.parse(v) : d; } catch (e) { return d; } },
-  write: function (k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) {} }
+  /* 返回 true/false：以前吞掉异常，配额写满时用户以为存了、其实没存，重启就回滚到旧存档。
+     现在把成败交回调用方，由上层决定瘦身重试或提示用户。 */
+  write: function (k, v) {
+    try { localStorage.setItem(k, JSON.stringify(v)); return true; }
+    catch (e) { return false; }
+  }
 };
+/* 存储写满只提示一次，别让每帧流式都弹一遍。成功写入后由 chatConvSave 复位。 */
+var storeWarned = false;
+function storeWarnFull() {
+  if (storeWarned) return;
+  storeWarned = true;
+  try {
+    if (typeof toast === "function") toast("本地存储已满，最近的对话可能没保存上；请到「我的 · 清理」释放空间后重试");
+  } catch (e) { }
+}
 var prog = store.read(LS.p, {});
 /* 主记录空、备份有货：说明上一次写盘把记录写没了，用备份救回来。
    合法的清空（清空做题记录 / 删掉最后一个题库）会连备份一起删，所以不会复活。 */

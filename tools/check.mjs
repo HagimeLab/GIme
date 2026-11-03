@@ -1486,8 +1486,9 @@ ok("答完后思考链收起", W.chatLiveHtml(liveMsg).indexOf(" open") < 0);
 ok("流式只留一条助手气泡",
    W.chatMsgs.filter((m) => m.role === "assistant").length === 1, W.chatMsgs.length);
 ok("流式消息已落盘", (() => {
-  const raw = sandbox.localStorage.getItem("stk.chat.v1");
-  return raw && JSON.parse(raw).messages.some((m) => m.text === "选 A：甲就是正确答案。");
+  /* 现在唯一的权威存档是 LS_CV（stk.convs.v1），不再双写 stk.chat.v1 */
+  const cv = W.store.read("stk.convs.v1", null);
+  return !!(cv && cv.list && cv.list.some((c) => (c.msgs || []).some((m) => m.text === "选 A：甲就是正确答案。")));
 })());
 
 /* 工具调用轮次：临时流式气泡要收掉，别把工具 JSON 留给用户看 */
@@ -5527,6 +5528,32 @@ ok("Chart 缺值/非数字不再冒出 undefined/NaN", (() => {
   const tb = uiCollect(b, () => true).map((n) => String(n.textContent)).join("|");
   return ta.indexOf("undefined") < 0 && tb.indexOf("NaN") < 0 && tb.indexOf("x") >= 0;
 })());
+
+/* ---------- 排错轮三：持久化配额 / 字面围栏 / 多卡表单 / 单条超长工具结果 / 无障碍 ---------- */
+section("[30b-7] 排错轮三：存储配额 / 字面围栏 / 多卡表单 / 超长结果 / 无障碍");
+const coreSrc = jsSources[2];
+ok("store.write 交回成败（不再吞配额异常）",
+   /write: function \(k, v\) \{[\s\S]{0,160}?return true;/.test(coreSrc) &&
+   /catch \(e\) \{ return false; \}/.test(coreSrc) && /function storeWarnFull/.test(coreSrc));
+ok("会话存盘按 60→30→12 逐级瘦身重试，成功后清掉旧 LS.c",
+   /var tiers = \[60, 30, 12\];/.test(acSrc) &&
+   /localStorage\.removeItem\(LS\.c\)/.test(acSrc) &&
+   !/store\.write\(LS\.c,/.test(acSrc));
+ok("卡片源码里字面出现的 ``` 不再提前截断围栏", (() => {
+  const f = W.ouiSplit({ id: "ui_fence_literal",
+    text: '```openui-lang\nroot = Code("```js")\n```\n后面还有正文' });
+  return f.srcs.length === 1 && f.srcs[0].indexOf('Code("```js")') >= 0 && f.text === "后面还有正文";
+})());
+ok("多卡表单值按「卡号+字段」分层，不再按字段名互相串值",
+   /m\.formValues\.__cards/.test(acSrc) && /values: cardVals/.test(acSrc));
+ok("单题就超上限的工具结果截短字段后仍是合法 JSON 且不超预算", (() => {
+  const s = W.shrinkToolResult({ questions: [{ id: "q1", stem: "字".repeat(6000), options: ["a".repeat(3000)] }], total: 1 });
+  let p = null; try { p = JSON.parse(s); } catch (e) { return false; }
+  return p && s.length < 3200 && (p.truncated === true || (p.questions && p.questions.length === 1));
+})());
+ok("无障碍：Tab 是 tablist/tab、表头 scope=col、空态区分 status/button",
+   uiSrc.indexOf("'role', 'tablist'") >= 0 && uiSrc.indexOf("'aria-selected'") >= 0 &&
+   uiSrc.indexOf("'scope', 'col'") >= 0 && uiSrc.indexOf("eAct ? 'button' : 'status'") >= 0);
 
 /* ---------- 结果 ---------- */
 console.log("\n" + "=".repeat(46));

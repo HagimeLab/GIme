@@ -66,11 +66,25 @@ var chatRunEpoch = 0;
 var chatConvs = [], chatCurId = "";
 var LS_CV = "stk.convs.v1";
 function chatConvSave() {
-  var keep = chatConvs.slice(0, 60);   /* 最多留 60 个会话，再多就砍最旧的 */
-  chatConvs = keep;
-  store.write(LS_CV, { cur: chatCurId, list: keep.map(function (c) {
-    return { id: c.id, title: c.title, at: c.at, mode: c.mode || "", msgs: c.msgs.slice(-200) };
-  }) });
+  /* 写满配额不是静默失败的借口：先按 60→30→12 逐级砍最旧的会话重试，
+     还写不进才算真失败，交给 storeWarnFull 提示用户。以前的写法吞异常，
+     用户看不到任何反馈，重启就回滚到上一次成功的存档（最近对话全丢）。 */
+  var tiers = [60, 30, 12];
+  for (var t = 0; t < tiers.length; t++) {
+    var keep = chatConvs.slice(0, tiers[t]);   /* 最多留 N 个会话，再多就砍最旧的 */
+    var ok = store.write(LS_CV, { cur: chatCurId, list: keep.map(function (c) {
+      return { id: c.id, title: c.title, at: c.at, mode: c.mode || "", msgs: c.msgs.slice(-200) };
+    }) });
+    if (ok) {
+      chatConvs = keep;
+      /* 旧版单会话存档（LS.c）已全部并入 LS_CV，留着只是白占一半配额：成功后删掉 */
+      try { localStorage.removeItem(LS.c); } catch (e) { }
+      if (storeWarned) storeWarned = false;
+      return true;
+    }
+  }
+  storeWarnFull();
+  return false;
 }
 function chatCurConv() {
   for (var i = 0; i < chatConvs.length; i++) {
@@ -281,7 +295,9 @@ function chatSettleRestored(list) {
   chatPruneEmpty(chatCurId);
 })();
 function chatSave() {
-  store.write(LS.c, { messages: chatMsgs.slice(-200) });
+  /* 只写一份权威存档 LS_CV（chatSyncConv 把当前消息同步进会话再由 chatConvSave 落盘）。
+     以前额外再写一份 LS.c，等于把同样的聊天记录存两遍，白白吃掉一半 localStorage 配额；
+     LS.c 现在只在「老版本升级上来、LS_CV 还不存在」时被启动逻辑读一次。 */
   chatSyncConv();
   chatConvSave();
   if (typeof memoryRoll === "function") memoryRoll();
@@ -745,11 +761,14 @@ function mdToHtml(src) {
    围栏交给 ui/openui-ui.js（window.renderOpenUI）画，余下的正文照旧走 Markdown；
    解析不出来就把源码原样回填到槽位里（不静默丢内容），绝不留给用户一块空框。
    缓存按「消息 id + 原文」失效，和 MD_CACHE 一个路子。 */
-var UI_FENCE = /```(?:openui-lang|openui)[^\n]*\n([\s\S]*?)```/i;
+/* 闭合围栏必须是「独立的 ```」——后面只跟空白/换行或到结尾，才算结束。
+   以前的 `([\s\S]*?)``` 会撞上卡片正文里字面出现的 ``` （比如 Code("```js")），
+   把卡片源码在中间截断，剩下的半截当正文漏出来。 */
+var UI_FENCE = /```(?:openui-lang|openui)[^\n]*\n([\s\S]*?)```(?=\s*(?:\r?\n|$))/i;
 /* N-1：模型偶尔漏掉语言标签，裸 ``` 里其实是 OpenUI DSL。
    只有「首行 root =」+「确实调用了已知组件」两条都成立才认，宁可不画也不乱画；
    普通代码块（root = foo() 但没有组件调用）仍按代码块显示。 */
-var UI_BARE_FENCE = /```[ \t]*\r?\n([\s\S]*?)```/g;
+var UI_BARE_FENCE = /```[ \t]*\r?\n([\s\S]*?)```(?=\s*(?:\r?\n|$))/g;
 /* 组件名从 bundle 的 signatures 现取，别再手写清单：
    15→19 那次加 List/Steps/Callout/Chart 时就漏了这四行，模型漏语言标签的卡片
    只要用到这四件就整段裸奔成代码块。取不到 signatures 才退回内置名单。 */
@@ -1300,10 +1319,16 @@ function chatOuiMount(root) {
     /* 这张卡正浮在悬浮窗里：节点还活在窗口里，槽位空着（CSS 会收起来），别在这儿重画 */
     if (key === _ouiWinMid) continue;
     if (!window.renderOpenUI) { ouiFallbackInto(slot, src); continue; }
+    /* 卡片里的表单值按「消息 → 第几张卡 → 字段」分层存。
+       以前整条消息共用一个对象、只按字段名区分：同一条回答里两张卡都有 name="amount"
+       时后一张会覆盖前一张的输入，重画后串值。 */
     if (!m.formValues) m.formValues = {};
+    if (!m.formValues.__cards) m.formValues.__cards = {};
+    var cardVals = m.formValues.__cards[idx];
+    if (!cardVals) cardVals = m.formValues.__cards[idx] = {};
     try {
       var card = window.renderOpenUI(src, {
-        values: m.formValues,
+        values: cardVals,
         onChange: chatOuiTouched,
         onAction: function (action, node, form) { chatOuiAction(m, action, node, form); },
         /* 不接这个回调的话，Select 会退化成「点一下换下一个」——
@@ -3293,7 +3318,7 @@ var TOOL_RESULT_MAX = 3000;
 function shrinkToolResult(out) {
   var payload = JSON.stringify(out);
   if (payload.length <= TOOL_RESULT_MAX) return payload;
-  if (out && Array.isArray(out.questions) && out.questions.length > 1) {
+  if (out && Array.isArray(out.questions) && out.questions.length >= 1) {
     var all = out.questions, keep = all.length;
     while (keep > 1) {
       out.questions = all.slice(0, keep - 1);
@@ -3306,7 +3331,56 @@ function shrinkToolResult(out) {
     out.truncated = trunc;
     out.note = "只给回前 " + trunc.given + " 题（共 " + trunc.total + " 题）" +
       (trunc.next_offset != null ? "，接着要就用 offset=" + trunc.next_offset : "") + "。";
-    return JSON.stringify(out);
+    var _s = JSON.stringify(out);
+    if (_s.length > TOOL_RESULT_MAX) {
+      /* 单题就超上限：光靠少给几题救不回来（会把超长 JSON 原样甩给模型）。
+         按剩余字段数均摊一个字符预算，逐级截短长字符串，保证交回去的一定是合法 JSON 且不超预算。 */
+      var cntStr = function (qs) {
+        var n = 0;
+        for (var qi2 = 0; qi2 < qs.length; qi2++) {
+          var q2 = qs[qi2]; if (!q2 || typeof q2 !== 'object') continue;
+          for (var k2 in q2) {
+            if (!Object.prototype.hasOwnProperty.call(q2, k2)) continue;
+            var v2 = q2[k2];
+            if (typeof v2 === 'string') n++;
+            else if (Array.isArray(v2)) { for (var a2 = 0; a2 < v2.length; a2++) if (typeof v2[a2] === 'string') n++; }
+          }
+        }
+        return Math.max(1, n);
+      };
+      var clampQ = function (qs, cap) {
+        for (var ci2 = 0; ci2 < qs.length; ci2++) {
+          var cq = qs[ci2]; if (!cq || typeof cq !== 'object') continue;
+          for (var ck in cq) {
+            if (!Object.prototype.hasOwnProperty.call(cq, ck)) continue;
+            var cv = cq[ck];
+            if (typeof cv === 'string' && cv.length > cap) cq[ck] = cv.slice(0, cap) + '…';
+            else if (Array.isArray(cv)) {
+              for (var ai2 = 0; ai2 < cv.length; ai2++)
+                if (typeof cv[ai2] === 'string' && cv[ai2].length > cap) cv[ai2] = cv[ai2].slice(0, cap) + '…';
+            }
+          }
+        }
+      };
+      var cap = Math.max(80, Math.floor((TOOL_RESULT_MAX - 400) / cntStr(out.questions)));
+      clampQ(out.questions, cap);
+      out.note += "（题干过长已截断）";
+      _s = JSON.stringify(out);
+      while (_s.length > TOOL_RESULT_MAX && cap > 40) {
+        cap = Math.floor(cap * 0.6);
+        clampQ(out.questions, cap);
+        _s = JSON.stringify(out);
+      }
+      if (_s.length > TOOL_RESULT_MAX) {
+        /* 极端的超多字段：只留第一题的最短骨架，仍是合法 JSON */
+        var one = out.questions[0] || {};
+        var slim = { id: one.id != null ? one.id : '',
+                     stem: String(one.stem || one.title || one.text || "").slice(0, 600) };
+        return JSON.stringify({ truncated: true, given: 1, total: out.total,
+          note: "结果过大已压缩", questions: [slim] });
+      }
+    }
+    return _s;
   }
   var head = payload.slice(0, TOOL_RESULT_MAX - 800);
   return head + "…(中间省略 " + (payload.length - head.length - 800) +

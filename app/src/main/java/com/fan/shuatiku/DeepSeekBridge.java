@@ -579,6 +579,7 @@ public final class DeepSeekBridge {
            一旦已经有字流到页面上了，重试就会让用户看到重复的正文，
            所以那种情况宁可报错也不重试。 */
         int attempt = 0;
+        try {
         while (true) {
             try {
                 content.setLength(0);
@@ -653,9 +654,13 @@ public final class DeepSeekBridge {
                 }
             }
         }
-        thinkOut.finish();
-        textOut.finish();
-        cancelOf.remove(id);
+        } finally {
+            /* 停止/异常路径也要把缓冲尾巴推给页面：以前只在成功 break 之后才 flush，
+               Streamer 要攒够 24 字或 40ms 才发，被中断时最多 23 个字连同异常一起丢掉。 */
+            thinkOut.finish();
+            textOut.finish();
+            cancelOf.remove(id);
+        }
         if (BuildConfig.DEBUG) {
             // 只报长度与是否挂上，不输出令牌值；用 logcat -s GImeDS 看
             android.util.Log.d("GImeDS", "hif " + web.hifState());
@@ -781,7 +786,11 @@ public final class DeepSeekBridge {
                 case '\r': b.append("\\r"); break;
                 case '\t': b.append("\\t"); break;
                 default:
-                    if (c < 0x20) b.append(String.format(java.util.Locale.US, "\\u%04x", (int) c));
+                    /* U+2028/U+2029 是合法 JSON 字符，但内嵌进 JS 源码会让脚本解析中断：
+                        一起转义掉，否则含这两个字符的正文能把整个 onChatStream 调用搞挂。 */
+                    if (c == '\u2028') b.append("\\u2028");
+                    else if (c == '\u2029') b.append("\\u2029");
+                    else if (c < 0x20) b.append(String.format(java.util.Locale.US, "\\u%04x", (int) c));
                     else b.append(c);
             }
         }
