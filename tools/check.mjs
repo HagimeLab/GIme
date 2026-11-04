@@ -5608,6 +5608,33 @@ ok("卡片自带 data-oui-key 身份，展开/收回都按它找槽；槽里多�
    html.indexOf('var key = (card && card.getAttribute && card.getAttribute("data-oui-key")) || _ouiWinMid;') >= 0 &&
    html.indexOf('var rest = body.querySelectorAll(".oui");') >= 0);
 
+section("[30b-11] 退出后台再点开：回到上次那一页，不再一律回首页");
+ok("落盘「上次停在哪一页」（tab / 大肥鱼 / 方案页）并在切换时更新",
+   html.indexOf('var LS_VIEW = "stk.view.v1";') >= 0 &&
+   html.indexOf('function saveView()') >= 0 &&
+   /swapPage\(from, to, which\);\s*\r?\n\s*saveView\(\);/.test(html) &&
+   /syncLayerScrim\(\);\s*\r?\n\s*if \(typeof saveView === "function"\) saveView\(\);/.test(html));
+ok("启动时先还原页面；本来在首页才播启动页（还原时把 #splash 摘掉，不闪首页）",
+   html.indexOf('function restoreView()') >= 0 &&
+   html.indexOf('if (tab === "home" && !chatOn && !planMode) return false;') >= 0 &&
+   html.indexOf("viewRestored = restoreView();") >= 0 &&
+   /if \(viewRestored\) \{\s*\r?\n\s*var spBoot = document\.getElementById\("splash"\);/.test(html) &&
+   html.indexOf("if (chatOn && typeof openChatTab === \"function\") openChatTab();") >= 0);
+ok("考试进行中不抢页面（先恢复考试，再决定要不要还原别的页）",
+   /document\.getElementById\("quiz"\)\.classList\.add\("on"\);[\s\S]{0,400}viewRestored = restoreView\(\);/.test(html));
+
+section("[30b-12] 首页搜索入口与搜索框已删除");
+ok("首页不再有搜索按钮（既不渲染，也不再往启动动画里排）",
+   html.indexOf('class="search"') < 0 &&
+   html.indexOf("openFS('search')") < 0 &&
+   html.indexOf('pageKids(home, "search")') < 0);
+ok("全屏搜索页与 doSearch 一并移除，只剩统计/格式举例",
+   html.indexOf("function doSearch") < 0 &&
+   html.indexOf("srchBox") < 0 &&
+   html.indexOf("搜索题目") < 0 &&
+   html.indexOf('.search {') < 0 &&
+   html.indexOf('.srch {') < 0);
+
 /* ---------- 结果 ---------- */
 console.log("\n" + "=".repeat(46));
 if (fails.length) {

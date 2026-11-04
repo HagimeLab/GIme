@@ -471,6 +471,7 @@ function openLayer(el) {
   /* 面板重绘会再次调用本函数，同一元素只算一层，否则返回键弹不完、遮罩会留在屏上挡住点击 */
   if (openLayers.indexOf(el) < 0) openLayers.push(el);
   syncLayerScrim();
+  if (typeof saveView === "function") saveView();   /* 对话/方案页开着的状态要能跨进程重启 */
 }
 function closeLayer(el) {
   el.classList.remove("on");
@@ -485,6 +486,7 @@ function closeLayer(el) {
   if (el.id === "bigIn" && typeof chatBigClosed === "function") chatBigClosed();
   if (el.id === "chat" && typeof chatBigClose === "function") chatBigClose();
   syncLayerScrim();
+  if (typeof saveView === "function") saveView();   /* 关掉后别再向用户“恢复”一个已经关了的页 */
 }
 function closeTop() {
   if (openLayers.length) { closeLayer(openLayers[openLayers.length - 1]); return true; }
@@ -675,16 +677,17 @@ function openFS(which) {
   } else if (which === "sample") {
     body = sampleBody();
   } else {
-    body = '<input class="srch" id="srchBox" placeholder="输入题干或解析关键词" oninput="doSearch(this.value)">' +
-           '<div id="srchRes" style="margin-top:8px"></div>';
+    /* 首页的搜索入口已按用户要求删除，这里只剩「统计 / 格式举例」两条路；
+       传了别的值就按举例兜底，别再留一个没人能打开的搜索页。 */
+    which = "sample";
+    body = sampleBody();
   }
   fs.innerHTML = '<div class="fs-head"><button onclick="closeFS()"><svg class="ico" viewBox="0 0 24 24"><path d="M14.5 5.5L8 12l6.5 6.5"/></svg></button>' +
-    "<h2>" + (which === "stat" ? "学习统计" : which === "sample" ? "导入格式举例" : "搜索题目") + "</h2><i></i></div>" +
+    "<h2>" + (which === "stat" ? "学习统计" : "导入格式举例") + "</h2><i></i></div>" +
     '<div class="fs-body">' + body + "</div>";
   fs.classList.add("on");
   if (openLayers.indexOf(fs) < 0) openLayers.push(fs);
   if (typeof syncLayerScrim === "function") syncLayerScrim();
-  if (which === "search") setTimeout(function () { var b = document.getElementById("srchBox"); if (b) b.focus(); }, 320);
 }
 function closeFS() {
   var fs = document.getElementById("fs");
@@ -692,20 +695,6 @@ function closeFS() {
   var i = openLayers.indexOf(fs);
   if (i >= 0) openLayers.splice(i, 1);
   if (typeof syncLayerScrim === "function") syncLayerScrim();
-}
-function doSearch(v) {
-  v = (v || "").trim();
-  var box = document.getElementById("srchRes");
-  if (!box) return;
-  if (!v) { box.innerHTML = ""; return; }
-  var hits = BANK.questions.filter(function (x) {
-    return x.stem.indexOf(v) >= 0 || (x.explain && x.explain.indexOf(v) >= 0);
-  }).slice(0, 60);
-  box.innerHTML = '<div class="cap">' + hits.length + " 条结果</div>" + hits.map(function (x) {
-    return '<button class="res" onclick="openQuestion(&quot;' + x.id + '&quot;)"><b>' + esc(x.stem) + "</b>" +
-           "<small>" + esc(subjName(x.subject)) + " · " + typeName(x.type) + " · " +
-           (isSubjective(x.type) ? "参考答案" : "答案") + " " + esc(answerText(x)) + "</small></button>";
-  }).join("");
 }
 function openQuestion(id) {
   closeFS();

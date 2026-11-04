@@ -1296,7 +1296,6 @@ function bootGroups(home) {
   var hero = pageKidById(home, "planHero");
   return [
     { els: pageKids(home, "hello"), step: 0 },
-    { els: pageKids(home, "search"), step: 0 },
     { els: hero ? [hero] : [], step: 0 },
     { els: pageKids(home, "cats-head").concat(cats), step: 20 },
     { els: sectionOf(home, "tasks"), step: 0 },
@@ -1397,6 +1396,45 @@ function bootSplash() {
   }   /* run() —— 上面整段编排都在 try 的保护里 */
 }
 
+/* ================= 退出后台再回来：回到上次那一页 =================
+   这台 ROM 省电策略很凶，退到后台一会儿进程就被杀，用户再点开是**冷启动**，
+   index.html 重新加载、JS 状态全丢——以前一律从首页开始，正在看的东西全没了。
+   这里把「页面级」状态落盘：底部 tab、方案页、大肥鱼对话。弹窗/选择面板这种
+   临时层不还原（回来时它们基本已经没有意义，还容易挡住入口）。 */
+var LS_VIEW = "stk.view.v1";
+function saveView() {
+  try {
+    var ch = document.getElementById("chat");
+    var pv = (typeof planView === "object" && planView) ? planView : null;
+    var mode = pv ? (pv.mode || "") : "";
+    store.write(LS_VIEW, {
+      tab: curTab || "home",
+      chat: ch && ch.classList.contains("on") ? 1 : 0,
+      plan: mode,
+      planId: mode === "detail" ? (pv.id || "") : ""
+    });
+  } catch (e) { }
+}
+/* 返回 true 表示已经恢复到别的页面：调用方不要再播首页启动页。 */
+function restoreView() {
+  /* 考试还在进行：由启动流程末尾的会话恢复接管，别在这里抢页面 */
+  var qz = document.getElementById("quiz");
+  if (qz && qz.classList.contains("on")) return false;
+  var v = store.read(LS_VIEW, null);
+  if (!v) return false;
+  var tab = v.tab || "home";
+  var chatOn = !!v.chat;
+  var planMode = v.plan || "";
+  if (tab === "home" && !chatOn && !planMode) return false;   /* 本来就在首页：正常播启动页 */
+  try {
+    if (tab !== "home" && document.getElementById("tab-" + tab)) goTab(tab);
+    if (planMode === "detail" && v.planId) openPlan(v.planId);
+    else if (planMode === "list") openPlans();
+    if (chatOn && typeof openChatTab === "function") openChatTab();
+  } catch (e) { return false; }
+  return true;
+}
+
 function goTab(which) {
   var from = document.querySelector(".page.on");
   var to = document.getElementById("tab-" + which);
@@ -1411,6 +1449,7 @@ function goTab(which) {
   }
   moveTabPill(true);          /* 胶囊当场就走，切页的 200ms 淡出期间它就是反馈 */
   swapPage(from, to, which);
+  saveView();                 /* 记下这一页，进程被杀后再点开能回到这里 */
 }
 
 function swapPage(from, to, which) {

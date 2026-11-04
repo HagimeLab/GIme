@@ -4089,7 +4089,6 @@ renderAll();
    所以 resize 之后要重新量一次，否则胶囊和文字会错开一截。 */
 moveTabPill(false);
 window.addEventListener("resize", function () { moveTabPill(false); });
-bootSplash();      /* 启动页要在首屏都画好之后再编排，此时 #splash 已经盖在最上层 */
 /* 上次是交卷/放弃到一半被杀掉的会话不该再被恢复出来：状态停在 submitting 说明
    结算没走完，按 running 续上比丢掉整场作答更合理。
    抽成函数是为了回归测试能直接调真实现，而不是复制一份规则。 */
@@ -4106,6 +4105,18 @@ if (S === null) localStorage.removeItem(LS.j);
 if (S && S.order && S.order.length && S.order[S.idx] && byId[S.order[S.idx]]) {
   render();
   document.getElementById("quiz").classList.add("on");
+}
+/* 上次停在哪一页（底部 tab / 方案页 / 大肥鱼）就回到哪一页：ROM 会在后台把进程杀掉，
+   再点开是冷启动，不还原就永远从首页开始。本来就在首页才播启动页揭幕；
+   要恢复别的页面就把 #splash 摘掉——否则揭幕动画会先闪一下首页再跳走。
+   放在考试恢复之后：考试中（quiz 已 on）不抢页面。 */
+var viewRestored = false;
+try { viewRestored = restoreView(); } catch (e) { viewRestored = false; }
+if (viewRestored) {
+  var spBoot = document.getElementById("splash");
+  if (spBoot && spBoot.parentNode) spBoot.parentNode.removeChild(spBoot);
+} else {
+  bootSplash();    /* 启动页要在首屏都画好之后再编排，此时 #splash 已经盖在最上层 */
 }
 /* 冷启动带 #/plan/<id> 或 #/plans 时直接落到方案页（方案数据此时已可读） */
 try { if (typeof planDeepLink === "function") planDeepLink(); } catch (e) { }

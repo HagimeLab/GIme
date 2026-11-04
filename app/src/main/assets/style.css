@@ -125,10 +125,6 @@ svg { display: block; }
             flex: 0 0 auto; }
 .icon-btn:active { background: var(--raise); }
 
-.search { display: flex; align-items: center; width: 100%; border-radius: 999px;
-          background: var(--surface); border: 1px solid var(--line); padding: 13px 18px; color: var(--ink-2); }
-.search b { flex: 1; margin-left: 9px; font-weight: 400; font-size: .9375rem; text-align: left; }
-
 /* 六个题型卡片：窄屏 3×2，宽一点排成一行。
    点卡片直接进对应题型的练习，卡片本身不再展开说明 */
 .cats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
@@ -757,9 +753,6 @@ button.rec:active { opacity: .62; }
 .fs-head i { flex: 0 0 46px; }
 /* 底部要加上系统导航栏高度：方案页/搜索页滚到底时最后一张卡不能压在导航条下面 */
 .fs-body { padding: 6px 22px calc(var(--sb) + 40px); }
-.srch { width: 100%; padding: 15px 20px; font-size: .9375rem; border-radius: 999px; border: none; outline: none;
-        background: var(--surface); color: var(--ink); box-shadow: var(--sink);
-        -webkit-user-select: text; user-select: text; }
 .res { display: block; width: 100%; text-align: left; padding: 16px 2px; border-bottom: 1px solid var(--line); }
 .res b { font-size: .9375rem; font-weight: 600; display: block; line-height: 1.6; }
 .res small { font-size: .6875rem; color: var(--ink-2); }
