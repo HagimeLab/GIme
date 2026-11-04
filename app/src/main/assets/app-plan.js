@@ -211,6 +211,8 @@ function planShow(html, mode, id) {
   if (typeof syncLayerScrim === "function") syncLayerScrim();
   planView = { mode: mode, id: id || "" };
   planHash(mode, id);
+  /* 方案页也是「页面级」状态：进出都要立刻落盘，否则冷启动回到的是上一次的旧页面 */
+  if (typeof saveView === "function") saveView();
 }
 
 function planHash(mode, id) {
@@ -226,6 +228,8 @@ function planPageClosed() {
   if (!planView.mode) return;
   planView = { mode: "", id: "" };
   planHash("", "");
+  /* 退出方案页同样要落盘：不然冷启动会把已经关掉的方案页又弹回来 */
+  if (typeof saveView === "function") saveView();
 }
 
 /* 返回键：详情先回列表，再按一次才关页面。 */

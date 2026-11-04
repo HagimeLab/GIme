@@ -5594,9 +5594,22 @@ ok("拦截层把点击坐标传进来，收起前先按坐标定卡，一次点�
    html.indexOf('function chatOuiScrimTap(e)') >= 0 &&
    html.indexOf('var stack = document.elementsFromPoint ? document.elementsFromPoint(x, y) : [];') >= 0 &&
    html.indexOf('if (key && key !== was) chatOuiExpand(key);') >= 0);
-ok("列表一滚动就收起浮窗（浮窗贴底会压住下一张卡，不收就永远只看到上一张）",
+ok("手指一碰浮窗以外就收起（捕获阶段，先于卡片点击判定）：既让列表能滚，也让被压住的卡能点到",
    html.indexOf('function ouiBindScrollDismiss()') >= 0 &&
+   html.indexOf('document.addEventListener("touchstart", function (e) {') >= 0 &&
+   html.indexOf('if (t && t.closest && t.closest("#ouiWin")) return;') >= 0 &&
+   html.indexOf('{ passive: true, capture: true })') >= 0 &&
    html.indexOf('if (_ouiWinMid) chatOuiCollapse();') >= 0);
+ok("收起把卡塞回槽后 touchend 目标会丢，按落点自己补一次命中（没动＝点击、动了＝滑动）",
+   html.indexOf('document.addEventListener("touchend", function (e) {') >= 0 &&
+   html.indexOf('if (Math.abs(dx) > 10 || Math.abs(dy) > 10 || dt > 600) return;') >= 0 &&
+   html.indexOf('var slot = el && el.closest ? el.closest("[data-oui]") : null;') >= 0 &&
+   html.indexOf('if (slot && !(slot.closest && slot.closest("#ouiWin"))) {') >= 0);
+ok("不再拿 scroll 事件判「用户要滚」：程序化贴底（流式重绘/打开会话）不会把刚展开的卡收掉",
+   html.indexOf('sc.addEventListener("scroll"') < 0 &&
+   /window\.__ouiDismissBound/.test(html));
+ok("拦截层不吃触摸（pointer-events:none），列表滚动不被 z994 的遮罩挡死",
+   /\.oui-scrim \{[^}]*pointer-events: none;/s.test(html));
 ok("卡片搬走后槽位按原高度占位（.oui-slot-held + _ouiWinH），列表不再整体上跳",
    html.indexOf('var _ouiWinH = 0;') >= 0 &&
    html.indexOf('slot.classList.add("oui-slot-held")') >= 0 &&
@@ -5617,11 +5630,27 @@ ok("落盘「上次停在哪一页」（tab / 大肥鱼 / 方案页）并在切�
 ok("启动时先还原页面；本来在首页才播启动页（还原时把 #splash 摘掉，不闪首页）",
    html.indexOf('function restoreView()') >= 0 &&
    html.indexOf('if (tab === "home" && !chatOn && !planMode) return false;') >= 0 &&
+   html.indexOf("planRestored = !!planDeepLink();") >= 0 &&
    html.indexOf("viewRestored = restoreView();") >= 0 &&
-   /if \(viewRestored\) \{\s*\r?\n\s*var spBoot = document\.getElementById\("splash"\);/.test(html) &&
-   html.indexOf("if (chatOn && typeof openChatTab === \"function\") openChatTab();") >= 0);
+   /if \(viewRestored \|\| planRestored\) \{\s*\r?\n\s*var spBoot = document\.getElementById\("splash"\);/.test(html) &&
+   html.indexOf("if (chatOn && typeof openChatTab === \"function\") { openChatTab(); did = true; }") >= 0);
+ok("方案详情优先按地址栏深链落地，不被落盘的旧状态覆盖成列表；没真换页就不算还原成功",
+   html.indexOf("var hashPlan = false;") >= 0 &&
+   html.indexOf('hashPlan = /^#?\\/?(?:plan\\/|plans\\b)/') >= 0 &&
+   html.indexOf("if (!hashPlan) openPlan(v.planId);") >= 0 &&
+   html.indexOf("var did = false;") >= 0 &&
+   html.indexOf("} catch (e) { return did; }") >= 0 &&
+   html.indexOf("return did;") >= 0);
+ok("方案页只算「首页下的子页面」：切到别的 tab 不会被记成正在看方案，顺手关掉并清路由",
+   html.indexOf('var pgOn = !!(pg && pg.classList && pg.classList.contains("on")) && (curTab || "home") === "home";') >= 0 &&
+   html.indexOf('if (!pgOn) { mode = ""; }') >= 0 &&
+   html.indexOf('if (which !== "home" && typeof planView === "object" && planView && planView.mode) {') >= 0 &&
+   html.indexOf("if (pg && typeof closeLayer === \"function\") closeLayer(pg);") >= 0);
+ok("方案页进出都落盘（planShow / planPageClosed 各一处 saveView）",
+   /planHash\(mode, id\);\s*\r?\n\s*\/\*[\s\S]{0,120}?\*\/\s*\r?\n\s*if \(typeof saveView === "function"\) saveView\(\);/.test(html) &&
+   /planHash\("", ""\);\s*\r?\n\s*\/\*[\s\S]{0,120}?\*\/\s*\r?\n\s*if \(typeof saveView === "function"\) saveView\(\);/.test(html));
 ok("考试进行中不抢页面（先恢复考试，再决定要不要还原别的页）",
-   /document\.getElementById\("quiz"\)\.classList\.add\("on"\);[\s\S]{0,400}viewRestored = restoreView\(\);/.test(html));
+   /document\.getElementById\("quiz"\)\.classList\.add\("on"\);[\s\S]{0,900}viewRestored = restoreView\(\);/.test(html));
 
 section("[30b-12] 首页搜索入口与搜索框已删除");
 ok("首页不再有搜索按钮（既不渲染，也不再往启动动画里排）",

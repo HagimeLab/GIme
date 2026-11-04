@@ -1014,9 +1014,13 @@ html.swap, html.swap * { transition: none !important; }
    按下去给一点边框反馈，不然用户不知道这张卡可以点。
    注：这里的类名别再叫 .oui-bar —— 那是 Chart 柱子已经占用的类（会被压成一整列）。 */
 .oui-slot > .oui:active { border-color: var(--ink-3); }
-/* 悬浮窗背后的拦截层：薄薄一层暗，既提示「卡浮起来了」，也接住窗口外的点击 */
+/* 悬浮窗背后的拦截层：薄薄一层暗，提示「卡浮起来了」。
+   注意**不能吃掉触摸**（pointer-events:none）：它铺满全屏又压在对话列表（990）之上，
+   一旦接住触摸，用户就既滚不动列表、也点不到被浮窗压住的那张卡。
+   收起的判定改在 JS 的 touchstart 捕获阶段做（见 ouiBindScrollDismiss）。 */
 .oui-scrim { position: fixed; top: 0; left: 0; right: 0; bottom: 0; z-index: 994;
              background: rgba(20,22,26,.18); visibility: hidden; opacity: 0;
+             pointer-events: none;
              transition: opacity .22s var(--ease), visibility .25s; }
 .oui-scrim.on { visibility: visible; opacity: 1; }
 

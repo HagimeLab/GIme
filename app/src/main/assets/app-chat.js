@@ -1454,13 +1454,48 @@ function chatOuiScrimTap(e) {
    浮窗是贴底的，正好压住下面半屏的卡片：不收的话用户点「下一张」其实点在浮窗上，
    屏幕当然还是上一张的内容——这也是「点下一个、显示上一个」的成因之一。
    滚动本来就是要换视野，顺手收起浮窗既符合直觉，也让被压住的卡能点到。 */
+/* 手指一碰「浮窗以外」的地方就先把浮窗收起。
+   浮窗是贴底的，还压着一层拦截层：不先收，用户既滚不动列表，也点不到被压住的那张卡——
+   「点下一个、显示上一个」就是这么来的。监听放在捕获阶段、先于卡片自己的点击判定；
+   收完之后在 touchend 里按落点补一次命中（见下），点到别的卡＝直接换过去，点到空白＝就是收起。
+   不能监听 scroll：聊天页在流式重绘/打开对话后会自动贴底，那些是程序化滚动，
+   会把刚展开的卡自己收掉。 */
 function ouiBindScrollDismiss() {
-  var sc = document.getElementById("chatList");
-  if (!sc || sc.__ouiScrollBound) return;
-  sc.__ouiScrollBound = true;
-  sc.addEventListener("scroll", function () {
+  if (window.__ouiDismissBound) return;
+  window.__ouiDismissBound = true;
+  var t0 = null;
+  document.addEventListener("touchstart", function (e) {
+    t0 = null;
+    if (!_ouiWinMid) return;
+    var t = e.target;
+    if (t && t.closest && t.closest("#ouiWin")) return;   /* 窗口里的按钮/内容照常交互 */
+    var p = e.touches && e.touches[0];
+    t0 = { x: p ? p.clientX : 0, y: p ? p.clientY : 0, time: Date.now() };
+    chatOuiCollapse();
+  }, { passive: true, capture: true });
+  /* 收起时卡片是被 appendChild 塞回槽里的（DOM 先移出再插入），这次触摸的 touchend 目标
+     会跟着丢掉，卡片自己的点击判定就收不到了——所以按落点自己补一次命中：
+     手指基本没动（<10px、<600ms）才算点击，指尖底下有卡就直接打开它（点到另一张＝换过去）。 */
+  document.addEventListener("touchend", function (e) {
+    if (!t0) return;
+    var p = e.changedTouches && e.changedTouches[0];
+    var dx = p ? p.clientX - t0.x : 999;
+    var dy = p ? p.clientY - t0.y : 999;
+    var dt = Date.now() - t0.time;
+    var pt = { x: t0.x, y: t0.y };
+    t0 = null;
+    if (Math.abs(dx) > 10 || Math.abs(dy) > 10 || dt > 600) return;   /* 滑动/长按：只当作收起 */
+    var el = document.elementFromPoint ? document.elementFromPoint(pt.x, pt.y) : null;
+    var slot = el && el.closest ? el.closest("[data-oui]") : null;
+    if (slot && !(slot.closest && slot.closest("#ouiWin"))) {
+      var k = slot.getAttribute("data-oui");
+      if (k) chatOuiExpand(k);
+    }
+  }, { passive: true, capture: true });
+  /* 桌面/调试用鼠标滚轮：也是「要看别处」 */
+  document.addEventListener("wheel", function () {
     if (_ouiWinMid) chatOuiCollapse();
-  }, { passive: true });
+  }, { passive: true, capture: true });
 }
 /* 一次只浮一张：展开新的之前先把手上这张收回原位 */
 function chatOuiExpand(mid) {
@@ -4109,17 +4144,19 @@ if (S && S.order && S.order.length && S.order[S.idx] && byId[S.order[S.idx]]) {
 /* 上次停在哪一页（底部 tab / 方案页 / 大肥鱼）就回到哪一页：ROM 会在后台把进程杀掉，
    再点开是冷启动，不还原就永远从首页开始。本来就在首页才播启动页揭幕；
    要恢复别的页面就把 #splash 摘掉——否则揭幕动画会先闪一下首页再跳走。
-   放在考试恢复之后：考试中（quiz 已 on）不抢页面。 */
+   放在考试恢复之后：考试中（quiz 已 on）不抢页面。
+   顺序讲究：**先按地址栏深链落方案页**（#/plan/<id> 比落盘的旧状态准，也是用户被杀前
+   真正在看的那一页），再按落盘状态还原 tab/对话；两者都没还原才播启动页。 */
+var planRestored = false;
+try { if (typeof planDeepLink === "function") planRestored = !!planDeepLink(); } catch (e) { planRestored = false; }
 var viewRestored = false;
 try { viewRestored = restoreView(); } catch (e) { viewRestored = false; }
-if (viewRestored) {
+if (viewRestored || planRestored) {
   var spBoot = document.getElementById("splash");
   if (spBoot && spBoot.parentNode) spBoot.parentNode.removeChild(spBoot);
 } else {
   bootSplash();    /* 启动页要在首屏都画好之后再编排，此时 #splash 已经盖在最上层 */
 }
-/* 冷启动带 #/plan/<id> 或 #/plans 时直接落到方案页（方案数据此时已可读） */
-try { if (typeof planDeepLink === "function") planDeepLink(); } catch (e) { }
 chatPullInit();
 /* 最后再告诉原生层「页面好了」：此时导入入口函数都已经挂上，
    原生层排队的文件（冷启动时从文件管理器递进来的）可以开始读了。 */

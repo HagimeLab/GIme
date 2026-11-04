@@ -1407,6 +1407,12 @@ function saveView() {
     var ch = document.getElementById("chat");
     var pv = (typeof planView === "object" && planView) ? planView : null;
     var mode = pv ? (pv.mode || "") : "";
+    /* 方案页是「首页下的子页面」：只有它真的盖在首页上时才算当前页面。
+       否则用户已经切到别的 tab，planView 还留着上一次的 mode，
+       会把「银行/错题/我的」也存成「正在看方案详情」，冷启动就回错页。 */
+    var pg = typeof planPageEl === "function" ? planPageEl() : null;
+    var pgOn = !!(pg && pg.classList && pg.classList.contains("on")) && (curTab || "home") === "home";
+    if (!pgOn) { mode = ""; }
     store.write(LS_VIEW, {
       tab: curTab || "home",
       chat: ch && ch.classList.contains("on") ? 1 : 0,
@@ -1421,18 +1427,29 @@ function restoreView() {
   var qz = document.getElementById("quiz");
   if (qz && qz.classList.contains("on")) return false;
   var v = store.read(LS_VIEW, null);
-  if (!v) return false;
+  if (!v || typeof v !== "object") return false;
   var tab = v.tab || "home";
   var chatOn = !!v.chat;
   var planMode = v.plan || "";
+  /* 地址栏已经带着方案路由（#/plans、#/plan/<id>）时交给 planDeepLink 落地：
+     这里再 open 一次不仅会重画丢滚动位置，还会把详情覆盖成列表——
+     用户在方案详情里被系统杀掉，回来却看到列表，就是这么来的。 */
+  var hashPlan = false;
+  try { hashPlan = /^#?\/?(?:plan\/|plans\b)/.test(String((window.location && window.location.hash) || "")); } catch (e) { hashPlan = false; }
   if (tab === "home" && !chatOn && !planMode) return false;   /* 本来就在首页：正常播启动页 */
+  var did = false;   /* 真的换了页面才算「还原成功」，否则别把启动页摘掉 */
   try {
-    if (tab !== "home" && document.getElementById("tab-" + tab)) goTab(tab);
-    if (planMode === "detail" && v.planId) openPlan(v.planId);
-    else if (planMode === "list") openPlans();
-    if (chatOn && typeof openChatTab === "function") openChatTab();
-  } catch (e) { return false; }
-  return true;
+    if (tab !== "home" && document.getElementById("tab-" + tab)) { goTab(tab); did = true; }
+    if (planMode === "detail" && v.planId) {
+      if (!hashPlan) openPlan(v.planId);
+      did = true;          /* 地址栏带着方案路由时 planDeepLink 已经落地，这里只记「已还原」 */
+    } else if (planMode === "list") {
+      if (!hashPlan) openPlans();
+      did = true;
+    }
+    if (chatOn && typeof openChatTab === "function") { openChatTab(); did = true; }
+  } catch (e) { return did; }
+  return did;
 }
 
 function goTab(which) {
@@ -1448,6 +1465,15 @@ function goTab(which) {
                         (k ? "" : " ask-tab");
   }
   moveTabPill(true);          /* 胶囊当场就走，切页的 200ms 淡出期间它就是反馈 */
+  /* 方案页只属于首页：用户点了别的 tab 就先把它关掉（同时清掉地址栏路由），
+     否则它会盖在新页面上、还会让冷启动记成「上次在看方案」。 */
+  if (which !== "home" && typeof planView === "object" && planView && planView.mode) {
+    try {
+      var pg = (typeof planPageEl === "function") ? planPageEl() : null;
+      if (pg && typeof closeLayer === "function") closeLayer(pg);
+      else if (typeof planPageClosed === "function") planPageClosed();
+    } catch (e) { }
+  }
   swapPage(from, to, which);
   saveView();                 /* 记下这一页，进程被杀后再点开能回到这里 */
 }
