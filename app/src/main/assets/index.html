@@ -8,8 +8,21 @@
 </head>
 <body>
 
+<!-- 单色线性图标（模板落地）：播放器控制条与播放历史共用，stroke/fill 继承 .ico -->
+<svg width="0" height="0" style="position:absolute;overflow:hidden" aria-hidden="true" focusable="false">
+  <symbol id="i-play" viewBox="0 0 24 24"><path d="M8 5.5v13l11-6.5z"/></symbol>
+  <symbol id="i-pause" viewBox="0 0 24 24"><path d="M9 5v14M15 5v14"/></symbol>
+  <symbol id="i-skip-prev" viewBox="0 0 24 24"><path d="M6 5v14M19 5.5v13l-10-6.5z"/></symbol>
+  <symbol id="i-skip-next" viewBox="0 0 24 24"><path d="M18 5v14M5 5.5v13l10-6.5z"/></symbol>
+  <symbol id="i-volume" viewBox="0 0 24 24"><path d="M4 9v6h4l5 4V5L8 9H4z"/><path d="M16.5 8.5a5 5 0 0 1 0 7"/></symbol>
+  <symbol id="i-mute" viewBox="0 0 24 24"><path d="M4 9v6h4l5 4V5L8 9H4z"/><path d="M22 9l-5 6M17 9l5 6"/></symbol>
+<symbol id="i-bright" viewBox="0 0 24 24"><circle cx="12" cy="12" r="4.2"/><path d="M12 2.5v2.6M12 18.9v2.6M4.2 4.2l1.8 1.8M18 18l1.8 1.8M2.5 12h2.6M18.9 12h2.6M4.2 19.8l1.8-1.8M18 6l1.8-1.8"/></symbol>
+  <symbol id="i-expand" viewBox="0 0 24 24"><path d="M4 9V4h5M20 15v5h-5M20 9V4h-5M4 15v5h5"/></symbol>
+  <symbol id="i-compress" viewBox="0 0 24 24"><path d="M9 4v5H4M15 20v-5h5M15 4v5h5M9 20v-5H4"/></symbol>
+</svg>
+
 <!-- ============ 首页 ============ -->
-<div class="page on" id="tab-home">
+<div class="page on home-fit" id="tab-home">
   <div class="hello">
     <div class="txt"><i id="hiSub">今天也来刷一组</i><h1 id="hiName">GIme</h1></div>
     <span class="bl">
@@ -21,7 +34,16 @@
   <!-- 今日待刷 + 进行中方案合成的一张任务 Hero（app-plan.js 渲染） -->
   <div id="planHero"></div>
 
-  <div class="sec-title cats-head">
+  <div class="sec-title tight"><b>近期刷题</b><span onclick="openFS('stat')">查看全部</span></div>
+  <div class="card pad hist" id="recent"></div>
+
+  <div class="sec-title tight"><b>最近观看</b></div>
+  <div class="card pad hist" id="videoRecent"></div>
+</div>
+
+<!-- ============ 题库 ============ -->
+<div class="page bank-opt" id="tab-bank">
+  <div class="sec-title cats-head" style="margin-top:0">
     <b>题库分类</b>
     <button class="cats-toggle" id="catsToggle" onclick="toggleCats()" aria-expanded="true">
       <span id="catsToggleTx">收起</span>
@@ -34,26 +56,28 @@
     </div>
   </div>
 
-  <div class="sec-title"><b>今日待刷题</b><span onclick="openPaper()" style="text-decoration:underline">组卷出题</span></div>
-  <div id="tasks"></div>
+  <div class="sec-title"><b>组卷</b><span onclick="openPaper()" style="text-decoration:underline">组卷出题</span></div>
+  <div id="wrongEntry"></div>
 
-  <div class="sec-title"><b>学习资料</b><span>按薄弱点推荐</span></div>
-  <div id="studyCard"></div>
-
-  <div class="sec-title"><b>最近练习</b><span onclick="openFS('stat')">查看全部</span></div>
-  <div class="card pad" id="recent"></div>
-</div>
-
-<!-- ============ 题库 ============ -->
-<div class="page" id="tab-bank">
-  <div class="sec-title" style="margin-top:0"><b>题库</b><span id="bankTotal"></span></div>
+  <div class="sec-title"><b>题库列表</b><span id="bankTotal"></span><button class="imp-btn" onclick="openImport()"><svg class="ico" viewBox="0 0 24 24" style="width:14px;height:14px"><path d="M12 5v14M5 12h14"/></svg>导入题库</button></div>
   <div id="bankList"></div>
 </div>
 
-<!-- ============ 错题本 ============ -->
-<div class="page" id="tab-wrong">
-  <div class="sec-title" style="margin-top:0"><b>错题本</b><span id="wrongCount"></span></div>
-  <div id="wrongList"></div>
+<!-- ============ 视频（原错题本页） ============ -->
+<div class="page" id="tab-video">
+  <div id="biliHost"></div>
+</div>
+
+<!-- ============ 错题本（从导航栏移进题库，改成整页层） ============ -->
+<div class="fs" id="wrongPage">
+  <div class="fs-head">
+    <button type="button" onclick="closeWrongPage()">‹</button>
+    <h2 id="wrongTitle">错题本</h2><i></i>
+  </div>
+  <div class="fs-body">
+    <div class="sl-hint" style="margin:-6px 0 14px"><span id="wrongCount"></span></div>
+    <div id="wrongList"></div>
+  </div>
 </div>
 
 <!-- ============ 我的 ============ -->
@@ -89,7 +113,7 @@
       <i class="ask-dot"></i>
     </span>
   </button>
-  <button class="tab" data-tab="wrong" onclick="tabTap('wrong')"><svg class="ico" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8"/><path d="M9 9l6 6M15 9l-6 6"/></svg><span>错题本</span></button>
+  <button class="tab" data-tab="video" onclick="tabTap('video')"><svg class="ico" viewBox="0 0 24 24"><rect x="3.5" y="5.5" width="17" height="13" rx="3"/><path d="M10.2 9.4l4.6 2.6-4.6 2.6z"/></svg><span>视频</span></button>
   <button class="tab" data-tab="me" onclick="tabTap('me')"><svg class="ico" viewBox="0 0 24 24"><circle cx="12" cy="8.5" r="3.5"/><path d="M5 20c1.2-3.6 3.8-5 7-5s5.8 1.4 7 5"/></svg><span>我的</span></button>
 </div>
 
@@ -205,6 +229,7 @@
 <div class="fs" id="fs"></div>
 <!-- 方案库 / 方案详情：独立的整页层，返回键先回列表再关页 -->
 <div class="fs" id="planPage"></div>
+<!-- 哔哩哔哩收藏：整页层，只读；播放永远走 127.0.0.1:8766 回环串 -->
 
 <script src="bank.js"></script>
 <!-- OpenUI：core（533KB）改成按需加载，由 app-chat.js 的 ouiEnsureCore() 在需要时注入。
@@ -217,5 +242,7 @@
 <script src="app-admin.js"></script>
 <script src="app-plan.js"></script>
 <script src="app-chat.js"></script>
+<script src="app-bili.js"></script>
+<script src="app-interactions.js"></script>
 </body>
 </html>

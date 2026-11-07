@@ -676,17 +676,26 @@ function planRemoveItem(id, text) {
 function planDeleteAsk(id) {
   var p = planFull(id);
   if (!p) return;
-  glass({
-    title: "删除方案",
-    desc: "「" + p.title + "」和它的执行记录会一起删除，不能恢复。",
-    no: ["取消", null],
-    ok: ["删除", function () {
-      var out = planDeleteCall(id);
-      if (out.error) { toast(out.error); return; }
-      toast("方案已删除");
-      openPlans();
-    }]
-  });
+  var __do = function () {
+    var out = planDeleteCall(id);
+    if (out.error) { toast(out.error); return; }
+    toast("方案已删除");
+    openPlans();
+  };
+  if (window.GI && GI.swipeConfirm) {
+    GI.swipeConfirm({
+      title: "删除方案",
+      desc: "「" + p.title + "」和它的执行记录会一起删除，不能恢复。",
+      okText: "已删除", action: __do
+    });
+  } else {
+    glass({
+      title: "删除方案",
+      desc: "「" + p.title + "」和它的执行记录会一起删除，不能恢复。",
+      no: ["取消", null],
+      ok: ["删除", __do]
+    });
+  }
 }
 
 /* ================= OpenUI 动作（nav:/approve:/toggle:/insight:） ================= */

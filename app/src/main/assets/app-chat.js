@@ -1020,7 +1020,7 @@ function chatOuiRoute(verb, arg, m, node, form) {
       if (typeof planNav === "function" && planNav(raw)) return;
     }
     var tab = raw.replace(/^#?tab-/, "");
-    if (["home", "bank", "wrong", "me"].indexOf(tab) < 0) { toast("没有这个页面：" + arg); return; }
+    if (["home", "bank", "video", "me"].indexOf(tab) < 0) { toast("没有这个页面：" + arg); return; }
     closeTop();          /* 卡片在会话面板里，切页之前先把面板收掉 */
     goTab(tab);
     return;
@@ -1098,10 +1098,12 @@ function chatOuiRoute(verb, arg, m, node, form) {
       return;
     }
     if (verb === "wrong") {
-      /* 进了错题本就顺手展开这个题库那一组，省一次点击 */
+      /* 错题本已经在题库页里（整页层）：先进题库再开层，顺手展开这个题库那一组 */
       if (pick.sub) wrongOpen[pick.sub.id] = true;
       closeTop();
-      goTab("wrong");
+      goTab("bank");
+      if (typeof openWrongPage === "function") openWrongPage();
+      else goTab("wrong");
       if (pick.sub) setTimeout(function () { ouiReveal('#wrongList .wgroup[data-sid="' + pick.sub.id + '"]'); }, 280);
       return;
     }
@@ -3343,7 +3345,7 @@ function chatSysBase() {
          "只有当用户的问题需要题库数据，或用户明确要求修改时，才调用工具；" +
          "不要为了补充上下文自发调用任何工具，也不要主动改解析、参考答案或答案。";
 }
-function chatCtxMsg(ctx) { return "当前题目上下文（JSON）：" + JSON.stringify(ctx); }
+function chatCtxMsg(ctx) { return "当前题目上下文（JSON，仅在用户问题与本题相关时才参考；若用户在问与题目无关的内容，请正常回答，不要强行讲题或把话题拉回本题）：" + JSON.stringify(ctx); }
 /* Agent 执行规则：单独一段，固定段仍逐字可缓存。
    只写「顺序与前置条件」，不写具体工具参数；改数据仍要用户批准。 */
 /* T3：长期画像 + 会话摘要；没有学习数据时不注入，避免空话占 token。 */
@@ -4137,7 +4139,10 @@ function normalizeSession(s) {
 }
 S = normalizeSession(S);
 if (S === null) localStorage.removeItem(LS.j);
-if (S && S.order && S.order.length && S.order[S.idx] && byId[S.order[S.idx]]) {
+/* 需求：每次启动都停在首页，不自动进入答题页。练习进度仍在内存与 resume 快照里，
+   用户点首页「继续上次进度」即可回到原位置；仅进行中的考试仍自动恢复（有时限，避免丢失）。
+   判断顺序讲究：只认 exam+running，practice 一律不抢首屏。 */
+if (S && S.mode === "exam" && S.state === "running" && S.order && S.order.length && S.order[S.idx] && byId[S.order[S.idx]]) {
   render();
   document.getElementById("quiz").classList.add("on");
 }
@@ -4149,8 +4154,7 @@ if (S && S.order && S.order.length && S.order[S.idx] && byId[S.order[S.idx]]) {
    真正在看的那一页），再按落盘状态还原 tab/对话；两者都没还原才播启动页。 */
 var planRestored = false;
 try { if (typeof planDeepLink === "function") planRestored = !!planDeepLink(); } catch (e) { planRestored = false; }
-var viewRestored = false;
-try { viewRestored = restoreView(); } catch (e) { viewRestored = false; }
+var viewRestored = false; /* 需求：每次启动固定停在首页，不还原上次 tab/对话 */
 if (viewRestored || planRestored) {
   var spBoot = document.getElementById("splash");
   if (spBoot && spBoot.parentNode) spBoot.parentNode.removeChild(spBoot);

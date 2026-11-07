@@ -122,7 +122,10 @@ const components = [
     value: z.number(),
     parts: z.array(z.string()).optional(),
   }),
-  comp("Badge", "小标签", { text: z.string() }),
+  comp("Badge", "小标签；tone 取 info / success / warn / danger（黑白界面里用语义色描边区分对错/警告，不要滥用）", {
+    text: z.string(),
+    tone: z.enum(["info", "success", "warn", "danger"]).optional(),
+  }),
   comp("List", "列表；items 为条目文本数组", {
     items: z.array(z.string()),
     ordered: z.boolean().optional(),
@@ -130,14 +133,14 @@ const components = [
   comp("Steps", "编号步骤列表；items 为步骤文本数组", {
     items: z.array(z.string()),
   }),
-  comp("Callout", "提示块；tone 取 info / warn / success", {
+  comp("Callout", "提示块；tone 取 info / warn / success / danger（对错/警告用 success/danger，会在标题前带一个内置图标）", {
     title: z.string().optional(),
     text: z.string(),
-    tone: z.enum(["info", "warn", "success"]).optional(),
+    tone: z.enum(["info", "warn", "success", "danger"]).optional(),
   }),
-  comp("Chart", "图表；kind 取 bar / line / pie（占比）/ stack（堆叠）。labels 与 values 等长；stack 时 values 传二维（每行一个类别的各系列数值，行短了按 0 补），names 为系列名（缺的显示为「系列 N」）。action 让柱/扇区/图例可点，{label} 替换成被点那一项的标签（如 wrong:{label}）。四种 kind 都吃 action：bar/stack 点数值、柱体或标签，pie 点图例行，line 点 x 标签或标在标签上的数值。unit 给数值加单位（如「题」「%」「分钟」，柱顶和图例都会带上）；legend 取 top/bottom 调图例位置（触屏没有悬停 tooltip，数值直接标在项上）。" +
+  comp("Chart", "图表；kind 取 bar / line / pie（占比）/ stack（堆叠）/ radar（雷达，labels 为各维、values 为该维 0-100 分数）/ gauge（仪表盘，values[0] 为 0-100、labels[0] 可选为标题）/ scatter（散点，values 传二维点集 [[x,y],…] 或一维 y 值）。labels 与 values 等长；stack 时 values 传二维（每行一个类别的各系列数值，行短了按 0 补），names 为系列名（缺的显示为「系列 N」）。action 让柱/扇区/图例可点，{label} 替换成被点那一项的标签（如 wrong:{label}）。四种 kind 都吃 action：bar/stack 点数值、柱体或标签，pie 点图例行，line 点 x 标签或标在标签上的数值。unit 给数值加单位（如「题」「%」「分钟」，柱顶和图例都会带上）；legend 取 top/bottom 调图例位置（触屏没有悬停 tooltip，数值直接标在项上）。" +
     "位次是 kind, labels, values, names, action, unit, legend：只想给数值加单位就写 Chart(\"bar\", 标签, 数值, [], \"\", \"题\")，不要改用具名写法（具名会被解析器多计一个参数）；第 4 位误写成字符串（如 Chart(\"bar\", 标签, 数值, \"题\")）也按单位收", {
-    kind: z.enum(["bar", "line", "pie", "stack"]).optional(),
+    kind: z.enum(["bar", "line", "pie", "stack", "radar", "gauge", "scatter"]).optional(),
     labels: z.array(z.string()),
     values: z.union([z.array(z.number()), z.array(z.array(z.number()))]),
     /* names 允许字符串：真机抓到模型把单位写在第 4 位（Chart("bar", 标签, 数值, "题")），
@@ -212,6 +215,51 @@ const components = [
   comp("Tap", "可点区域：children 整块被点后执行 action。" + ACTION_DESC, {
     children: kids(),
     action: z.string(),
+  }),
+  /* --- 学习场景时间类可视化（补 P0 缺口） --- */
+  comp("Heatmap", "打卡热力图：values 为按时间从旧到新的数值数组（0 表示没记录），cols 每行格子数（默认 7，按周排），深色档位按数值大小分 4 级（黑白灰阶）。适合「近 30 天/一年刷题打卡」这种坚持度展示", {
+    values: z.array(z.number()),
+    cols: z.int().min(2).max(31).optional(),
+    unit: z.string().optional(),
+    title: z.string().optional(),
+  }),
+  comp("Calendar", "月历打卡：month 形如 2026-11；marks 为有记录的日期（1-31 的整数数组），counts 可选、与 marks 等长表示当天次数（次数越多格子越深）。用来展示某月每天是否学习", {
+    month: z.string(),
+    marks: z.array(z.int()).optional(),
+    counts: z.array(z.number()).optional(),
+    title: z.string().optional(),
+  }),
+  comp("Timeline", "时间轴：items 每项写「时间|标题|说明」（说明可省，用竖线分隔），按顺序自上而下带节点与连线。适合学习计划、错题演进、事件回顾", {
+    items: z.array(z.string()),
+    title: z.string().optional(),
+  }),
+  comp("Gantt", "甘特条：tasks 每项写「名称|开始|结束|进度0-100」，开始/结束用同一数值轴（如第几天），total 为轴总长（默认取最大结束值），unit 轴单位。适合多天计划的分段进度", {
+    tasks: z.array(z.string()),
+    total: z.number().optional(),
+    unit: z.string().optional(),
+    title: z.string().optional(),
+  }),
+  /* --- 结构导航（补 P2） --- */
+  comp("Breadcrumb", "面包屑：items 为层级文字数组，最后一项是当前页，中间用 › 分隔。放在详情/多级页顶部说明「我在哪」", {
+    items: z.array(z.string()),
+  }),
+  comp("Tree", "章节树：items 每项写「层级|文本」（层级从 0 起，数字越大越深），按层级缩进显示。适合章→节→题的知识结构；轻量展示，不需要展开交互", {
+    items: z.array(z.string()),
+    title: z.string().optional(),
+  }),
+  /* --- 富内容（补 P2） --- */
+  comp("Diff", "代码对比：before / after 两段文本按行比对，删除行前缀 -、新增行前缀 +；lang 为右上角语言角标，title 可选。适合讲「改前 vs 改后」", {
+    before: z.string(),
+    after: z.string(),
+    lang: z.string().optional(),
+    title: z.string().optional(),
+  }),
+  /* --- 环形进度（图表补充） --- */
+  comp("Ring", "环形进度：value 取 0-100，中心显示 label（默认百分比）；size 为直径像素（默认 96，48-220）。比条形 Progress 更适合突出单个关键指标", {
+    value: z.number(),
+    label: z.string().optional(),
+    size: z.int().min(48).max(220).optional(),
+    unit: z.string().optional(),
   }),
 ];
 

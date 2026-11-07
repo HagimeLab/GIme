@@ -209,6 +209,156 @@ function boxAlign(d, p, extra) {
   return d;
 }
 
+/* ============ 新增可视化组件（Heatmap/Calendar/Timeline/Gantt/Breadcrumb/Tree/Diff/Ring + Chart 新类型） ============ */
+function pipeParts(s) { return String(s == null ? '' : s).split('|').map(function (x) { return x.trim(); }); }
+function vizTitle(box, t) { if (t) box.append(makeText('div', 'oui-viz-t', t)); return box; }
+function heatLvl(v, max) { if (!(v > 0)) return ' l0'; var r = v / max; return r <= 0.25 ? ' l1' : r <= 0.5 ? ' l2' : r <= 0.75 ? ' l3' : ' l4'; }
+function ouiHeatmap(p) {
+  const d = make('div', 'oui-heatwrap'); vizTitle(d, p.title);
+  const vals = listOf(p.values).map(function (x) { var n = Number(x); return isFinite(n) && n > 0 ? n : 0; });
+  const cols = Math.max(2, Math.min(31, Number(p.cols) || 7));
+  const max = vals.reduce(function (a, b) { return Math.max(a, b); }, 0) || 1;
+  const g = make('div', 'oui-heat'); g.style.gridTemplateColumns = 'repeat(' + cols + ',1fr)';
+  vals.forEach(function (v) { const c = make('i', 'oui-heat-c' + heatLvl(v, max)); c.title = v > 0 ? v + (p.unit || '') : '无记录'; g.append(c); });
+  if (!vals.length) return make('div', 'oui-empty-viz oui-viz-t');
+  d.append(g); return d;
+}
+function ouiCalendar(p) {
+  const d = make('div', 'oui-cal'); vizTitle(d, p.title);
+  var y, mo; const mt = String(p.month || '').match(/(\d{4})\D+(\d{1,2})/);
+  if (mt) { y = +mt[1]; mo = +mt[2] - 1; } else { var now = new Date(); y = now.getFullYear(); mo = now.getMonth(); }
+  const first = new Date(y, mo, 1).getDay(), days = new Date(y, mo + 1, 0).getDate();
+  const marks = {}; listOf(p.marks).forEach(function (x) { marks[+x] = 1; });
+  const counts = listOf(p.counts).map(Number); var idx = 0; const cmap = {};
+  listOf(p.marks).forEach(function (x) { cmap[+x] = isFinite(counts[idx]) ? counts[idx] : 1; idx++; });
+  const maxC = Object.keys(cmap).reduce(function (a, k) { return Math.max(a, cmap[k] || 0); }, 0) || 1;
+  const head = make('div', 'oui-cal-h'); ['日', '一', '二', '三', '四', '五', '六'].forEach(function (w) { head.append(makeText('span', 'oui-cal-w', w)); });
+  d.append(head);
+  const g = make('div', 'oui-cal-g');
+  for (var b = 0; b < first; b++) g.append(make('i', 'oui-cal-c blank'));
+  for (var day = 1; day <= days; day++) {
+    const c = make('i', 'oui-cal-c' + (marks[day] ? heatLvl(cmap[day] || 1, maxC) : ''));
+    c.append(makeText('span', 'oui-cal-d', String(day)));
+    if (marks[day]) { c.className += ' on'; c.title = day + '日 ' + (cmap[day] || 1) + ' 次'; }
+    g.append(c);
+  }
+  d.append(g); return d;
+}
+function ouiTimeline(p) {
+  const d = make('div', 'oui-tl'); vizTitle(d, p.title);
+  const items = listOf(p.items);
+  items.forEach(function (it, i) {
+    const a = pipeParts(it); const row = make('div', 'oui-tl-i' + (i === items.length - 1 ? ' last' : ''));
+    const dot = make('i', 'oui-tl-d'); const body = make('div', 'oui-tl-b');
+    if (a[0]) body.append(makeText('div', 'oui-tl-t', a[0]));
+    if (a[1]) body.append(makeText('div', 'oui-tl-h', a[1]));
+    if (a[2]) body.append(makeText('div', 'oui-tl-x', a.slice(2).join('|')));
+    row.append(dot, body); d.append(row);
+  });
+  return d;
+}
+function ouiGantt(p) {
+  const d = make('div', 'oui-gantt'); vizTitle(d, p.title);
+  const tasks = listOf(p.tasks).map(function (t) { const a = pipeParts(t); return { name: a[0] || '', s: Number(a[1]) || 0, e: Number(a[2]) || 0, p: isFinite(Number(a[3])) ? Number(a[3]) : 0 }; });
+  if (!tasks.length) return d;
+  const total = Number(p.total) || tasks.reduce(function (a, t) { return Math.max(a, t.e); }, 0) || 1;
+  tasks.forEach(function (t) {
+    const row = make('div', 'oui-gantt-r'); row.append(makeText('span', 'oui-gantt-n', t.name));
+    const tr = make('div', 'oui-gantt-tr'); const bar = make('div', 'oui-gantt-bar');
+    const left = Math.max(0, Math.min(100, (t.s / total) * 100));
+    const width = Math.max(2, Math.min(100 - left, ((t.e - t.s) / total) * 100));
+    bar.style.left = left + '%'; bar.style.width = width + '%';
+    const fill = make('i', 'oui-gantt-fill'); fill.style.width = Math.max(0, Math.min(100, t.p)) + '%';
+    bar.append(fill, makeText('b', 'oui-gantt-p', Math.round(t.p) + '%'));
+    tr.append(bar); row.append(tr); d.append(row);
+  });
+  if (p.unit || p.total) d.append(makeText('div', 'oui-gantt-u', '0 — ' + total + (p.unit || '')));
+  return d;
+}
+function ouiCrumb(p) {
+  const d = make('div', 'oui-crumb'); const items = listOf(p.items);
+  items.forEach(function (it, i) { if (i) d.append(make('i', 'oui-crumb-s')); d.append(makeText('span', 'oui-crumb-i' + (i === items.length - 1 ? ' cur' : ''), it)); });
+  return d;
+}
+function ouiTree(p) {
+  const d = make('div', 'oui-tree'); vizTitle(d, p.title);
+  listOf(p.items).forEach(function (it) {
+    const a = pipeParts(it); const lvl = Math.max(0, parseInt(a[0], 10) || 0); const txt = a.slice(1).join('|');
+    const row = make('div', 'oui-tree-r'); row.style.paddingLeft = (lvl * 16) + 'px';
+    row.append(make('i', 'oui-tree-d' + (lvl ? ' sub' : '')));
+    row.append(makeText('span', 'oui-tree-t' + (lvl ? '' : ' root'), txt));
+    d.append(row);
+  });
+  return d;
+}
+function diffLines(a, b) {
+  const A = String(a).split('\n'), B = String(b).split('\n'), n = A.length, m = B.length;
+  if (n * m > 40000) return A.map(function (s) { return { t: '-', s: s }; }).concat(B.map(function (s) { return { t: '+', s: s }; }));
+  const dp = []; for (var i = 0; i <= n; i++) dp.push(new Array(m + 1).fill(0));
+  for (var i = n - 1; i >= 0; i--) for (var j = m - 1; j >= 0; j--) dp[i][j] = A[i] === B[j] ? dp[i + 1][j + 1] + 1 : Math.max(dp[i + 1][j], dp[i][j + 1]);
+  const out = []; var i = 0, j = 0;
+  while (i < n && j < m) { if (A[i] === B[j]) { out.push({ t: ' ', s: A[i] }); i++; j++; } else if (dp[i + 1][j] >= dp[i][j + 1]) { out.push({ t: '-', s: A[i] }); i++; } else { out.push({ t: '+', s: B[j] }); j++; } }
+  while (i < n) out.push({ t: '-', s: A[i++] }); while (j < m) out.push({ t: '+', s: B[j++] }); return out;
+}
+function ouiDiff(p) {
+  const d = make('div', 'oui-diff');
+  const head = make('div', 'oui-diff-h'); if (p.title) head.append(makeText('span', 'oui-diff-t', p.title));
+  if (p.lang) head.append(makeText('span', 'oui-diff-l', p.lang)); if (head.childNodes.length) d.append(head);
+  const pre = make('pre', 'oui-diff-pre');
+  diffLines(p.before == null ? '' : p.before, p.after == null ? '' : p.after).forEach(function (l) {
+    const row = make('div', 'oui-diff-row ' + (l.t === '+' ? 'add' : l.t === '-' ? 'del' : '')); row.append(makeText('span', 'oui-diff-g', l.t === ' ' ? ' ' : l.t)); row.append(makeText('span', 'oui-diff-c', l.s)); pre.append(row);
+  });
+  d.append(pre); return d;
+}
+function ouiRing(p) {
+  const v = Math.max(0, Math.min(100, Number(p.value) || 0));
+  const size = Math.max(48, Math.min(220, Number(p.size) || 96));
+  const r = 42, circ = 2 * Math.PI * r, off = circ * (1 - v / 100);
+  const wrap = make('div', 'oui-ring'); wrap.style.width = size + 'px';
+  wrap.innerHTML = '<svg viewBox="0 0 100 100" width="' + size + '" height="' + size + '">' +
+    '<circle cx="50" cy="50" r="' + r + '" class="oui-ring-bg"></circle>' +
+    '<circle cx="50" cy="50" r="' + r + '" class="oui-ring-fg" stroke-dasharray="' + circ.toFixed(1) + '" stroke-dashoffset="' + off.toFixed(1) + '" transform="rotate(-90 50 50)"></circle>' +
+    '<text x="50" y="47" class="oui-ring-v">' + Math.round(v) + (p.unit || '%') + '</text>' +
+    (p.label ? '<text x="50" y="63" class="oui-ring-k">' + String(p.label).replace(/[<>&]/g, '') + '</text>' : '') +
+    '</svg>';
+  return wrap;
+}
+function ouiRadar(labels, values, withUnit) {
+  const d = make('div', 'oui-radar');
+  const n = Math.max(3, values.length || labels.length || 3), R = 68, cx = 100, cy = 100;
+  const pts = [], grid = [];
+  for (var ring = 1; ring <= 4; ring++) { const rr = R * ring / 4; const gp = []; for (var k = 0; k < n; k++) { const ang = -Math.PI / 2 + k * 2 * Math.PI / n; gp.push((cx + Math.cos(ang) * rr).toFixed(1) + ',' + (cy + Math.sin(ang) * rr).toFixed(1)); } grid.push('<polygon points="' + gp.join(' ') + '" class="oui-radar-grid"></polygon>'); }
+  for (var k = 0; k < n; k++) { const ang = -Math.PI / 2 + k * 2 * Math.PI / n; const v = Math.max(0, Math.min(100, Number(values[k]) || 0)); const rr = R * v / 100; pts.push((cx + Math.cos(ang) * rr).toFixed(1) + ',' + (cy + Math.sin(ang) * rr).toFixed(1)); }
+  var axis = ''; var labs = '';
+  for (var k = 0; k < n; k++) { const ang = -Math.PI / 2 + k * 2 * Math.PI / n; axis += '<line x1="' + cx + '" y1="' + cy + '" x2="' + (cx + Math.cos(ang) * R).toFixed(1) + '" y2="' + (cy + Math.sin(ang) * R).toFixed(1) + '" class="oui-radar-axis"></line>'; const lx = cx + Math.cos(ang) * (R + 14), ly = cy + Math.sin(ang) * (R + 14); const lab = labels[k] != null ? String(labels[k]) : ''; const vv = values[k] != null ? withUnit(values[k]) : ''; labs += '<text x="' + lx.toFixed(1) + '" y="' + ly.toFixed(1) + '" class="oui-radar-lab" text-anchor="middle">' + lab.replace(/[<>&]/g, '') + (vv ? ' ' + vv : '') + '</text>'; }
+  d.innerHTML = '<svg viewBox="0 0 200 200" width="100%" height="200">' + grid.join('') + axis + '<polygon points="' + pts.join(' ') + '" class="oui-radar-area"></polygon>' + labs + '</svg>';
+  return d;
+}
+function ouiGauge(v, label, unit) {
+  const val = Math.max(0, Math.min(100, Number(v) || 0)); const len = Math.PI * 90; const off = len * (1 - val / 100);
+  const d = make('div', 'oui-gauge');
+  d.innerHTML = '<svg viewBox="0 0 200 120" width="100%" height="120">' +
+    '<path d="M10 100 A 90 90 0 0 1 190 100" class="oui-gauge-bg" stroke-dasharray="' + len.toFixed(1) + '"></path>' +
+    '<path d="M10 100 A 90 90 0 0 1 190 100" class="oui-gauge-fg" stroke-dasharray="' + len.toFixed(1) + '" stroke-dashoffset="' + off.toFixed(1) + '"></path>' +
+    '<text x="100" y="88" class="oui-gauge-v">' + Math.round(val) + (unit || '%') + '</text>' +
+    (label ? '<text x="100" y="108" class="oui-gauge-k">' + String(label).replace(/[<>&]/g, '') + '</text>' : '') +
+    '</svg>';
+  return d;
+}
+function ouiScatter(raw, withUnit) {
+  const pts = [];
+  if (raw.length && Array.isArray(raw[0])) raw.forEach(function (r) { pts.push([Number(r[0]) || 0, Number(r[1]) || 0]); });
+  else raw.forEach(function (y, i) { pts.push([i, Number(y) || 0]); });
+  const d = make('div', 'oui-scatter');
+  const xs = pts.map(function (p) { return p[0]; }), ys = pts.map(function (p) { return p[1]; });
+  const minx = Math.min.apply(null, xs), maxx = Math.max.apply(null, xs) || 1, miny = Math.min(0, Math.min.apply(null, ys)), maxy = Math.max.apply(null, ys) || 1;
+  const sx = function (x) { return 20 + (x - minx) / ((maxx - minx) || 1) * 160; };
+  const sy = function (y) { return 110 - (y - miny) / ((maxy - miny) || 1) * 90; };
+  var dots = ''; pts.forEach(function (p) { dots += '<circle cx="' + sx(p[0]).toFixed(1) + '" cy="' + sy(p[1]).toFixed(1) + '" r="3.4" class="oui-scatter-d"></circle>'; });
+  d.innerHTML = '<svg viewBox="0 0 200 130" width="100%" height="130"><line x1="20" y1="110" x2="180" y2="110" class="oui-scatter-axis"></line><line x1="20" y1="20" x2="20" y2="110" class="oui-scatter-axis"></line>' + dots + '</svg>';
+  return d;
+}
+
 function renderNode(node, ctx) {
   if (node == null) return null;
   if (typeof node === 'string') return document.createTextNode(node);
@@ -292,8 +442,10 @@ function renderNode(node, ctx) {
     }
     case 'Math':
       return ouiMathNode(!!p.display, p.text);
-    case 'Badge':
-      return makeText('span', 'oui-badge', p.text);
+    case 'Badge': {
+      const tone = ['info', 'success', 'warn', 'danger'].indexOf(p.tone) >= 0 ? ' t-' + p.tone : '';
+      return makeText('span', 'oui-badge' + tone, p.text);
+    }
     case 'Empty': {
       /* 空状态：以前只能留一行灰字，用户分不清「没有」和「没加载出来」 */
       const d = make('div', 'oui-empty');
@@ -383,8 +535,9 @@ function renderNode(node, ctx) {
       return d;
     }
     case 'Callout': {
-      const tone = p.tone === 'warn' || p.tone === 'success' ? p.tone : 'info';
+      const tone = p.tone === 'warn' || p.tone === 'success' || p.tone === 'danger' ? p.tone : 'info';
       const d = make('div', 'oui-callout ' + tone);
+      d.append(make('i', 'oui-callout-i'));
       if (p.title) d.append(makeText('b', 'oui-callout-t', p.title));
       d.append(makeText('div', 'oui-callout-x', p.text));
       return d;
@@ -412,6 +565,10 @@ function renderNode(node, ctx) {
       const values = is2D ? [] : raw.map(numOf);
       const shown = (i) => { const n = Number(raw[i]); return isFinite(n) ? withUnit(n) : textOf(raw[i]); };
       if (!raw.length) return d;
+      /* 新增图表类型：雷达 / 仪表盘 / 散点（复用上面解析好的 labels/values/withUnit） */
+      if (p.kind === 'radar') { d.append(ouiRadar(labels, values, withUnit)); return d; }
+      if (p.kind === 'gauge') { d.append(ouiGauge(values[0] || 0, labels[0] != null ? textOf(labels[0]) : '', unit)); return d; }
+      if (p.kind === 'scatter') { d.append(ouiScatter(raw, withUnit)); return d; }
       /* action：点某根柱 / 某个图例项就执行，{label} 换成该项标签。
          命中区给的是「看得见的部分」（数值、柱体、标签），不是整列：
          整列高 122px，矮柱上方的空白也算点，真机上点不准（实测误触源之一）。
@@ -1118,6 +1275,14 @@ function renderNode(node, ctx) {
       wrap.append(head, r);
       return wrap;
     }
+    case 'Heatmap': return ouiHeatmap(p);
+    case 'Calendar': return ouiCalendar(p);
+    case 'Timeline': return ouiTimeline(p);
+    case 'Gantt': return ouiGantt(p);
+    case 'Breadcrumb': return ouiCrumb(p);
+    case 'Tree': return ouiTree(p);
+    case 'Diff': return ouiDiff(p);
+    case 'Ring': return ouiRing(p);
     default:
       return null;
   }

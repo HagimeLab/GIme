@@ -108,7 +108,7 @@ svg { display: block; }
 .study-card .sc-go svg { flex: 0 0 auto; color: var(--ink-2); }
 
 /* ---------------- 首页 ---------------- */
-.page { display: none; padding: calc(var(--st) + 18px) 22px 118px; }
+.page { display: none; padding: calc(var(--st) + 18px) 22px calc(var(--sb) + 132px); }
 .page.on { display: block; }
 
 .hello { display: flex; align-items: center; margin-bottom: 22px; }
@@ -779,6 +779,137 @@ button.rec:active { opacity: .62; }
 .sw.on { background: var(--ink); }
 .sw.on:after { transform: translateX(19px); background: #fff; }
 
+/* ---------------- 哔哩哔哩收藏（v1.1.7 P5） ---------------- */
+/* 只用既有主题令牌，不引入新颜色；间距全用 margin，不用 flex gap。 */
+.bili-card { padding: 18px 0; border-bottom: 1px solid var(--line); }
+.bili-card b { font-size: .9375rem; font-weight: 600; display: block; line-height: 1.6; }
+.bili-note { font-size: .75rem; color: var(--ink-2); line-height: 1.6; margin: 8px 0 14px; }
+.bili-user { display: flex; align-items: center; }
+.bili-who { flex: 1; margin-left: 12px; }
+.bili-who small { font-size: .75rem; color: var(--ink-2); display: block; margin-top: 3px; }
+.bili-ava { width: 42px; height: 42px; border-radius: 50%; object-fit: cover; background: var(--surface); }
+.bili-btn { border: 0; background: var(--ink); color: var(--paper); border-radius: 999px;
+            padding: 9px 18px; font-size: .8125rem; font-weight: 600; }
+.bili-empty { padding: 26px 0; text-align: center; font-size: .8125rem; color: var(--ink-3); }
+.bili-item .bili-rt { flex: 0 0 20px; text-align: right; color: var(--ink-3); }
+.bili-off { opacity: .55; }
+.bili-more { padding: 16px 0; text-align: center; font-size: .8125rem; color: var(--ink-2); }
+.bili-player { margin: 6px 0 14px; position: relative; }
+.bili-player video { width: 100%; border-radius: 12px; background: #000; display: block; }
+.bili-meta b { font-size: .9375rem; font-weight: 600; display: block; line-height: 1.55; }
+.bili-meta small { font-size: .75rem; color: var(--ink-2); display: block; margin-top: 4px; }
+.bili-pages { display: flex; flex-wrap: wrap; margin-top: 12px; }
+.bili-pg { border: 1px solid var(--line); background: transparent; color: var(--ink-2);
+           border-radius: 999px; padding: 6px 13px; font-size: .75rem; margin: 0 8px 8px 0; }
+.bili-pg.on { background: var(--ink); color: var(--paper); border-color: var(--ink); }
+/* 播放器内嵌控制条：上一集 / 播放暂停 / 时间 / 进度 / 下一集 / 静音 / 全屏 */
+.bili-ctl { position: absolute; left: 0; right: 0; bottom: 0; display: flex; align-items: center;
+            height: 46px; padding: 0 8px; border-radius: 0 0 12px 12px; color: #fff;
+            background: linear-gradient(rgba(0,0,0,0), rgba(0,0,0,.78));
+            transition: opacity .2s linear; }
+.bili-ctl.hide { opacity: 0; pointer-events: none; }
+.bili-cb { flex: 0 0 auto; width: 32px; height: 32px; margin-right: 6px; display: flex;
+           align-items: center; justify-content: center; border: 0; border-radius: 50%;
+           background: rgba(255,255,255,.12); color: #fff; font-size: .8125rem; line-height: 1; }
+.bili-cb:active { background: rgba(255,255,255,.28); }
+.bili-time { flex: 0 0 auto; font-size: .625rem; color: rgba(255,255,255,.85); margin-right: 8px;
+             min-width: 62px; text-align: center; font-variant-numeric: tabular-nums; }
+.bili-seek { flex: 1 1 30px; min-width: 30px; height: 24px; margin: 0 6px 0 0; -webkit-appearance: none;
+             background: transparent; }
+.bili-seek::-webkit-slider-runnable-track { height: 3px; border-radius: 2px; background: rgba(255,255,255,.4); }
+.bili-seek::-webkit-slider-thumb { -webkit-appearance: none; width: 12px; height: 12px; margin-top: -4.5px;
+                                   border-radius: 50%; background: #fff; }
+.bili-fs-exit { display: none; }
+/* 视频页（原错题本 tab）：页内头部 + 内容容器，样式跟整页层的 fs-head 一致 */
+.bili-head { display: flex; align-items: center; margin: -4px 0 10px; }
+.bili-head .bili-back { flex: 0 0 46px; height: 46px; border: 0; background: transparent;
+                        color: var(--ink); font-size: 1.5rem; line-height: 1; text-align: left; }
+.bili-head h2 { flex: 1; text-align: center; font-size: 1.0625rem; font-weight: 700; }
+.bili-head i { flex: 0 0 46px; }
+.bili-body { padding: 0; }
+/* 全屏：视频铺满整屏（object-fit: contain 留黑边），控制条浮在画面底部，跟常见手机播放器一致 */
+#tab-video.bili-full { position: fixed; top: 0; left: 0; right: 0; bottom: 0;
+                       padding: 0; z-index: 1200; background: #000; }
+#tab-video.bili-full .bili-head,
+#tab-video.bili-full .bili-meta,
+#tab-video.bili-full .bili-pages { display: none; }
+#tab-video.bili-full .bili-body { padding: 0; }
+#tab-video.bili-full .bili-player { position: fixed; top: 0; left: 0; width: 100vw; height: 100vh;
+                                   margin: 0; background: #000; z-index: 1201; display: block; }
+/* 全屏时画面铺满整个手机屏幕：cover 裁掉多出来的边，不留黑边（contain 会留左右黑边） */
+#tab-video.bili-full .bili-player video { position: absolute; top: 0; left: 0;
+                                         width: 100%; height: 100%; border-radius: 0;
+                                         background: #000; object-fit: cover; }
+/* 控制条浮在画面底部（渐变半透明），不再单独占一条，保证画面真·满屏 */
+#tab-video.bili-full .bili-ctl { position: absolute; left: 0; right: 0; bottom: 0;
+                                border-radius: 0; height: auto;
+                                padding: 6px 14px calc(6px + var(--sb, 0px));
+                                background: linear-gradient(180deg, rgba(0,0,0,0), rgba(0,0,0,.85) 42%);
+                                border-top: 0; }
+#tab-video.bili-full .bili-fs-exit { display: block; position: absolute; right: 14px; top: 14px;
+                                    z-index: 1202; border: 0; border-radius: 999px;
+                                    padding: 8px 14px; font-size: .75rem;
+                                    background: rgba(0,0,0,.55); color: #fff; }
+
+/* 收藏夹升级：卡片化（用户卡 / 收藏夹 / 视频条目），全部复用既有令牌 */
+.bili-user { display: flex; align-items: center; background: var(--raise); border: 0;
+             border-radius: var(--r-in); padding: 14px 16px; margin: 4px 0 18px;
+             box-shadow: var(--sh-soft); }
+.bili-ava { flex: 0 0 48px; width: 48px; height: 48px; border-radius: 50%;
+            object-fit: cover; background: var(--surface); box-shadow: var(--sh-sm); }
+.bili-ava-txt { display: flex; align-items: center; justify-content: center;
+                font-weight: 700; color: var(--ink-2); font-size: 1.125rem; }
+.bili-who { flex: 1; margin-left: 14px; min-width: 0; }
+.bili-who b { font-size: 1rem; font-weight: 600; display: block;
+              overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.bili-who small { display: flex; align-items: center; font-size: .75rem;
+                  color: var(--ink-2); margin-top: 4px; }
+.bili-dot { display: inline-block; width: 6px; height: 6px; border-radius: 50%;
+            background: var(--ok); margin-right: 6px; }
+.bili-ghost { background: transparent; color: var(--ink-2); border: 1px solid var(--line);
+              padding: 7px 14px; font-weight: 500; }
+.bili-list { display: block; }
+.bili-folder { display: flex; align-items: center; background: var(--raise);
+               border-radius: var(--r-in); padding: 14px 16px; margin-bottom: 10px;
+               box-shadow: var(--sh-soft); transition: transform .16s var(--ease); }
+.bili-folder:active { transform: scale(.995); }
+.bili-fbadge { flex: 0 0 44px; width: 44px; height: 44px; border-radius: 14px;
+               display: flex; align-items: center; justify-content: center;
+               background: var(--surface); box-shadow: var(--sink);
+               font-size: 1.0625rem; font-weight: 700; color: var(--ink); }
+.bili-fmain { flex: 1; margin-left: 14px; min-width: 0; }
+.bili-fmain b { font-size: .9375rem; font-weight: 600; display: block;
+                overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.bili-fmain small { font-size: .75rem; color: var(--ink-2); }
+.bili-rt { color: var(--ink-3); font-size: 1rem; margin-left: 8px; }
+.bili-sec { font-size: .75rem; color: var(--ink-3); padding: 2px 2px 10px; }
+.bili-v { display: flex; align-items: flex-start; background: var(--raise);
+          border-radius: var(--r-in); padding: 10px; margin-bottom: 10px;
+          box-shadow: var(--sh-soft); transition: transform .16s var(--ease); }
+.bili-v:active { transform: scale(.995); }
+.bili-vthumb { position: relative; flex: 0 0 42%; width: 42%; padding-top: 23.6%;
+               border-radius: 12px; overflow: hidden; background: var(--surface); }
+.bili-vthumb img { position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+                   object-fit: cover; display: block; }
+.bili-vdur { position: absolute; right: 5px; bottom: 5px; font-style: normal;
+             font-size: .625rem; color: #fff; background: rgba(0,0,0,.72);
+             border-radius: 6px; padding: 1px 5px; font-variant-numeric: tabular-nums; }
+.bili-vtag { position: absolute; left: 0; right: 0; bottom: 0; font-style: normal;
+             font-size: .625rem; color: #fff; background: rgba(0,0,0,.6);
+             padding: 3px 6px; text-align: center; }
+.bili-v-off .bili-vthumb img { filter: grayscale(1); opacity: .6; }
+.bili-vmain { flex: 1; margin-left: 12px; min-width: 0; padding-top: 2px; }
+.bili-vt { font-size: .875rem; font-weight: 600; line-height: 1.45;
+           display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
+           overflow: hidden; }
+.bili-vmain small { display: block; font-size: .6875rem; color: var(--ink-3); margin-top: 6px;
+                    overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.bili-chips { display: flex; flex-wrap: wrap; margin-top: 8px; }
+.bili-chip { font-size: .6875rem; color: var(--ink-2); background: var(--surface);
+             border-radius: 999px; padding: 3px 10px; margin: 0 8px 6px 0; }
+.bili-more { display: block; width: max-content; margin: 16px auto 4px;
+             border: 1px solid var(--line); border-radius: 999px;
+             padding: 9px 20px; font-size: .8125rem; color: var(--ink-2); }
 /* ---------------- 动效：主题圆形扩散 / 涟漪 / 弹性 ---------------- */
 ::view-transition-old(root), ::view-transition-new(root) { animation: none; mix-blend-mode: normal; }
 ::view-transition-new(root) { animation: vt-in .5s ease-in-out; }
@@ -1883,3 +2014,483 @@ textarea.pl-field { resize: none; line-height: 1.6; }
                 border-radius: 10px; padding: 10px 12px; overflow-x: auto; }
 /* 无 action 的 Tap 降级成纯文本，不再伪装成按钮 */
 .oui-tap-plain { display: block; }
+
+/* ============================================================================
+   UI 排版模板落地（m02323）：八轮 UI 反馈的最终排版写回
+   规则来源：D:\desktop\agent\GIme-ui-template\template.html
+     A 控制条 :455-591   B 首页历史 :89-98, :260-276, :331-380
+     C 题库 / 统计 :303-355   D 来源栏 :586-591
+   全部复用既有主题令牌；播放器浮层的白色半透明与黑色中性渐变沿用
+   style.css:806-821 既有约定。真机全屏由 Android.biliFullscreen(true) 锁横屏。
+   ============================================================================ */
+
+/* --- A1. 控制条圆钮（m01807 ①：32→28px、图标 16→14px） --- */
+.bili-cb { width: 28px; height: 28px; }
+.bili-cb .ico { width: 14px; height: 14px; stroke-width: 1.9; }
+.bili-cb[hidden] { display: none; }
+.bili-cb.muted { opacity: .5; }
+
+/* --- A2. 进度条 v2（m01498 参考图 / m01668 内嵌态 / m01807 分组 / m01975 边界） --- */
+.bili-ctl.progress-v2 { align-items: stretch; height: 66px; padding: 6px 18px 8px;
+  flex-direction: column; justify-content: flex-end; gap: 2px;
+  background: linear-gradient(rgba(0,0,0,0), rgba(0,0,0,.34)), rgba(255,255,255,.12); }
+.bili-ctl.progress-v2 .bili-progress { position: relative; flex: 0 0 22px; height: 22px; }
+.bili-ctl.progress-v2 .bili-time { position: absolute; left: 0; top: 0; flex: none; min-width: 0;
+  margin: 0; text-align: left; font-size: .75rem; color: #fff; letter-spacing: .3px; }
+.bili-ctl.progress-v2 .bili-wave { position: absolute; left: 0; right: 0; top: 8px;
+  width: 100%; height: 13px; fill: rgba(255,255,255,.28); pointer-events: none; }
+.bili-ctl.progress-v2 .bili-track { position: absolute; left: 0; right: 0; bottom: 0;
+  height: 3px; border-radius: 2px; background: rgba(255,255,255,.32); overflow: visible; }
+.bili-ctl.progress-v2 .bili-track-fill { display: block; height: 100%; width: 0;
+  border-radius: 2px; background: #fff; }
+.bili-ctl.progress-v2 .bili-dot { position: absolute; top: -1px; width: 5px; height: 5px;
+  border-radius: 50%; background: rgba(255,255,255,.9); }
+.bili-ctl.progress-v2 .bili-thumb { position: absolute; top: -4px; left: 0;
+  width: 11px; height: 11px; border-radius: 50%; background: #fff; transform: translateX(-50%); }
+.bili-ctl.progress-v2 .bili-seek { position: absolute; left: 0; top: 0; width: 100%; height: 100%;
+  margin: 0; flex: none; min-width: 0; opacity: 0; cursor: pointer;
+  -webkit-appearance: none; appearance: none; background: transparent; }
+.bili-ctl.progress-v2 .bili-seek::-webkit-slider-runnable-track { height: 3px; background: transparent; }
+.bili-ctl.progress-v2 .bili-seek::-webkit-slider-thumb { -webkit-appearance: none;
+  width: 11px; height: 11px; margin-top: 0; border-radius: 50%; background: #fff; }
+.bili-ctl.progress-v2 .bili-cb-row { display: flex; align-items: center; gap: 6px;
+  flex: 0 0 32px; height: 32px; }
+.bili-ctl.progress-v2 .bili-cb-group { display: flex; align-items: center; gap: 6px; }
+.bili-ctl.progress-v2 .bili-cb-row .bili-cb { margin-right: 0; }
+.bili-ctl.progress-v2 .bili-cb-note { margin-left: auto; margin-right: 8px;
+  font-size: .6875rem; color: rgba(255,255,255,.55);
+  font-variant-numeric: tabular-nums; white-space: nowrap; }
+
+/* --- A3. 真机全屏态：画面在上方，控制条紧接画面下方且铺满全宽 --- */
+.bili-topbar, .bili-pause-layer { display: none; }
+#tab-video.bili-full { position: fixed; inset: 0; z-index: 1200; background: #000; padding: 0;
+  display: flex; flex-direction: column; justify-content: center; }
+#tab-video.bili-full .bili-head,
+#tab-video.bili-full .bili-meta,
+#tab-video.bili-full .bili-pages,
+#tab-video.bili-full .bili-fs-exit { display: none; }
+#tab-video.bili-full .bili-body { padding: 0; width: 100%; height: 100%; }
+#tab-video.bili-full .bili-player { position: absolute; inset: 0; width: 100%; height: 100%;
+  margin: 0; background: #000; z-index: 1201; border-radius: 0; overflow: visible;
+  user-select: none; -webkit-user-select: none; }
+#tab-video.bili-full .bili-player video { position: absolute; left: 0; right: 0; top: 0;
+  width: 100%; height: calc(100% - 66px); border-radius: 0; background: #000;
+  object-fit: contain; display: block; }
+#tab-video.bili-full .bili-ctl { position: absolute; left: 0; right: 0; bottom: 0; width: auto;
+  height: 66px; padding: 6px 18px 8px; border-radius: 0; border-top: 0; box-shadow: none;
+  display: flex; flex-direction: column; justify-content: flex-end; gap: 2px;
+  background: linear-gradient(rgba(0,0,0,0), rgba(0,0,0,.34)), rgba(255,255,255,.12);
+  transition: opacity .25s var(--ease), transform .25s var(--ease); }
+#tab-video.bili-full .bili-topbar { position: absolute; left: 0; right: 0; top: 0; z-index: 1203;
+  display: flex; align-items: center; gap: 12px; padding: 12px 18px 22px;
+  background: linear-gradient(rgba(0,0,0,.72), rgba(0,0,0,0)); color: #fff;
+  pointer-events: none; transition: opacity .25s var(--ease), transform .25s var(--ease); }
+#tab-video.bili-full .bili-topbar b { flex: 1; min-width: 0; font-size: .875rem; font-weight: 600;
+  letter-spacing: .2px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#tab-video.bili-full .bili-topbar .ep { flex: 0 0 auto; font-size: .75rem;
+  color: rgba(255,255,255,.78); border: 1px solid rgba(255,255,255,.28);
+  border-radius: 999px; padding: 4px 12px; font-variant-numeric: tabular-nums; }
+#tab-video.bili-full.chrome-hidden .bili-topbar { opacity: 0; transform: translateY(-10px); }
+#tab-video.bili-full.chrome-hidden .bili-ctl { opacity: 0; transform: translateY(10px);
+  pointer-events: none; }
+#tab-video.bili-full .bili-pause-layer { position: absolute; left: 0; right: 0; top: 0;
+  bottom: 66px; display: none; align-items: center; justify-content: center; flex-direction: column;
+  gap: 10px; pointer-events: none; color: rgba(255,255,255,.85); }
+#tab-video.bili-full.is-paused .bili-pause-layer { display: flex; }
+#tab-video.bili-full .bili-pause-layer .ico { width: 52px; height: 52px; stroke-width: 1.3; }
+#tab-video.bili-full .ph-tip { font-size: .6875rem; letter-spacing: 1px;
+  color: rgba(255,255,255,.42); }
+
+/* --- B. 收藏来源（m02175：只显示已接入功能的来源，当前仅哔哩哔哩） --- */
+.bili-srcbar { display: flex; gap: 8px; margin: 0 -2px 14px; overflow-x: auto;
+  scrollbar-width: none; }
+.bili-srcbar::-webkit-scrollbar { display: none; }
+.bili-srcbar button { flex: 0 0 auto; min-height: 40px; padding: 10px 16px;
+  border: 1px solid var(--line); border-radius: 999px; background: var(--raise);
+  color: var(--ink-2); font: inherit; font-size: .8125rem; font-weight: 600; cursor: pointer; }
+.bili-srcbar button.on { background: var(--ink); color: var(--paper); border-color: var(--ink); }
+/* m03204：按「只显示已接入功能的来源」收敛后仍保留一个「＋ 添加来源」预留位，
+   不显示抖音/其他平台等未接入来源；点了提示未接入，等对应功能做好再往栏里加按钮。 */
+.bili-srcbar button.add { background: transparent; border-style: dashed; color: var(--ink-3); }
+
+/* --- C1. 首页历史（m00819：近期刷题 + 最近观看） --- */
+.sec-title.tight { margin: 20px 0 10px; }
+.sec-title.tight:first-child { margin-top: 4px; }
+#tab-home .sec-title.tight { margin: 14px 0 8px; }
+#tab-home .card.pad.hist { padding: 16px; }
+#tab-home .rec { padding: 12px 0; }
+.vh { display: flex; align-items: center; width: 100%; min-height: 84px; padding: 12px 0;
+  border: 0; border-bottom: 1px solid var(--line); background: none; color: inherit;
+  font: inherit; text-align: left; cursor: pointer; }
+.vh:last-child { border-bottom: 0; }
+.vh:active { opacity: .62; }
+#tab-home .vh { min-height: 72px; padding: 10px 0; }
+/* 老 WebView (Chrome 80) 不支持 aspect-ratio，必须给显式高度，否则缩略图塌陷成空白 */
+.vh-thumb { position: relative; flex: 0 0 104px; width: 104px; height: 59px;
+  border-radius: 12px; overflow: hidden; background: var(--surface); }
+.vh-thumb img { position: absolute; inset: 0; width: 100%; height: 100%;
+  object-fit: cover; display: block; }
+.vh-thumb .ico { position: absolute; left: 50%; top: 50%; width: 22px; height: 22px;
+  transform: translate(-50%, -50%); color: var(--ink-3); }
+.vh-main { flex: 1; min-width: 0; margin-left: 12px; }
+.vh-main b { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
+  overflow: hidden; font-size: .875rem; font-weight: 600; line-height: 1.45; }
+.vh-main small { display: block; font-size: .6875rem; color: var(--ink-3); margin-top: 6px; }
+.vh-bar { display: block; height: 4px; border-radius: 999px; background: var(--surface);
+  margin-top: 8px; overflow: hidden; }
+.vh-bar i { display: block; height: 100%; border-radius: 999px; background: var(--ink); }
+
+/* --- C2. 题库页布局优化（m00819：可点区 ≥44px、间距收进 4px 网格） --- */
+#tab-bank .cats { gap: 12px; }
+#tab-bank .cat { min-height: 88px; padding: 14px 6px 12px;
+  border: 1px solid var(--line); border-radius: 22px; background: var(--surface);
+  box-shadow: none; }
+#tab-bank .cat:active { transform: scale(.97); background: var(--raise); }
+#tab-bank .cat .ico { width: 24px; height: 24px; margin: 0 auto 8px; }
+#tab-bank .task { min-height: 64px; padding: 16px 18px; border: 1px solid var(--line);
+  background: var(--surface); box-shadow: none; }
+#tab-bank .task .box { width: 28px; height: 28px; flex-basis: 28px; border-radius: 9px; }
+#tab-bank .tbar { overflow-x: auto; margin-bottom: 14px; scrollbar-width: none; }
+#tab-bank .tbar::-webkit-scrollbar { display: none; }
+#tab-bank .tbar button { min-width: 64px; padding: 12px 10px; box-shadow: none; border: 0; }
+#tab-bank .tbar button.on { box-shadow: none; }
+#tab-bank .tbar button:not(.on) { background: var(--surface); }
+#tab-bank .imp-link { font-size: .8125rem; color: var(--ink-2);
+  text-decoration: underline; text-underline-offset: 3px; cursor: pointer; }
+#tab-bank .sec-title .imp-link { margin-left: 10px; }
+#tab-bank .bk-acts button { min-height: 44px; }
+
+/* --- C3. 我的统计卡（m01112 ③：3 个可点主指标 + 一条整体完成率） --- */
+.stat-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 6px; }
+.stat-head b { font-size: .8125rem; font-weight: 700; }
+.stat-head span { font-size: .75rem; color: var(--ink-2); }
+.stat-grid { display: grid; grid-template-columns: repeat(3, 1fr); }
+.stat-cell { text-align: center; padding: 14px 2px; }
+.stat-cell b { display: block; font-size: 1.75rem; font-weight: 800; line-height: 1.2;
+  letter-spacing: -.5px; }
+.stat-cell span { display: block; font-size: .75rem; color: var(--ink-2); margin-top: 6px; }
+button.stat-cell { appearance: none; border: 0; background: none; color: inherit; font: inherit;
+  cursor: pointer; border-radius: var(--r-in); }
+button.stat-cell:active { background: var(--surface); }
+.stat-prog { margin-top: 14px; padding-top: 14px; border-top: 1px solid var(--line); }
+.stat-prog .lab { display: flex; justify-content: space-between; font-size: .75rem;
+  color: var(--ink-2); margin-bottom: 8px; }
+.stat-prog .lab b { color: var(--ink); font-weight: 700; }
+
+/* --- m02804 ② 全屏横屏：控制条按钮放大、间距拉开 -------------------------------
+   真机横屏屏幕更宽、手指更粗，28px 圆钮与 6px 间距过密；只在 .bili-full 态放大，
+   内嵌播放页保持 28px/6px 不变。m03116 ① 画面改 object-fit:cover 铺满整屏（不再 contain 留左右大黑边，也不再为控制条扣掉一条高度）；控制条本是半透明浮层，压在画面底部即可透出视频。② 圆钮 36→40px、行/组间距 12→20px、右侧信息留白 16→24px。 */
+#tab-video.bili-full .bili-ctl { height: 80px; padding: 6px 28px 10px; }
+#tab-video.bili-full .bili-player video { width: 100%; height: 100%; object-fit: cover; }
+#tab-video.bili-full .bili-pause-layer { bottom: 0; }
+#tab-video.bili-full .bili-ctl.progress-v2 .bili-cb-row { flex: 0 0 40px; height: 40px; gap: 20px; }
+#tab-video.bili-full .bili-ctl.progress-v2 .bili-cb-group { gap: 20px; }
+#tab-video.bili-full .bili-ctl.progress-v2 .bili-cb { width: 40px; height: 40px; }
+#tab-video.bili-full .bili-ctl.progress-v2 .bili-cb .ico { width: 20px; height: 20px; }
+#tab-video.bili-full .bili-ctl.progress-v2 .bili-cb-note { margin-right: 24px; font-size: .75rem; }
+
+/* --- 播放器增强：加载反馈 / 音量 HUD / 拖动预览 / 全屏手势反馈 --- */
+.bili-loading { position: absolute; top: 0; left: 0; right: 0; bottom: 0; display: none; align-items: center;
+  justify-content: center; z-index: 1250; pointer-events: none; }
+.bili-loading.show { display: flex; }
+#tab-video.bili-full .bili-loading { bottom: 80px; }
+.bili-spinner { width: 38px; height: 38px; border-radius: 50%;
+  border: 3px solid rgba(255,255,255,.26); border-top-color: #fff;
+  animation: biliSpin .8s linear infinite; }
+@keyframes biliSpin { to { transform: rotate(360deg); } }
+
+/* 音量 HUD：全屏右侧 1/4 上下滑时显示（竖向，贴右），3s 自动隐藏 */
+.bili-vol { position: absolute; right: 22px; top: 50%; transform: translateY(-50%) translateX(8px);
+  display: flex; flex-direction: column; align-items: center; gap: 6px; padding: 8px 7px; border-radius: 14px;
+  background: rgba(0,0,0,.62); color: #fff; z-index: 1251; opacity: 0; pointer-events: none;
+  transition: opacity .18s linear, transform .18s var(--ease, ease); }
+.bili-vol.show { opacity: 1; transform: translateY(-50%) translateX(0); }
+.bili-vol .ico { width: 18px; height: 18px; flex: 0 0 auto; stroke: #fff; fill: #fff; }
+.bili-vol-track { position: relative; width: 34px; height: 78px; display: flex; align-items: center; justify-content: center; }
+.bili-vol-bar { position: relative; width: 5px; height: 78px; border-radius: 3px;
+  background: rgba(255,255,255,.32); overflow: hidden; }
+.bili-vol-fill { position: absolute; left: 0; right: 0; bottom: 0; width: 100%; height: 50%; background: #fff; border-radius: 3px; }
+.bili-vol-pct { font-size: .6875rem; line-height: 1; text-align: center; font-variant-numeric: tabular-nums; }
+.bili-vol-range { position: absolute; left: 50%; top: 50%; width: 78px; height: 34px; margin: 0;
+  transform: translate(-50%,-50%) rotate(-90deg);
+  opacity: 0; -webkit-appearance: none; appearance: none; background: transparent; pointer-events: none; }
+.bili-vol.interactive { pointer-events: auto; }
+.bili-vol.interactive .bili-vol-range { pointer-events: auto; }
+
+.bili-scrub { position: absolute; bottom: 18px; left: 0; transform: translateX(-50%);
+  padding: 3px 8px; border-radius: 6px; background: rgba(0,0,0,.8); color: #fff;
+  font-size: .6875rem; white-space: nowrap; opacity: 0; pointer-events: none; z-index: 1252;
+  font-variant-numeric: tabular-nums; }
+.bili-scrub.show { opacity: 1; }
+.bili-scrub b { font-weight: 600; }
+
+/* ===== 倍速选择 & 长按加速提示（本轮新增） ===== */
+.bili-rate-btn { width: auto !important; min-width: 46px; padding: 0 10px; border-radius: 999px; flex: 0 0 auto; }
+.bili-rate-btn span { font-size: .75rem; font-weight: 600; letter-spacing: .01em; line-height: 1; }
+.bili-rate-menu { position: absolute; right: 58px; bottom: 78px; display: none; flex-direction: column;
+  gap: 2px; background: rgba(0,0,0,.86); border-radius: 12px; padding: 4px; z-index: 1254; min-width: 88px; }
+.bili-rate-menu.show { display: flex; }
+.bili-rate-menu button { background: transparent; border: 0; color: #fff; padding: 8px 14px;
+  font-size: .8125rem; border-radius: 8px; text-align: center; }
+.bili-rate-menu button:active { background: rgba(255,255,255,.16); }
+.bili-fast { position: absolute; left: 50%; top: 24%; transform: translateX(-50%);
+  background: rgba(0,0,0,.66); color: #fff; padding: 6px 14px; border-radius: 999px;
+  font-size: .75rem; z-index: 1251; display: none; pointer-events: none; }
+.bili-fast.show { display: block; }
+#tab-video.bili-full .bili-rate-menu { bottom: 96px; }
+
+/* 亮度 HUD：全屏左侧 1/4 上下滑时显示（竖向，贴左），3s 自动隐藏 */
+.bili-bright { position: absolute; left: 22px; top: 50%; transform: translateY(-50%) translateX(-8px);
+  display: flex; flex-direction: column; align-items: center; gap: 6px; padding: 8px 7px; border-radius: 14px;
+  background: rgba(0,0,0,.66); color: #fff; opacity: 0; transition: opacity .2s, transform .2s;
+  pointer-events: none; z-index: 1256; }
+.bili-bright.show { opacity: 1; transform: translateY(-50%) translateX(0); }
+.bili-bright .ico { width: 18px; height: 18px; flex: 0 0 auto; stroke: #fff; fill: none; stroke-width: 1.7; }
+.bili-bright-track { position: relative; width: 34px; height: 78px; display: flex; align-items: center; justify-content: center; }
+.bili-bright-bar { position: relative; width: 5px; height: 78px; border-radius: 3px;
+  background: rgba(255,255,255,.28); overflow: hidden; }
+.bili-bright-fill { position: absolute; left: 0; right: 0; bottom: 0; width: 100%; height: 50%; background: #fff; border-radius: 3px; }
+.bili-bright-pct { font-size: .6875rem; line-height: 1; text-align: center; font-variant-numeric: tabular-nums; }
+
+/* ============================================================================
+   高级交互升级（app-interactions.js）
+   swipeConfirm(#10) / 字号旋钮 Dial(#6) / 悬浮球 Dock Snap(#7) / 气泡避边 Tip(#8) / 成绩粒子(#1)
+   ==========================================================================*/
+/* 通用按压微反馈：只动 transform，不触发 layout */
+.navrow button, .tools button, .stat-cell, .row, .cats-toggle { transition: transform .12s var(--ease); }
+.navrow button:active, .tools button:active, .stat-cell:active, .row:active, .cats-toggle:active { transform: scale(.97); }
+
+/* #10 滑动确认 */
+.sc-scrim { position: fixed; inset: 0; background: rgba(0,0,0,.52); opacity: 0; transition: opacity .22s; z-index: 1020; }
+.sc-scrim.on { opacity: 1; }
+.sc { position: fixed; left: 50%; top: 50%; transform: translate(-50%,-46%) scale(.96); opacity: 0;
+  width: 84vw; max-width: 340px; padding: 22px 20px 16px; border-radius: 22px;
+  background: var(--raise); color: var(--ink); box-shadow: var(--sh); z-index: 1021;
+  transition: opacity .2s var(--ease), transform .24s var(--ease); }
+.sc.on { opacity: 1; transform: translate(-50%,-50%) scale(1); }
+.sc h2 { font-size: 1.0625rem; font-weight: 800; margin-bottom: 6px; }
+.sc p { font-size: .8125rem; color: var(--ink-2); line-height: 1.55; margin-bottom: 18px; }
+.sc-track { position: relative; height: 56px; border-radius: 999px; background: var(--surface); box-shadow: var(--sink); overflow: hidden; touch-action: none; }
+.sc-fill { position: absolute; left: 0; top: 0; bottom: 0; width: 100%; transform: scaleX(0); transform-origin: left center; background: var(--ink); opacity: .18; }
+.sc-tip { font-size: .8125rem; color: var(--ink-2); margin: 0 2px 10px; letter-spacing: .2px; transition: color .15s; }
+.sc.ready .sc-tip { color: var(--ink); font-weight: 600; }
+.sc-knob { position: absolute; left: 3px; top: 3px; width: 50px; height: 50px; border-radius: 50%;
+  background: var(--ink); color: var(--paper); display: flex; align-items: center; justify-content: center;
+  box-shadow: 0 4px 12px rgba(0,0,0,.25); touch-action: none; cursor: grab; }
+.sc-knob .ico { stroke: var(--paper); fill: none; stroke-width: 2.4; }
+.sc-cancel { display: block; margin: 14px auto 0; font-size: .875rem; font-weight: 600; color: var(--ink-2); padding: 8px 16px; }
+
+/* #6 字号旋钮 */
+.fd-scrim { position: fixed; inset: 0; background: rgba(0,0,0,.52); opacity: 0; transition: opacity .2s; z-index: 1020; }
+.fd-scrim.on { opacity: 1; }
+.fd { position: fixed; left: 50%; top: 50%; transform: translate(-50%,-46%) scale(.96); opacity: 0;
+  width: 78vw; max-width: 300px; padding: 22px 20px 14px; border-radius: 22px; text-align: center;
+  background: var(--raise); color: var(--ink); box-shadow: var(--sh); z-index: 1021;
+  transition: opacity .2s var(--ease), transform .24s var(--ease); }
+.fd.on { opacity: 1; transform: translate(-50%,-50%) scale(1); }
+.fd h2 { font-size: 1.0625rem; font-weight: 800; }
+.fd p { font-size: .75rem; color: var(--ink-2); margin: 4px 0 14px; }
+.fd-dial { position: relative; width: 190px; height: 190px; margin: 0 auto; touch-action: none; }
+.fd-ring { position: absolute; inset: 14px; border-radius: 50%; background: var(--surface); box-shadow: var(--sink); }
+.fd-tick { position: absolute; left: 50%; top: 8px; width: 2px; height: 9px; margin-left: -1px; border-radius: 2px;
+  background: var(--ink-3); transform-origin: 50% 87px; }
+.fd-pointer { position: absolute; left: 50%; top: 50%; width: 3px; height: 74px; margin-left: -1.5px; margin-top: -74px;
+  border-radius: 3px; background: var(--ink); transform-origin: 50% 100%; }
+.fd-pointer:after { content: ""; position: absolute; top: -6px; left: 50%; width: 13px; height: 13px; margin-left: -6.5px;
+  border-radius: 50%; background: var(--ink); }
+.fd-val { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
+  font-variant-numeric: tabular-nums; pointer-events: none; padding-top: 6px; }
+.fd-val b { font-size: 2rem; font-weight: 800; }
+.fd-val span { font-size: .8125rem; color: var(--ink-2); margin-left: 2px; align-self: flex-end; margin-bottom: 12px; }
+.fd-dial.drag .fd-pointer { transition: none; }
+.fd-done { margin-top: 8px; padding: 12px 28px; border-radius: 999px; background: var(--ink); color: var(--paper); font-size: .9375rem; font-weight: 700; }
+
+/* #8 气泡避边 */
+.gi-tip { position: fixed; z-index: 1050; max-width: 160px; padding: 8px 10px; border-radius: 10px;
+  background: var(--ink); color: var(--paper); font-size: .75rem; line-height: 1.4;
+  opacity: 0; transform: translateY(4px); transition: opacity .18s var(--ease), transform .18s var(--ease); pointer-events: none; }
+.gi-tip.on { opacity: 1; transform: translateY(0); }
+.gi-tip-ar { position: absolute; width: 0; height: 0; }
+
+/* #1 成绩粒子 */
+.gi-burst { position: fixed; inset: 0; z-index: 1030; pointer-events: none; }
+.gi-part { position: absolute; left: 0; top: 0; width: 8px; height: 8px; margin: -4px 0 0 -4px; border-radius: 50%;
+  background: var(--ink-2); will-change: transform, opacity; }
+.gi-part.ok { background: var(--ink); }
+.gi-ring { position: absolute; left: 0; top: 0; width: 60px; height: 60px; border-radius: 50%;
+  border: 2px solid var(--ink); opacity: 0; will-change: transform, opacity; }
+
+
+/* ============================================================================
+   导入题库界面（openImport 重做）
+   ==========================================================================*/
+#sheet3 { max-height: 88vh; overflow-y: auto; }
+.imp-head { display: flex; align-items: center; justify-content: space-between; padding: 2px 0 12px; }
+.imp-title { font-size: 1.25rem; font-weight: 800; }
+.imp-close { width: 34px; height: 34px; border-radius: 50%; background: var(--surface); box-shadow: var(--sink);
+  display: flex; align-items: center; justify-content: center; color: var(--ink-2); padding: 0; }
+.imp-close .ico { stroke: currentColor; fill: none; stroke-width: 2; }
+.imp-formats { display: flex; gap: 8px; flex-wrap: wrap; margin: 0 0 16px; }
+.imp-chip { font-size: .75rem; font-weight: 600; padding: 6px 12px; border-radius: 999px;
+  background: var(--surface); color: var(--ink-2); box-shadow: var(--sink); }
+.imp-primary { display: flex; align-items: center; gap: 14px; width: 100%; padding: 16px 18px; border: 0;
+  border-radius: 18px; background: var(--ink); color: var(--paper); text-align: left; }
+.imp-primary .ico { width: 22px; height: 22px; flex: 0 0 auto; stroke: var(--paper); fill: none; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+.imp-primary b { font-size: 1rem; display: block; }
+.imp-primary em { font-style: normal; font-size: .75rem; opacity: .72; display: block; margin-top: 2px; }
+.imp-row { display: flex; gap: 10px; margin-top: 12px; }
+.imp-ghost { flex: 1; padding: 14px 0; border: 0; border-radius: 14px; background: var(--surface);
+  box-shadow: var(--sink); font-weight: 600; font-size: .875rem; color: var(--ink); }
+.imp-tips { margin: 18px 0 0; padding: 14px 16px; border-radius: 14px; background: var(--surface); box-shadow: var(--sink); list-style: none; }
+.imp-tips li { position: relative; padding-left: 15px; font-size: .75rem; color: var(--ink-2); line-height: 1.6; margin: 0 0 7px; }
+.imp-tips li:last-child { margin-bottom: 0; }
+.imp-tips li:before { content: ""; position: absolute; left: 0; top: 8px; width: 5px; height: 5px; border-radius: 50%; background: var(--ink-3); }
+.imp-tips .k { color: var(--ink); font-weight: 700; }
+.imp-progress { margin: 18px 0 0; padding: 14px 16px; border-radius: 14px; background: var(--surface); box-shadow: var(--sink); }
+.imp-progress .track { margin: 0 0 8px; }
+
+/* --- 题库：导入按钮 pill + 整叠卡片 deck（默认收起，点按展开） --- */
+#tab-bank .imp-btn{ display:inline-flex; align-items:center; gap:5px; height:30px; padding:0 12px;
+  margin-left:10px; border:0; border-radius:999px; background:var(--ink); color:var(--paper);
+  font-size:.75rem; font-weight:700; letter-spacing:.2px; cursor:pointer; box-shadow:var(--sh-sm); }
+#tab-bank .imp-btn .ico{ stroke:currentColor; fill:none; stroke-width:2.4; stroke-linecap:round; }
+#tab-bank .imp-btn:active{ transform:scale(.96); }
+#bankList .bdeck{ position:relative; margin:2px 0 0; }
+#bankList .bcard{ position:relative; background:var(--raise); border:1px solid var(--line);
+  border-radius:20px; box-shadow:var(--sh-sm); margin-top:-24px;
+  transition:margin-top .35s var(--ease), box-shadow .3s var(--ease); }
+#bankList .bcard:first-child{ margin-top:0; }
+#bankList .bcard.open{ margin-top:12px; transform:none; box-shadow:var(--sh); z-index:60 !important; }
+#bankList .bcard.open:first-child{ margin-top:0; }
+#bankList .bcard.open + .bcard{ margin-top:12px; }
+#bankList .bc-head{ width:100%; display:flex; align-items:center; gap:10px; padding:18px;
+  background:none; border:0; color:inherit; font:inherit; text-align:left; cursor:pointer; border-radius:20px; }
+#bankList .bc-head:active{ opacity:.9; }
+#bankList .bc-main{ flex:1; min-width:0; display:flex; flex-direction:column; gap:4px; }
+#bankList .bc-main b{ font-size:1rem; font-weight:700; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+#bankList .bc-main em{ font-style:normal; font-size:.6875rem; color:var(--ink-3); }
+#bankList .bc-pct{ font-size:1.375rem; font-weight:800; letter-spacing:-.5px; }
+#bankList .bc-chev{ width:18px; height:18px; flex:0 0 auto; color:var(--ink-3); transition:transform .3s var(--ease); }
+#bankList .bcard.open .bc-chev{ transform:rotate(180deg); }
+#bankList .bc-detail{ max-height:0; overflow:hidden; opacity:0; padding:0 18px; }
+#bankList .bcard.open .bc-detail{ max-height:380px; opacity:1; padding:0 18px 18px;
+  transition:max-height .42s var(--ease), opacity .28s var(--ease), padding .3s var(--ease); }
+#bankList .bc-detail .pl-bar{ margin:2px 0 14px; }
+#bankList .bc-mini{ display:flex; gap:18px; margin-top:12px; }
+#bankList .bc-mini button{ appearance:none; border:0; background:none; color:var(--ink-2);
+  font:inherit; font-size:.75rem; padding:2px 0; cursor:pointer; text-decoration:underline; text-underline-offset:3px; }
+#bankList .bcard-import{ display:flex; align-items:center; justify-content:center; gap:8px; width:100%;
+  margin:14px 0 0; padding:16px; border:1.5px dashed var(--line); background:none; color:var(--ink-2);
+  border-radius:20px; font:inherit; font-size:.875rem; font-weight:600; cursor:pointer; }
+#bankList .bcard-import:active{ background:var(--surface); }
+
+/* --- 题库 deck：左滑露出 改名/删除（仅展开时生效） --- */
+#bankList .bcard{ overflow:hidden; }
+#bankList .bc-inner{ position:relative; z-index:1; background:var(--raise); border-radius:20px;
+  transition:transform .25s var(--ease); }
+#bankList .bc-acts{ position:absolute; top:0; right:0; bottom:0; width:100px; display:flex;
+  flex-direction:column; align-items:center; justify-content:center; padding:0 10px; z-index:0; }
+#bankList .bc-act{ width:80px; height:38px; border:0; border-radius:12px; background:var(--ink);
+  color:var(--paper); font:inherit; font-size:.78rem; font-weight:700; cursor:pointer;
+  display:flex; align-items:center; justify-content:center; }
+#bankList .bc-act.rename{ background:var(--surface); color:var(--ink); box-shadow:inset 0 0 0 1px var(--line); }
+#bankList .bc-act + .bc-act{ margin-top:10px; }
+#bankList .bc-act:active{ transform:scale(.96); }
+#bankList .bc-head{ touch-action:pan-y; }
+#bankList .bc-swipe-hint{ font-size:.6875rem; color:var(--ink-3); margin-top:10px; }
+#bankList .bcard.swiped{ box-shadow:var(--sh); }
+/* 左滑进入操作态时收起展开详情，让卡片高度回到标题行，两个圆角按钮与标题同高，避免与详情按钮挤在一起 */
+#bankList .bcard.open.swiped .bc-detail{ max-height:0; opacity:0; padding-top:0; padding-bottom:0; overflow:hidden; }
+/* 左滑操作态：纵向排列两个按钮，卡片保持足够高度并让标题行垂直居中，空间更均衡 */
+#bankList .bcard.open.swiped{ min-height:118px; }
+#bankList .bcard.open.swiped .bc-inner{ min-height:118px; display:flex; flex-direction:column; justify-content:center; }
+/* ================= OpenUI 新增组件样式（Heatmap/Calendar/Timeline/Gantt/Tree/Breadcrumb/Diff/Ring/雷达/仪表盘/散点/语义色） ================= */
+.oui-viz-t{font-size:.8125rem;font-weight:700;margin-bottom:8px}
+/* Heatmap */
+.oui-heat{display:grid;gap:3px}
+.oui-heat-c{display:block;aspect-ratio:1/1;border-radius:3px;background:var(--surface)}
+.oui-heat-c.l1{background:rgba(128,132,140,.28)}
+.oui-heat-c.l2{background:rgba(128,132,140,.5)}
+.oui-heat-c.l3{background:rgba(128,132,140,.72)}
+.oui-heat-c.l4{background:var(--ink)}
+/* Calendar */
+.oui-cal-h,.oui-cal-g{display:grid;grid-template-columns:repeat(7,1fr);gap:4px}
+.oui-cal-w{text-align:center;font-size:.6875rem;color:var(--ink-3);padding-bottom:2px}
+.oui-cal-c{position:relative;aspect-ratio:1/1;border-radius:7px;background:var(--surface);display:flex;align-items:center;justify-content:center}
+.oui-cal-c.blank{background:transparent}
+.oui-cal-d{font-size:.6875rem;color:var(--ink-2)}
+.oui-cal-c.on .oui-cal-d{color:var(--paper);font-weight:700}
+.oui-cal-c.on.l1{background:rgba(128,132,140,.3)}
+.oui-cal-c.on.l2{background:rgba(128,132,140,.52)}
+.oui-cal-c.on.l3{background:rgba(128,132,140,.74)}
+.oui-cal-c.on.l4{background:var(--ink)}
+/* Timeline */
+.oui-tl{display:flex;flex-direction:column}
+.oui-tl-i{display:flex;gap:10px;position:relative;padding-bottom:14px}
+.oui-tl-i.last{padding-bottom:0}
+.oui-tl-i:not(.last):before{content:"";position:absolute;left:5px;top:14px;bottom:0;width:1px;background:var(--line)}
+.oui-tl-d{flex:0 0 11px;height:11px;margin-top:3px;border-radius:50%;background:var(--ink)}
+.oui-tl-t{font-size:.6875rem;color:var(--ink-3)}
+.oui-tl-h{font-size:.8125rem;font-weight:700;margin-top:1px}
+.oui-tl-x{font-size:.75rem;color:var(--ink-2);margin-top:2px;line-height:1.5}
+/* Gantt */
+.oui-gantt-r{display:flex;align-items:center;gap:8px;margin-bottom:8px}
+.oui-gantt-n{flex:0 0 84px;font-size:.75rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.oui-gantt-tr{position:relative;flex:1;height:18px;border-radius:6px;background:var(--surface);overflow:hidden}
+.oui-gantt-bar{position:absolute;top:0;bottom:0;border-radius:6px;background:var(--raise);box-shadow:inset 0 0 0 1px var(--line);overflow:hidden;display:flex;align-items:center}
+.oui-gantt-fill{position:absolute;left:0;top:0;bottom:0;background:var(--ink);opacity:.85}
+.oui-gantt-p{position:relative;font-size:.625rem;color:var(--paper);padding-left:5px}
+.oui-gantt-u{font-size:.625rem;color:var(--ink-3);margin-top:2px}
+/* Breadcrumb / Tree */
+.oui-crumb{display:flex;flex-wrap:wrap;align-items:center;gap:4px;font-size:.75rem;color:var(--ink-2)}
+.oui-crumb-s{width:5px;height:5px;border-right:1px solid var(--ink-3);border-bottom:1px solid var(--ink-3);transform:rotate(-45deg);margin:0 2px}
+.oui-crumb-i.cur{color:var(--ink);font-weight:700}
+.oui-tree{display:flex;flex-direction:column;gap:6px}
+.oui-tree-r{display:flex;align-items:center;gap:7px}
+.oui-tree-d{width:6px;height:6px;border-radius:2px;background:var(--ink)}
+.oui-tree-d.sub{width:5px;height:5px;border-radius:50%;background:var(--ink-3)}
+.oui-tree-t{font-size:.8125rem;color:var(--ink-2)}
+.oui-tree-t.root{color:var(--ink);font-weight:700}
+/* Diff */
+.oui-diff{border:1px solid var(--line);border-radius:12px;overflow:hidden}
+.oui-diff-h{display:flex;justify-content:space-between;align-items:center;padding:7px 10px;background:var(--surface);font-size:.6875rem;color:var(--ink-3)}
+.oui-diff-t{font-weight:700;color:var(--ink-2)}
+.oui-diff-pre{margin:0;padding:8px 0;overflow-x:auto;font-family:ui-monospace,Menlo,Consolas,monospace;font-size:.72rem;line-height:1.55}
+.oui-diff-row{display:flex;white-space:pre}
+.oui-diff-g{flex:0 0 18px;text-align:center;color:var(--ink-3)}
+.oui-diff-c{flex:1;padding-right:10px}
+.oui-diff-row.add{background:rgba(46,159,110,.14)}
+.oui-diff-row.add .oui-diff-g,.oui-diff-row.add .oui-diff-c{color:#2e9f6e}
+.oui-diff-row.del{background:rgba(217,84,77,.14)}
+.oui-diff-row.del .oui-diff-g,.oui-diff-row.del .oui-diff-c{color:#d9544d}
+/* Ring */
+.oui-ring{display:inline-block;max-width:100%}
+.oui-ring-bg{fill:none;stroke:var(--surface);stroke-width:9}
+.oui-ring-fg{fill:none;stroke:var(--ink);stroke-width:9;stroke-linecap:round;transition:stroke-dashoffset .4s var(--ease)}
+.oui-ring-v{text-anchor:middle;font-size:19px;font-weight:700;fill:var(--ink)}
+.oui-ring-k{text-anchor:middle;font-size:9px;fill:var(--ink-3)}
+/* Radar / Gauge / Scatter */
+.oui-radar-grid{fill:none;stroke:var(--line);stroke-width:1}
+.oui-radar-axis{stroke:var(--line);stroke-width:1}
+.oui-radar-area{fill:rgba(128,132,140,.22);stroke:var(--ink);stroke-width:1.6}
+.oui-radar-lab{font-size:7px;fill:var(--ink-2)}
+.oui-gauge-bg{fill:none;stroke:var(--surface);stroke-width:11;stroke-linecap:round}
+.oui-gauge-fg{fill:none;stroke:var(--ink);stroke-width:11;stroke-linecap:round;transition:stroke-dashoffset .5s var(--ease)}
+.oui-gauge-v{text-anchor:middle;font-size:22px;font-weight:700;fill:var(--ink)}
+.oui-gauge-k{text-anchor:middle;font-size:9px;fill:var(--ink-3)}
+.oui-scatter-axis{stroke:var(--line);stroke-width:1}
+.oui-scatter-d{fill:var(--ink)}
+/* 语义色 */
+.oui-badge.t-success{border-color:#2e9f6e;color:#2e9f6e}
+.oui-badge.t-danger{border-color:#d9544d;color:#d9544d}
+.oui-badge.t-warn{border-color:#d99b2b;color:#d99b2b}
+.oui-badge.t-info{border-color:var(--line);color:var(--ink-2)}
+.oui-callout-i{display:none}
+.oui-callout.success .oui-callout-i,.oui-callout.danger .oui-callout-i,.oui-callout.warn .oui-callout-i{display:inline-flex;width:16px;height:16px;margin-right:6px;vertical-align:-2px;align-items:center;justify-content:center;border-radius:50%;font-size:11px;font-weight:700;color:#fff}
+.oui-callout.success .oui-callout-i{background:#2e9f6e}
+.oui-callout.success .oui-callout-i:before{content:"\2713"}
+.oui-callout.danger .oui-callout-i{background:#d9544d}
+.oui-callout.danger .oui-callout-i:before{content:"\2715"}
+.oui-callout.warn .oui-callout-i{background:#d99b2b}
+.oui-callout.warn .oui-callout-i:before{content:"!"}
+.oui-callout.danger{border-color:rgba(217,84,77,.5)}

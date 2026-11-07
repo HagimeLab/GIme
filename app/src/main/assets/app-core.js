@@ -667,6 +667,10 @@ function shClose() {
 }
 
 function startSession(mode, sid, tf, from) {
+  /* 从错题本整页层开始刷题时先把它收起：否则练习层 #quiz(z850) 会被 #wrongPage(z1100) 盖住，
+     用户看到的是错题本、以为没反应，得再按一次系统返回才露出题目。 */
+  var _wp = document.getElementById("wrongPage");
+  if (_wp && _wp.classList && _wp.classList.contains("on") && typeof closeWrongPage === "function") closeWrongPage();
   /* 顺序练习接着上次退出那一题继续：题库页「继续刷」、首页待刷、最近练习
      都走这里，和退出时自动保存的是同一份快照。 */
   if (mode === "practice") {
@@ -1114,6 +1118,7 @@ function submitExam() {
     ok: ["回首页", function () { goTab("home"); }],
     no: ["看错题", function () { startSession("wrong", sid, ""); }]
   });
+  try { if (window.GI && GI.scoreBurst) GI.scoreBurst(document.querySelector("#glass .big"), score >= 60); } catch (e) {}
 }
 
 /* ================= 计时 ================= */
@@ -1208,7 +1213,7 @@ function optBounce() {
    题库页是「导入卡片 → 筛选标签 → 题库列表卡片」。每组占一个 40ms 槽位，
    列表类那一组内部再按 40ms 逐张排开；单段时长 300ms，曲线用弹簧。
    只用 transform / opacity，Chrome 80 上两者都能被 element.animate 插值。 */
-var TAB_ORDER = ["home", "bank", "wrong", "me"];
+var TAB_ORDER = ["home", "bank", "video", "me"];
 var swapSeq = 0, swapTimer = null;
 
 function pageKids(pg, cls) {
@@ -1234,21 +1239,19 @@ function sectionOf(pg, listId) {
 }
 function enterGroups(which, pg) {
   if (which === "home") {
-    var cats = document.getElementById("cats");
-    var head = pageKids(pg, "cats-head");
     var hero = pageKidById(pg, "planHero");
     return [
       { els: pageKids(pg, "search"), step: 0 },
       { els: hero ? [hero] : [], step: 0 },
-      { els: head.concat(cats ? [].slice.call(cats.children) : []), step: 0 },
-      { els: sectionOf(pg, "tasks"), step: 0 },
       { els: sectionOf(pg, "recent"), step: 0 }
     ];
   }
   if (which === "bank") {
     var list = pageKidById(pg, "bankList");
     var cards = list ? [].slice.call(list.querySelectorAll(".swipe")) : [];
+    var bankCats = pageKidById(pg, "cats");
     return [
+      { els: bankCats ? [].slice.call(bankCats.children) : [], step: 20 },
       { els: list && list.firstElementChild ? [list.firstElementChild] : [], step: 0 },
       { els: list ? [].slice.call(list.querySelectorAll(".tbar")) : [], step: 0 },
       { els: cards.slice(0, 8), step: 40 }
@@ -1292,13 +1295,10 @@ var BOOT_BREATH = 600, BOOT_REVEAL = 700, BOOT_STEP = 60, BOOT_WAIT = 1800;
 var banksLoaded = false;
 
 function bootGroups(home) {
-  var cats = [].slice.call(document.getElementById("cats").children);
   var hero = pageKidById(home, "planHero");
   return [
     { els: pageKids(home, "hello"), step: 0 },
     { els: hero ? [hero] : [], step: 0 },
-    { els: pageKids(home, "cats-head").concat(cats), step: 20 },
-    { els: sectionOf(home, "tasks"), step: 0 },
     { els: sectionOf(home, "recent"), step: 0 },
     { els: [document.getElementById("tabs")], step: 0 }
   ];
@@ -1456,6 +1456,9 @@ function goTab(which) {
   var from = document.querySelector(".page.on");
   var to = document.getElementById("tab-" + which);
   curTab = which;
+  /* 离开视频页就把 <video> 的 src 拔掉：回到列表再进来重新取票，
+     不然回环连接和原生票会一直占着 */
+  if (which !== "video" && typeof biliPauseForLeave === "function") biliPauseForLeave();
   /* 按 data-tab 认按钮，不按序号：中间插了一颗大肥鱼，序号已经对不上 TAB_ORDER 了。
      大肥鱼那颗没有 data-tab，所以永远不会被标成选中态。 */
   var tabs = document.querySelectorAll("#tabs .tab");
@@ -1509,49 +1512,6 @@ function tabTap(which) {
    不落盘——重启后展开是最不容易让人迷路的状态 */
 var catsClosed = false;
 
-/* 首页学习资料卡：按错题本的题型分布找薄弱点，交给大肥鱼联网检索 */
-function studyFocus() {
-  var byType = {}, total = 0, best = "", n = 0, i, q, k;
-  for (i = 0; i < BANK.questions.length; i++) {
-    q = BANK.questions[i];
-    if (!inWrong(q)) continue;
-    total++;
-    k = q.type || "single";
-    byType[k] = (byType[k] || 0) + 1;
-  }
-  for (k in byType) if (byType[k] > n) { n = byType[k]; best = k; }
-  return { total: total, type: best, label: best ? typeName(best) : "", count: n };
-}
-function renderStudyCard() {
-  var el = document.getElementById("studyCard");
-  if (!el) return;
-  var f = studyFocus();
-  var on = typeof webSearchOn === "function" && webSearchOn();
-  var sub = f.total
-    ? "错题本里有 " + f.total + " 道错题" + (f.label ? "，" + f.label + "最多（" + f.count + " 道）" : "") + "；联网找 3 份适合的资料"
-    : "先做几道题，我再按你的薄弱点联网找资料";
-  el.innerHTML = '<div class="study-card">' +
-    '<div class="sc-top">' +
-      '<span class="sc-ic"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M4 5.5A2.5 2.5 0 0 1 6.5 3H20v16H6.5A2.5 2.5 0 0 0 4 21.5z"/><path d="M4 5.5v16"/></svg></span>' +
-      '<div class="sc-copy"><b>今日学习资料</b><em>' + esc(sub) + "</em></div>" +
-      '<span class="sc-net' + (on ? " on" : "") + '">' + (on ? "联网" : "未联网") + "</span>" +
-    "</div>" +
-    '<button class="sc-go" onclick="studyMaterials()"><span>让大肥鱼找资料</span>' +
-      '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 6l6 6-6 6"/></svg></button>' +
-  "</div>";
-}
-function studyMaterials() {
-  if (typeof webSearchOn === "function" && !webSearchOn()) {
-    toast("先在聊天页打开联网搜索");
-    return;
-  }
-  var f = studyFocus();
-  var focus = f.total ? "，尤其是" + f.label + "（" + f.count + " 道错题）" : "";
-  var prompt = "结合我的学习情况和错题" + focus +
-    "，联网帮我找 3 份适合的学习资料，给出可点击链接、来源和推荐理由；不要编造链接。";
-  openChatTab();
-  chatAsk(prompt);
-}
 function renderHome() {
   /* 今日待刷 + 进行中方案合成一张 Hero；方案域还没加载时留空，不挡首页 */
   var hero = document.getElementById("planHero");
@@ -1566,21 +1526,24 @@ function renderHome() {
   sub.textContent = noQ ? "" : "共 " + all.total + " 题 · 已刷 " + all.seen + " 题";
   sub.hidden = noQ;
 
-  var cats = "";
+  renderRecent();
+}
+
+/* 六张题型卡片：题库分类已经从首页搬到题库页，DOM 还是同一个 #cats，
+   只由 renderBank 画；这里单独抽出来，省得两处各写一遍 */
+function catsHtml() {
+  var h = "";
   TYPES.forEach(function (t) {
     var n, sub2;
     if (t.tf === "exam") { n = examN(); sub2 = n + " 题 / 卷"; }
     else { n = stats("all", t.tf).total; sub2 = n + " 题"; }
-    cats += '<div class="cat-wrap" data-tf="' + t.tf + '">' +
+    h += '<div class="cat-wrap" data-tf="' + t.tf + '">' +
               '<button class="cat" onclick="catGo(&quot;' + t.tf + '&quot;)">' +
                 '<svg class="ico" viewBox="0 0 24 24">' + t.ico + "</svg>" +
                 "<b>" + t.name + "</b><i>" + sub2 + "</i></button>" +
             "</div>";
   });
-  document.getElementById("cats").innerHTML = cats;
-  syncCatsFold();
-  renderTasks(noQ);
-  renderStudyCard();
+  return h;
 }
 
 /* 折叠：只改一个容器的类，六张卡片一起动，不会逐张错位。
@@ -1639,47 +1602,9 @@ function catGo(tf) {
   startSession("practice", "all", tf, "cat");
 }
 
-/* 空题库时只留一张卡：标题说清楚「还没有题目」，副标题说清楚点进去做什么。
-   格式说明由导入面板负责，这里不再重复一遍 */
-function emptyTaskHtml() {
-  return '<button class="task" onclick="openImport()">' +
-           '<span class="ck"><span class="box"></span></span>' +
-           '<span class="bd"><b>还没有题目</b><small>点这里导入题库</small></span>' +
-           '<span class="rt">导入</span></button>';
-}
-
-function renderTasks(noQ) {
-  var rows = noQ ? emptyTaskHtml() : "", anyBank = false;
-  BANK.subjects.forEach(function (s) {
-    var t = stats(s.id);
-    /* 与题库页同一条过滤：一道题都没有的题库不出现在这里。
-       少了这一格，「今日待刷」会列出题库页里根本看不到的名字（用户报的那条）。 */
-    if (!t.total) return;
-    anyBank = true;
-    var left = t.total - t.seen;
-    rows += '<div class="swipe" data-sid="' + s.id + '">' +
-              '<div class="swipe-acts">' +
-                '<button class="swipe-act" onclick="askRenameBank(&quot;' + s.id + '&quot;)">改名</button>' +
-                '<button class="swipe-act" onclick="askDeleteBank(&quot;' + s.id + '&quot;)">删除</button>' +
-              "</div>" +
-              '<button class="task" onclick="pickMode(&quot;practice&quot;,&quot;' + s.id + '&quot;)">' +
-              '<span class="ck"><span class="box' + (left <= 0 ? " ok" : "") + '"></span></span>' +
-              '<span class="bd"><b>' + esc(s.name) + "</b><small>" +
-                (left <= 0 ? "已全部刷过" : "剩余 " + left + " 题未刷") + " · 完成率 " + t.done + "%</small></span>" +
-              '<span class="rt">' + left + "<i>题</i></span>" +
-            "</button></div>";
-  });
-  if (anyBank) rows += '<div class="sl-hint" style="margin:-4px 0 18px">左滑题库行可以改名或删除</div>';
-  var w = wrongList();
-  if (!noQ || w.length) {
-    rows += '<button class="task" onclick="pickMode(&quot;wrong&quot;,&quot;all&quot;)">' +
-              '<span class="ck"><span class="box' + (w.length ? "" : " ok") + '"></span></span>' +
-              '<span class="bd"><b>错题本</b><small>' +
-              (w.length ? "答错过的题，答对不会自动移出" : "已经清空了") + "</small></span>" +
-              '<span class="rt">' + w.length + "<i>题</i></span></button>";
-  }
-  document.getElementById("tasks").innerHTML = rows;
-
+/* 首页只留「最近练习」：题库分类和今日待刷已经搬到题库页。
+   空题库时这张卡显示「还没有练习记录」，入口在题库页的导入卡 */
+function renderRecent() {
   var rec = BANK.subjects.map(function (s) {
     var t = stats(s.id);
     t.id = s.id; t.name = s.name;
@@ -1696,6 +1621,48 @@ function renderTasks(noQ) {
              '<span class="n">' + esc(t.name) + "<i>" + sub + "</i></span>" +
              '<span class="p"><b>' + t.done + "%</b><small>完成率</small></span></button>";
   }).join("") : '<div class="cap" style="margin:0">还没有练习记录</div>';
+  renderVideoRecent();
+}
+/* 兼容旧调用点：以前渲染「今日待刷 + 最近练习」，现在只剩最近练习 */
+function renderTasks() { renderRecent(); }
+
+/* 最近观看：播放历史由 app-bili.js 写入 localStorage，这里只读一次渲染首页那张卡。
+   存储不可用、元素不存在、数据坏了都静默留空，不让首页渲染失败。 */
+function renderVideoRecent() {
+  var box = document.getElementById("videoRecent");
+  if (!box) return;
+  var list = [];
+  try {
+    var raw = localStorage.getItem("gime.video.history");
+    var arr = raw ? JSON.parse(raw) : [];
+    if (Object.prototype.toString.call(arr) === "[object Array]") list = arr.slice(0, 2);
+  } catch (e) { list = []; }
+  if (!list.length) {
+    box.innerHTML = '<div class="cap" style="margin:0">还没有观看记录</div>';
+    return;
+  }
+  box.innerHTML = list.map(function (v) {
+    var pages = parseInt(v.pages, 10) || 1;
+    var page = parseInt(v.page, 10) || 1;
+    var pct = pages > 1 ? Math.round(page / pages * 100) : 100;
+    if (pct < 0) pct = 0; else if (pct > 100) pct = 100;
+    /* 占位播放图标用内联 path，不依赖 <use href>（老 WebView 兼容）；
+       真封面盖在它上面，外链加载失败时 onerror 隐藏 <img>，露出下面这枚占位。 */
+    var cov = '<svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5.5v13l11-6.5z"/></svg>' +
+      (v.cover ? '<img src="' + esc(v.cover) + '" alt="" loading="lazy" onerror="this.style.display=\'none\'">' : "");
+    var seen = parseFloat(v.time) || 0;
+    var sub = "P" + page + " / " + pages +
+      (seen > 0 ? " · 看到 " + (typeof biliDur === "function" ? biliDur(Math.floor(seen)) : Math.floor(seen) + "s")
+                : " · 最近观看");
+    /* bvid 是 B 站 BV 号（字母数字），过滤引号/尖括号后再拼进 onclick */
+    var bv = String(v.bvid || "").replace(/[^A-Za-z0-9_-]/g, "");
+    return '<button class="vh" onclick="biliResume(\'' + bv + '\',' + page + ')">' +
+             '<span class="vh-thumb">' + cov + "</span>" +
+             '<span class="vh-main"><b>' + esc(v.title || "视频") + "</b>" +
+             "<small>" + esc(sub) + "</small>" +
+             '<span class="vh-bar"><i style="width:' + pct + '%"></i></span></span>' +
+           "</button>";
+  }).join("");
 }
 
 function wrongList() {
@@ -1732,6 +1699,21 @@ function drawTfUnderline() {
 }
 
 function renderBank() {
+  var catsEl = document.getElementById("cats");
+  if (catsEl) { catsEl.innerHTML = catsHtml(); syncCatsFold(); }
+
+  /* 错题本从导航栏搬进题库：一张入口卡，点开整页层 */
+  var we = document.getElementById("wrongEntry");
+  if (we) {
+    var wl = wrongList();
+    we.innerHTML = '<button class="task" onclick="openWrongPage()">' +
+        '<span class="ck"><span class="box' + (wl.length ? "" : " ok") + '"></span></span>' +
+        '<span class="bd"><b>错题本</b><small>' +
+        (wl.length ? "答错过的题，答对不会自动移出；重做对后到「管理」里勾选移出" : "已经清空了") +
+        "</small></span>" +
+        '<span class="rt">' + wl.length + "<i>题</i></span></button>";
+  }
+
   var bar = '<div class="tbar scroll"><i class="tbar-u"></i>' + BANK_TAGS.map(function (t) {
     return '<button class="' + (bankTf === t[0] ? "on" : "") + '" onclick="setBankTf(&quot;' + t[0] + '&quot;)">' +
            t[1] + "</button>";
@@ -1739,40 +1721,45 @@ function renderBank() {
   var total = subjQs("all", bankTf).length;
   document.getElementById("bankTotal").textContent = total + " 题";
 
-  var h = '<button class="card pad" style="width:100%;display:flex;align-items:center;margin-bottom:16px" ' +
-            'onclick="openImport()">' +
-            '<span style="flex:0 0 40px"><svg class="ico" viewBox="0 0 24 24" style="width:22px;height:22px">' +
-            '<path d="M12 4v11M7.5 10.5L12 15l4.5-4.5"/><path d="M4.5 18.5h15"/></svg></span>' +
-            '<span style="flex:1;text-align:left;margin-left:12px"><b style="font-size:1rem">导入题库</b>' +
-            '<em style="font-style:normal;display:block;font-size:.6875rem;color:var(--ink-3)">' +
-            "PDF / Word / txt / md，带解析一起导</em></span>" +
-            '<span style="color:var(--ink-3)">›</span></button>' + bar;
+  var h = bar + '<div class="bdeck" id="bdeck">';
 
   var shown = 0;
   BANK.subjects.forEach(function (s) {
     var t = stats(s.id, bankTf);
     if (!t.total) return;
     shown++;
-    h += '<div class="swipe" data-sid="' + s.id + '">' +
-           '<div class="swipe-acts">' +
-             '<button class="swipe-act" onclick="askRenameBank(&quot;' + s.id + '&quot;)">改名</button>' +
-             '<button class="swipe-act" onclick="askDeleteBank(&quot;' + s.id + '&quot;)">删除</button>' +
+    var openCard = (bankOpenId === s.id);
+    h += '<div class="bcard' + (openCard ? " open" : "") + '" data-sid="' + s.id + '" style="z-index:' + (10 + shown) + '">' +
+           '<div class="bc-acts">' +
+             '<button class="bc-act rename" onclick="askRenameBank(&quot;' + s.id + '&quot;)">改名</button>' +
+             '<button class="bc-act" onclick="askDeleteBank(&quot;' + s.id + '&quot;)">删除</button>' +
            "</div>" +
-           '<div class="card pad">' +
-             '<div style="display:flex;align-items:center">' +
-               '<div style="flex:1;min-width:0"><b class="bk-name" style="font-size:1rem">' + esc(s.name) + "</b>" +
-               '<em class="bk-sub" style="font-style:normal;display:block;font-size:.6875rem;color:var(--ink-3)">' +
-               t.total + " 题 · 已刷 " + t.seen + " · 错题 " + t.wrong + "</em></div>" +
-               '<div class="bk-pct" style="font-size:1.5rem;font-weight:800">' + t.done + "%</div></div>" +
-             '<div class="bk-acts" style="display:flex;margin-top:16px">' +
-               '<button style="flex:1;padding:12px 0;border-radius:16px;background:var(--ink);color:var(--paper);font-size:.8125rem;font-weight:700" ' +
-                 'onclick="startSession(&quot;practice&quot;,&quot;' + s.id + '&quot;,&quot;' + bankTf + '&quot;,&quot;bank&quot;)">继续刷</button>' +
-               '<button style="flex:1;margin-left:10px;padding:12px 0;border-radius:16px;background:var(--raise);box-shadow:var(--sh-sm);font-size:.8125rem;font-weight:600" ' +
-                 'onclick="startSession(&quot;recite&quot;,&quot;' + s.id + '&quot;, &quot;' + bankTf + '&quot;)">背题</button>' +
-               '<button style="flex:1;margin-left:10px;padding:12px 0;border-radius:16px;background:var(--raise);box-shadow:var(--sh-sm);font-size:.8125rem;font-weight:600" ' +
-                 'onclick="openExam(&quot;' + s.id + '&quot;)">模拟</button>' +
-             "</div></div></div>";
+           '<div class="bc-inner">' +
+             '<button class="bc-head">' +
+               '<span class="bc-main"><b>' + esc(s.name) + "</b>" +
+                 "<em>" + t.total + " 题 · 已刷 " + t.seen + " · 错题 " + t.wrong + "</em></span>" +
+               '<span class="bc-pct">' + t.done + "%</span>" +
+               '<svg class="bc-chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"/></svg>' +
+             "</button>" +
+             '<div class="bc-detail">' +
+               '<div class="pl-bar"><i style="width:' + t.done + '%"></i></div>' +
+               '<div class="bk-acts" style="display:flex">' +
+                 '<button style="flex:1;padding:12px 0;border-radius:16px;background:var(--ink);color:var(--paper);font-size:.8125rem;font-weight:700" ' +
+                   'onclick="startSession(&quot;practice&quot;,&quot;' + s.id + '&quot;,&quot;' + bankTf + '&quot;,&quot;bank&quot;)">继续刷</button>' +
+                 '<button style="flex:1;margin-left:10px;padding:12px 0;border-radius:16px;background:var(--surface);box-shadow:var(--sh-sm);font-size:.8125rem;font-weight:600" ' +
+                   'onclick="startSession(&quot;recite&quot;,&quot;' + s.id + '&quot;, &quot;' + bankTf + '&quot;)">背题</button>' +
+                 '<button style="flex:1;margin-left:10px;padding:12px 0;border-radius:16px;background:var(--surface);box-shadow:var(--sh-sm);font-size:.8125rem;font-weight:600" ' +
+                   'onclick="openExam(&quot;' + s.id + '&quot;)">模拟</button>' +
+               "</div>" +
+               '<div class="bc-swipe-hint">左滑可改名 / 删除</div>' +
+             "</div>" +
+           "</div>" +
+         "</div>";
   });
+  h += "</div>"; /* /bdeck */
+  if (shown) {
+    h += '<button class="bcard-import" onclick="openImport()">＋ 从文件导入题库（PDF / Word / txt / md）</button>';
+  }
   if (!shown) {
     /* 题库为空是正常状态，不是错误：这里必须给出下一步能做什么 */
     h += !BANK.subjects.length
@@ -1785,9 +1772,81 @@ function renderBank() {
         "</div>"
       : '<div class="card pad" style="text-align:center;color:var(--ink-3)">这个题型下暂时没题</div>';
   }
-  h += '<div class="sl-hint" style="margin:14px 0 0">左滑题库卡片可以改名或删除，导入的题库随时可以再导入</div>';
+  h += '<div class="sl-hint" style="margin:14px 0 0">点题库卡片展开操作，可继续刷 / 背题 / 模拟；导入的题库随时可以再导入</div>';
   document.getElementById("bankList").innerHTML = h;
   drawTfUnderline();
+  bindBankSwipe();
+}
+
+/* 题库 deck：默认整叠收起，点卡片展开一个，再点收起 */
+var bankOpenId = null;
+function bankToggle(sid) {
+  var deck = document.getElementById("bdeck");
+  if (!deck) return;
+  bankOpenId = (bankOpenId === sid) ? null : sid;
+  var cards = deck.querySelectorAll(".bcard");
+  for (var i = 0; i < cards.length; i++) {
+    var on = cards[i].getAttribute("data-sid") === bankOpenId;
+    cards[i].classList.toggle("open", on);
+    if (!on) {
+      cards[i].classList.remove("swiped");
+      var inn = cards[i].querySelector(".bc-inner");
+      if (inn) inn.style.transform = "";
+    }
+  }
+}
+
+/* 改名/删除改回左滑出现：仅对「已展开」的卡片生效（未展开时左滑无效） */
+function bindBankSwipe() {
+  var cards = document.querySelectorAll("#bdeck .bcard");
+  for (var i = 0; i < cards.length; i++) {
+    (function (card) {
+      if (card.dataset.swBound === "1") return;
+      card.dataset.swBound = "1";
+      var inner = card.querySelector(".bc-inner");
+      var head = card.querySelector(".bc-head");
+      if (!inner || !head) return;
+      var ACTW = 100, startX = 0, startY = 0, base = 0, moved = false, active = false;
+      head.addEventListener("pointerdown", function (e) {
+        if (!card.classList.contains("open")) return;
+        active = true; moved = false;
+        startX = e.clientX; startY = e.clientY;
+        base = card.classList.contains("swiped") ? -ACTW : 0;
+        inner.style.transition = "none";
+        try { head.setPointerCapture(e.pointerId); } catch (x) {}
+      });
+      head.addEventListener("pointermove", function (e) {
+        if (!active) return;
+        var dx = e.clientX - startX, dy = e.clientY - startY;
+        if (!moved && Math.abs(dx) > 8 && Math.abs(dx) > Math.abs(dy)) moved = true;
+        if (!moved) return;
+        var x = base + dx; if (x > 0) x = 0; if (x < -ACTW) x = -ACTW;
+        inner.style.transform = "translateX(" + x + "px)";
+        try { e.preventDefault(); } catch (z) {}
+      });
+      function endSwipe(e) {
+        if (!active) return; active = false;
+        inner.style.transition = "";
+        if (moved) {
+          var x = base + (e.clientX - startX);
+          if (x < -ACTW / 2) { inner.style.transform = "translateX(-" + ACTW + "px)"; card.classList.add("swiped"); }
+          else { inner.style.transform = ""; card.classList.remove("swiped"); }
+          card._justSwiped = true;
+          setTimeout(function () { card._justSwiped = false; }, 60);
+        }
+      }
+      head.addEventListener("pointerup", endSwipe);
+      head.addEventListener("pointercancel", endSwipe);
+      head.addEventListener("click", function (e) {
+        if (card._justSwiped) { e.stopPropagation(); e.preventDefault(); return; }
+        if (card.classList.contains("swiped")) {
+          inner.style.transform = ""; card.classList.remove("swiped");
+          e.stopPropagation(); e.preventDefault(); return;
+        }
+        bankToggle(card.getAttribute("data-sid"));
+      }, true);
+    })(cards[i]);
+  }
 }
 
 var batchOn = false, batchSel = {};
@@ -1857,6 +1916,21 @@ function renderWrong() {
   document.getElementById("wrongList").innerHTML = h;
 }
 var wrongOpen = {};   /* 每个库的错题块是否展开；默认收起 */
+
+/* 错题本现在从题库页的入口卡打开，是整页层；返回键由 openLayers 统一处理 */
+function openWrongPage() {
+  var el = document.getElementById("wrongPage");
+  if (!el) return;
+  renderWrong();
+  if (typeof openLayer === "function") openLayer(el);
+  else { el.classList.add("on"); if (openLayers.indexOf(el) < 0) openLayers.push(el); syncLayerScrim(); }
+}
+function closeWrongPage() {
+  var el = document.getElementById("wrongPage");
+  if (!el) return;
+  if (typeof closeLayer === "function") closeLayer(el);
+  else { el.classList.remove("on"); var i = openLayers.indexOf(el); if (i >= 0) openLayers.splice(i, 1); syncLayerScrim(); }
+}
 function toggleWrongGroup(sid) { wrongOpen[sid] = !wrongOpen[sid]; renderWrong(); }
 function startWrongBank(sid) { startSession("wrong", sid, ""); }
 function enterBatch() { batchOn = true; batchSel = {}; renderWrong(); }
@@ -1950,20 +2024,17 @@ window.onRemindPerm = function () {
 function renderMe() {
   var a = stats("all");
   remindInfo = remindInfoGet();
-  /* 题库为空时覆盖率的分母是 0，直接除会得到 NaN 显示在界面上 */
-  var cover = a.total ? Math.round(a.seen / a.total * 100) + "%" : "—";
+  /* 统计卡收敛成 3 个可点主指标 + 一条整体完成率：去掉重复的百分比、
+     静态的题库总量和含糊的「收藏 · 点击刷」（模板 m01112 ③）。 */
   document.getElementById("meStat").innerHTML =
-    '<div class="metrics">' +
-      '<div class="metric"><b>' + a.seen + "</b><i>已刷题数</i></div>" +
-      '<div class="metric"><b>' + a.done + "%</b><i>完成率</i></div>" +
-      '<div class="metric"><b>' + a.wrong + "</b><i>待消灭错题</i></div>" +
+    '<div class="stat-head"><b>学习概览</b><span onclick="openFS(&quot;stat&quot;)">查看全部 ›</span></div>' +
+    '<div class="stat-grid">' +
+      '<button class="stat-cell"><b>' + a.seen + "</b><span>累计刷题</span></button>" +
+      '<button class="stat-cell" onclick="openWrongPage()"><b>' + a.wrong + "</b><span>待消灭错题</span></button>" +
+      '<button class="stat-cell" onclick="startSession(&quot;star&quot;,&quot;all&quot;,&quot;&quot;)"><b>' + a.mark + "</b><span>我的收藏</span></button>" +
     "</div>" +
-    '<div style="height:1px;background:var(--line);margin:18px 0"></div>' +
-    '<div class="metrics">' +
-      '<div class="metric" onclick="startSession(&quot;star&quot;,&quot;all&quot;, &quot;&quot;)"><b>' + a.mark + "</b><i>收藏 · 点击刷</i></div>" +
-      '<div class="metric"><b>' + a.total + "</b><i>题库总量</i></div>" +
-      '<div class="metric"><b>' + cover + "</b><i>覆盖率</i></div>" +
-    "</div>";
+    '<div class="stat-prog"><div class="lab"><span>整体完成率</span><b>' + a.done + "%</b></div>" +
+    '<div class="pl-bar"><i style="width:' + a.done + '%"></i></div></div>';
 
   document.getElementById("meSet").innerHTML =
     row("dark", set.theme === "dark" ? "深色模式" : "浅色模式", "从开关处圆形扩散换肤", true, set.theme === "dark") +
@@ -1972,6 +2043,7 @@ function renderMe() {
     row("import", "导入题库", "PDF / Word / txt / md，带解析一起导", false) +
     row("agent", "大肥鱼", agentSub(), false) +
     row("mcp", "MCP 连接", "127.0.0.1:8765 · 复制口令 / 重置", false) +
+    row("bili", "哔哩哔哩收藏", biliSub(), false) +
     row("remind", "每日提醒", "8:30 / 21:00 · 每个方案单独开关", false) +
     row("notify", "通知权限", remindInfo
       ? (remindInfo.granted ? "已允许 · 提醒可以弹出" : "未允许 · 点这里开启")
@@ -1991,10 +2063,11 @@ function row(k, title, sub, sw, on, mark) {
   var fn = k === "dark" ? "toggleSet('dark', event)"
          : k === "haptics" ? "toggleSet('haptics', event)"
          : k === "autoExp" ? "toggleSet('autoExp', event)"
-         : k === "font" ? "cycleFont()"
+         : k === "font" ? "openFontDial()"
          : k === "import" ? "openImport()"
          : k === "agent" ? "openAgentCfg()"
          : k === "mcp" ? "openMcpCfg()"
+         : k === "bili" ? "biliOpen()"
          : k === "remind" ? "openPlans()"
          : k === "notify" ? "askRemindPerm()"
          : k === "battery" ? "askBatteryOpt()"
@@ -2011,7 +2084,7 @@ function row(k, title, sub, sw, on, mark) {
 function renderAll() {
   if (curTab === "home") renderHome();
   else if (curTab === "bank") { renderBank(); requestAnimationFrame(stackCards); }
-  else if (curTab === "wrong") renderWrong();
+  else if (curTab === "video") { if (typeof biliTabRender === "function") biliTabRender(); }
   else renderMe();
 }
 
@@ -2048,10 +2121,15 @@ function cycleFont() {
   applyTheme(); renderAll(); save();
   moveTabPill(false);        /* 字号一变按钮就变宽，胶囊得跟上，不然会盖不住图标 */
 }
+var THEME_ICO_MOON = '<svg class="ico" viewBox="0 0 24 24" style="width:19px;height:19px"><path d="M20.5 14.2A8.5 8.5 0 1 1 9.8 3.5a6.6 6.6 0 0 0 10.7 10.7z"/></svg>';
+var THEME_ICO_SUN = '<svg class="ico" viewBox="0 0 24 24" style="width:19px;height:19px"><circle cx="12" cy="12" r="4.2"/><path d="M12 2.5v2.6M12 18.9v2.6M4.2 4.2l1.8 1.8M18 18l1.8 1.8M2.5 12h2.6M18.9 12h2.6M4.2 19.8l1.8-1.8M18 6l1.8-1.8"/></svg>';
 function applyTheme() {
   document.documentElement.setAttribute("data-theme", set.theme === "dark" ? "dark" : "light");
   document.documentElement.style.fontSize = (16 * set.fscale / 100) + "px";
   applyChatFs();
+  /* 主题按钮图标反映当前主题：深色显示月亮、浅色显示太阳，点一下就知道会切到哪 */
+  var _tb = document.getElementById("themeBtn");
+  if (_tb) _tb.innerHTML = set.theme === "dark" ? THEME_ICO_MOON : THEME_ICO_SUN;
   /* 状态栏/导航栏的图标深浅和窗口底色在原生层，换肤时要一起告诉它 */
   if (window.Android && Android.themeHint) { try { Android.themeHint(set.theme !== "dark"); } catch (e) {} }
 }
@@ -2180,13 +2258,15 @@ function askClearBank() {
   var s = subjectOf(sid);
   if (!sid || !s) { toast("现在没有打开的题库"); return; }
   var t = stats(sid);
-  glass({
-    title: "清空「" + s.name + "」的进度？",
-    desc: t.seen
+  var __desc = t.seen
       ? "这个题库已刷 " + t.seen + " / " + t.total + " 题，清空后会回到未刷状态，方便重刷；错题本和收藏保留"
-      : "这个题库还没有做题记录，清空不会有变化；错题本和收藏保留",
-    ok: ["确认清空", function () { clearBankProgress(sid); }]
-  });
+      : "这个题库还没有做题记录，清空不会有变化；错题本和收藏保留";
+  var __do = function () { clearBankProgress(sid); };
+  if (window.GI && GI.swipeConfirm) {
+    GI.swipeConfirm({ title: "清空「" + s.name + "」的进度？", desc: __desc, okText: "已清空", action: __do });
+  } else {
+    glass({ title: "清空「" + s.name + "」的进度？", desc: __desc, ok: ["确认清空", __do] });
+  }
 }
 function clearBankProgress(sid) {
   var s = subjectOf(sid);
@@ -2215,6 +2295,10 @@ function clearBankProgress(sid) {
   toast("已清空「" + s.name + "」的进度");
 }
 function askClear() {
-  glass({ title: "清空全部进度？", desc: "做题记录、错题本、收藏都会被删除，无法恢复",
-          ok: ["确认清空", function () { progMayEmpty = true; prog = {}; localStorage.removeItem(LS.p); renderAll(); toast("已清空"); }] });
+  var __do = function () { progMayEmpty = true; prog = {}; localStorage.removeItem(LS.p); renderAll(); toast("已清空"); };
+  if (window.GI && GI.swipeConfirm) {
+    GI.swipeConfirm({ title: "清空全部进度？", desc: "做题记录、错题本、收藏都会被删除，无法恢复", okText: "已清空", action: __do });
+  } else {
+    glass({ title: "清空全部进度？", desc: "做题记录、错题本、收藏都会被删除，无法恢复", ok: ["确认清空", __do] });
+  }
 }

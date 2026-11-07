@@ -1,6 +1,6 @@
 "use strict";
 /* ================= 检查更新 ================= */
-var APP_VER = "1.0.9";
+var APP_VER = "1.1.7";
 try { if (window.Android && Android.appVersion) APP_VER = Android.appVersion() || APP_VER; } catch (e) {}
 var updInfo = null;
 /* 更新状态拆成三份，别混在一个布尔里：
@@ -503,6 +503,11 @@ window.onBack = function () {
   /* 卡片悬浮窗压在对话上：先把它收回气泡，不能一按返回把整个对话关掉 */
   if (typeof chatOuiBack === "function" && chatOuiBack()) return true;
   if (closeTop()) return true;
+  /* 视频页（原错题本 tab）：播放 → 列表 → 收藏夹 → 回首页，一层层退 */
+  if (curTab === "video" && typeof biliBack === "function") {
+    biliBack();
+    return true;
+  }
   var fs = document.getElementById("fs");
   if (fs.classList.contains("on")) { closeFS(); return true; }
   if (document.getElementById("quiz").classList.contains("on")) { exitQuiz(); return true; }
@@ -1049,22 +1054,34 @@ var importName = "";
 
 function openImport() {
   var sh = document.getElementById("sheet3");
-  sh.innerHTML = '<div class="handle"></div><h2>导入题库</h2>' +
-    '<div class="sl-hint" style="margin:0 0 18px">支持 PDF、Word（.docx）和 txt / md。' +
-    '带解析的会一起导入；红字标答案的文档也能识别。</div>' +
-    '<button class="sheet-act" onclick="pickFile()">选择文件导入</button>' +
-    '<div style="display:flex;margin-top:12px">' +
-      '<button class="sheet-act2" onclick="openFS(&quot;sample&quot;)">查看格式举例</button>' +
-      '<button class="sheet-act2" onclick="saveSample()">下载这份举例</button>' +
-    "</div>" +
-    '<div class="sl-hint" style="margin:14px 0 0">PDF 需要有文字层：扫描件、图片版和加密文件读不出内容，会明确提示而不是当成导入成功。</div>' +
-    '<div class="sl-hint" style="margin:10px 0 0">也可以在微信里长按文件 →「用其他应用打开」→ 选「GIme」。</div>' +
-    '<div id="impBar" style="display:none">' +
-      '<div class="track" style="margin:22px 0 8px"><i id="impFill"></i></div>' +
+  sh.innerHTML = '<div class="handle"></div>' +
+    '<div class="imp-head"><div class="imp-title">导入题库</div>' +
+      '<button class="imp-close" type="button" onclick="closeImport()">' +
+        '<svg class="ico" viewBox="0 0 24 24" style="width:18px;height:18px"><path d="M6 6l12 12M18 6L6 18"/></svg></button></div>' +
+    '<div class="imp-formats"><span class="imp-chip">PDF</span><span class="imp-chip">Word .docx</span><span class="imp-chip">txt</span><span class="imp-chip">md</span></div>' +
+    '<button class="imp-primary" type="button" onclick="pickFile()">' +
+      '<svg class="ico" viewBox="0 0 24 24"><path d="M12 16V4M7 9l5-5 5 5M4 17v2a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-2"/></svg>' +
+      '<span><b>选择文件导入</b><em>从手机选择 PDF / Word / txt / md</em></span></button>' +
+    '<div class="imp-row">' +
+      '<button class="imp-ghost" type="button" onclick="openFS(&quot;sample&quot;)">查看格式举例</button>' +
+      '<button class="imp-ghost" type="button" onclick="saveSample()">下载这份举例</button>' +
+    '</div>' +
+    '<ul class="imp-tips">' +
+      '<li><span class="k">带解析</span>的文档会一起导入；红字标答案也能识别。</li>' +
+      '<li>PDF 需有文字层：扫描件、图片版、加密文件读不出会明确提示，不会当成导入成功。</li>' +
+      '<li>微信里长按文件 →「用其他应用打开」→ 选「GIme」。</li>' +
+    '</ul>' +
+    '<div id="impBar" class="imp-progress" style="display:none">' +
+      '<div class="track"><i id="impFill"></i></div>' +
       '<div class="sl-hint" id="impMsg" style="margin:0">准备中…</div>' +
-    "</div>";
+    '</div>';
   openLayer(sh);
 }
+function closeImport() {
+  var sh = document.getElementById("sheet3");
+  if (sh && typeof closeLayer === "function") closeLayer(sh);
+}
+window.closeImport = closeImport;
 function pickFile() {
   if (!window.Android || !Android.pickFile) { toast("请在手机上使用 App 导入"); return; }
   importStage("pick");

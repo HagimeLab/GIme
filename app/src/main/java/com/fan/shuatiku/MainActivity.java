@@ -18,6 +18,8 @@ import android.content.ClipData;
 import android.content.ClipboardManager;
 import android.content.ContentValues;
 import android.content.Intent;
+import android.content.SharedPreferences;
+import android.content.pm.ActivityInfo;
 import android.database.Cursor;
 import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
@@ -52,6 +54,8 @@ public class MainActivity extends Activity {
     private static final int REQ_NOTIFY = 4713;
     /** 大肥鱼的图片附件：相册多选，只回缩略图（图片内容不上行）。 */
     private static final int PICK_IMAGES = 4714;
+    /** 绑定哔哩哔哩：网页登录页回来只告诉我们成功或取消。 */
+    private static final int REQ_BILI = 4715;
     /** 上一次从相册选的图：上传拿 file id 时要回来读原图（页面只有缩略图）。 */
     private final java.util.ArrayList<Uri> pickedImageUris = new java.util.ArrayList<Uri>();
     /** 导入格式举例：assets 里那一份是唯一来源，页面看的和下载的都是它。 */
@@ -143,6 +147,14 @@ public class MainActivity extends Activity {
         /* MCP 口令同样是凭据：历史明文一次性升级成密文。 */
         SecurePrefs.migrate(getSharedPreferences(PREFS_MCP, MODE_PRIVATE),
                 new String[]{PREF_MCP_TOKEN});
+        /* 哔哩哔哩整串 cookie 同样是凭据：历史明文一次性升级成密文。 */
+        SecurePrefs.migrate(getSharedPreferences(BiliLoginActivity.PREFS, MODE_PRIVATE),
+                new String[]{BiliLoginActivity.PREF_COOKIE,
+                        BiliLoginActivity.PREF_UNAME, BiliLoginActivity.PREF_FACE});
+        /* 回环流代理随时要 cookie；这个口子只读本机存的那一份，页面碰不到。 */
+        BiliStream.setCookieSource(new BiliStream.CookieSource() {
+            @Override public String cookie() { return biliCookie(); }
+        });
         /* Agent trace 同时进 logcat（GImeAgent）与私有环形缓冲；导出入口在「我的」。 */
         com.fan.shuatiku.agent.RunTrace.setSink(new com.fan.shuatiku.agent.RunTrace.Sink() {
             @Override public void log(String line) {
@@ -161,6 +173,8 @@ public class MainActivity extends Activity {
         }
         WebSettings s = web.getSettings();
         s.setJavaScriptEnabled(true);
+        /* 允许程序化自动播放：上一集播完要自动接下一集，不能因为没有用户手势被策略拦下 */
+        s.setMediaPlaybackRequiresUserGesture(false);
         s.setDomStorageEnabled(true);
         s.setTextZoom(100);
         /* 首帧之前 WebView 自己会刷一层底色。写死浅色等于深色主题用户每次冷启动
@@ -342,6 +356,16 @@ public class MainActivity extends Activity {
     @Override
     protected void onActivityResult(int req, int res, Intent data) {
         super.onActivityResult(req, res, data);
+        /* 绑定哔哩哔哩只回一个结果：成功或取消。真正的登录判据在 BiliLoginActivity 里
+           问过上游了（mid>0 才算数），这里不重复判断，也不信本地 cookie 变没变。 */
+        if (req == REQ_BILI) {
+            if (res == RESULT_OK) {
+                js("window.onBiliLogin&&window.onBiliLogin(true," + quote("绑定成功") + ")");
+            } else {
+                js("window.onBiliLogin&&window.onBiliLogin(false," + quote("已取消") + ")");
+            }
+            return;
+        }
         if (req == PICK_IMAGES) {
             if (res == RESULT_OK && data != null) collectPickedImages(data);
             return;
@@ -784,6 +808,15 @@ public class MainActivity extends Activity {
     }
 
     @Override
+    protected void onPause() {
+        super.onPause();
+        // 退到后台（HOME / 锁屏 / 切到别的 App）：让正在播放的视频默认暂停，回来继续
+        if (pageReady) {
+            try { js("window.gimeHostPause&&window.gimeHostPause();"); } catch (Exception ignored) {}
+        }
+    }
+
+    @Override
     protected void onResume() {
         super.onResume();
         if (remindCheckPending && pageReady) {
@@ -809,7 +842,41 @@ public class MainActivity extends Activity {
         /* 页面马上就没了，缓冲里的增量再攒着也没人收；先推完再拆桥。 */
         if (chatEmit != null) chatEmit.flush();
         if (dsBridge != null) { dsBridge.shutdown(); dsBridge = null; }
+        /* 收藏流是回环服务：页面一走就没有观众了，先回收发出去的编号再停服务。 */
+        BiliStream.revokeAll();
+        BiliStream.stop();
         super.onDestroy();
+    }
+
+    /* ==================== 哔哩哔哩：本地会话与错误包装 ==================== */
+    /* 三条底线（与 BiliWeb / BiliStream 的注释一致）：
+       ① 页面永远拿不到 cookie，也拿不到 B 站直链；② 收藏夹只读；
+       ③ 播放地址只有 127.0.0.1:8766 的回环串。失败统一回 {"ok":false,"error":"人话"}，
+       页面不用猜异常类型。 */
+
+    /** 读本机存的 B 站整串 cookie；没绑定时是空串。 */
+    private String biliCookie() {
+        SharedPreferences p = getSharedPreferences(BiliLoginActivity.PREFS, MODE_PRIVATE);
+        try {
+            return SecurePrefs.dec(p.getString(BiliLoginActivity.PREF_COOKIE, ""));
+        } catch (Exception e) {
+            return "";
+        }
+    }
+
+    private long biliMid() {
+        return getSharedPreferences(BiliLoginActivity.PREFS, MODE_PRIVATE)
+                .getLong(BiliLoginActivity.PREF_MID, 0L);
+    }
+
+    /** 桥上的失败统一成一句话，页面直接展示。 */
+    private static String biliErr(String msg) {
+        try {
+            return new JSONObject().put("ok", false)
+                    .put("error", msg == null || msg.isEmpty() ? "未知错误" : msg).toString();
+        } catch (Exception e) {
+            return "{\"ok\":false,\"error\":\"未知错误\"}";
+        }
     }
 
     private class Bridge {
@@ -1075,6 +1142,235 @@ public class MainActivity extends Activity {
                顺序不能反——先 cancel 的话，收尾的 flush 可能把缓冲又推上去。 */
             chatEmit.drop(id);
             if (dsBridge != null) dsBridge.cancel(id);
+        }
+
+        /* ==================== 哔哩哔哩收藏（v1.1.7 P5） ==================== */
+
+        /** 绑定状态：页面据此决定显示「绑定」还是「已绑定 · 昵称」。 */
+        @JavascriptInterface
+        public String biliStatus() {
+            try {
+                SharedPreferences p = getSharedPreferences(BiliLoginActivity.PREFS, MODE_PRIVATE);
+                String cookie = biliCookie();
+                long mid = biliMid();
+                JSONObject o = new JSONObject().put("ok", true)
+                        .put("bound", !cookie.isEmpty() && mid > 0)
+                        .put("mid", mid)
+                        .put("uname", SecurePrefs.dec(p.getString(BiliLoginActivity.PREF_UNAME, "")))
+                        .put("face", SecurePrefs.dec(p.getString(BiliLoginActivity.PREF_FACE, "")))
+                        .put("loginAt", p.getLong(BiliLoginActivity.PREF_LOGIN_AT, 0L));
+                return o.toString();
+            } catch (Exception e) {
+                return biliErr(readable(e));
+            }
+        }
+
+        /** 打开 B 站网页登录页；结果在 onActivityResult 里回填页面。 */
+        @JavascriptInterface
+        public void biliLogin() {
+            runOnUiThread(new Runnable() {
+                @Override public void run() {
+                    startActivityForResult(new Intent(MainActivity.this, BiliLoginActivity.class), REQ_BILI);
+                }
+            });
+        }
+
+        /** 退出绑定：清会话 + 立即回收所有播放编号，页面随后会拿到空状态。 */
+        @JavascriptInterface
+        public void biliLogout() {
+            getSharedPreferences(BiliLoginActivity.PREFS, MODE_PRIVATE).edit().clear().apply();
+            BiliStream.revokeAll();
+            BiliStream.stop();
+            js("window.onBiliLogout&&window.onBiliLogout()");
+        }
+
+        /** 列收藏夹（只读）。 */
+        @JavascriptInterface
+        public String biliFolders() {
+            String cookie = biliCookie();
+            if (cookie.isEmpty()) return biliErr("还没绑定哔哩哔哩");
+            try {
+                JSONArray arr = BiliWeb.folders(cookie, biliMid());
+                return new JSONObject().put("ok", true).put("folders", arr).toString();
+            } catch (BiliWeb.ApiError e) {
+                return biliErr(e.getMessage());
+            } catch (Exception e) {
+                return biliErr(readable(e));
+            }
+        }
+
+        /** 列某个收藏夹里的视频（只读分页）。 */
+        @JavascriptInterface
+        public String biliItems(String fid, String pn) {
+            String bad = BridgeGuard.biliFid(fid);
+            if (bad != null) return biliErr(bad);
+            int page;
+            try {
+                page = Integer.parseInt(pn == null ? "" : pn.trim());
+            } catch (Exception e) {
+                return biliErr("页码不是数字");
+            }
+            bad = BridgeGuard.biliPn(page);
+            if (bad != null) return biliErr(bad);
+            String cookie = biliCookie();
+            if (cookie.isEmpty()) return biliErr("还没绑定哔哩哔哩");
+            try {
+                JSONObject r = BiliWeb.items(cookie, Long.parseLong(fid.trim()), page);
+                return new JSONObject().put("ok", true)
+                        .put("list", r.getJSONArray("list"))
+                        .put("hasMore", r.getBoolean("hasMore")).toString();
+            } catch (BiliWeb.ApiError e) {
+                return biliErr(e.getMessage());
+            } catch (Exception e) {
+                return biliErr(readable(e));
+            }
+        }
+
+        /**
+         * 准备播放：取分 P 的 cid → 取 playurl 直链 → 立刻换成回环编号。
+         *
+         * <p>返回里只有 {@code src}（{@code http://127.0.0.1:8766/bili/<hex>.mp4}），
+         * 没有上游直链，也没有 cookie。页面把 src 塞进 {@code <video>} 即可，
+         * 拖进度条的 Range 由 BiliStream 透传。
+         */
+        @JavascriptInterface
+        public String biliPrepare(String bvid, String pageStr) {
+            String bad = BridgeGuard.biliBvid(bvid);
+            if (bad != null) return biliErr(bad);
+            int page;
+            try {
+                page = Integer.parseInt(pageStr == null || pageStr.trim().isEmpty() ? "1" : pageStr.trim());
+            } catch (Exception e) {
+                return biliErr("分 P 不是数字");
+            }
+            bad = BridgeGuard.biliPage(page);
+            if (bad != null) return biliErr(bad);
+            String cookie = biliCookie();
+            if (cookie.isEmpty()) return biliErr("还没绑定哔哩哔哩");
+            try {
+                JSONObject v = BiliWeb.view(cookie, bvid);
+                JSONArray pages = v.optJSONArray("pages");
+                if (pages == null || pages.length() == 0) return biliErr("这条视频没有可播的分 P");
+                if (page > pages.length()) return biliErr("没有第 " + page + " P");
+                JSONObject pg = pages.getJSONObject(page - 1);
+                long cid = pg.getLong("cid");
+                /* 先按 720P 要（qn=64），拿不到上游会自动降到账号/接口允许的最高档；
+                   html5 直链通常封顶 480P 以下，这个值是「尽量好」，不是保证。 */
+                JSONObject play = BiliWeb.play(cookie, bvid, cid, 64);
+                String url = play.optString("url", "");
+                if (url.isEmpty()) return biliErr("这条视频没有可播地址（可能是付费 / 番剧 / 地区限制）");
+                String src = BiliStream.issue(url);
+                return new JSONObject().put("ok", true)
+                        .put("title", v.optString("title", ""))
+                        .put("part", pg.optString("part", ""))
+                        .put("page", page)
+                        .put("pages", pages.length())
+                        .put("quality", play.optInt("quality", 0))
+                        .put("qualityName", play.optString("qualityName", ""))
+                        .put("size", play.optLong("size", 0L))
+                        .put("duration", pg.optLong("duration", 0L))
+                        .put("src", src).toString();
+            } catch (BiliWeb.ApiError e) {
+                return biliErr(e.getMessage());
+            } catch (Exception e) {
+                return biliErr(readable(e));
+            }
+        }
+
+        /** 哔哩哔哩播放进/退全屏：进全屏锁横屏 + 收起系统栏（跟手机播放器一致），
+            退出恢复跟随系统并还原系统栏外观。只动窗口状态，不碰页面状态。 */
+        @JavascriptInterface
+        public void biliFullscreen(final boolean on) {
+            runOnUiThread(new Runnable() {
+                @Override
+                public void run() {
+                    /* 退全屏一律锁回竖屏，且不再交还系统（UNSPECIFIED）：
+                       手机平放时传感器报「不变」，交还系统后整页会卡在横屏；
+                       再叠上连点退出会排多个 800ms 回调，更容易偶发整个 App 横屏。 */
+                    setRequestedOrientation(on
+                            ? ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
+                            : ActivityInfo.SCREEN_ORIENTATION_PORTRAIT);
+                    View decor = getWindow().getDecorView();
+                    if (on) {
+                        decor.setSystemUiVisibility(View.SYSTEM_UI_FLAG_LAYOUT_STABLE
+                                | View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN
+                                | View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION
+                                | View.SYSTEM_UI_FLAG_FULLSCREEN
+                                | View.SYSTEM_UI_FLAG_HIDE_NAVIGATION
+                                | View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY);
+                    } else {
+                        applyBarAppearance(getSharedPreferences(PREFS, MODE_PRIVATE)
+                                .getBoolean(PREF_LIGHT, false));
+                    }
+                }
+            });
+        }
+
+        /** 播放器音量：读取设备媒体音量（STREAM_MUSIC），让 App 内音量与系统音量一致。
+            同步返回 JSON：{"ok":true,"max":15,"cur":7}。 */
+        @JavascriptInterface
+        public String biliVolume() {
+            try {
+                android.media.AudioManager am = (android.media.AudioManager) getSystemService(AUDIO_SERVICE);
+                if (am == null) return "{\"ok\":false,\"error\":\"no_audio\"}";
+                int max = am.getStreamMaxVolume(android.media.AudioManager.STREAM_MUSIC);
+                int cur = am.getStreamVolume(android.media.AudioManager.STREAM_MUSIC);
+                return "{\"ok\":true,\"max\":" + max + ",\"cur\":" + cur + "}";
+            } catch (Exception e) {
+                return "{\"ok\":false,\"error\":\"err\"}";
+            }
+        }
+
+        /** 设置设备媒体音量（STREAM_MUSIC）。flag=0 不弹系统音量条，UI 由页面自绘。 */
+        @JavascriptInterface
+        public void biliSetVolume(final int cur) {
+            try {
+                android.media.AudioManager am = (android.media.AudioManager) getSystemService(AUDIO_SERVICE);
+                if (am == null) return;
+                int max = am.getStreamMaxVolume(android.media.AudioManager.STREAM_MUSIC);
+                int val = cur < 0 ? 0 : (cur > max ? max : cur);
+                am.setStreamVolume(android.media.AudioManager.STREAM_MUSIC, val, 0);
+            } catch (Exception e) { /* 静默降级 */ }
+        }
+
+        /** 播放器亮度：读取当前窗口亮度（未单独覆盖时回落到系统亮度百分比）。
+            同步返回 JSON：{"ok":true,"cur":0-100}。 */
+        @JavascriptInterface
+        public String biliBrightness() {
+            try {
+                float b = getWindow().getAttributes().screenBrightness;
+                int cur;
+                if (b < 0) {
+                    int sys = android.provider.Settings.System.getInt(getContentResolver(),
+                            android.provider.Settings.System.SCREEN_BRIGHTNESS, 128);
+                    cur = Math.round(sys * 100f / 255f);
+                } else {
+                    cur = Math.round(b * 100f);
+                }
+                if (cur < 0) cur = 0;
+                if (cur > 100) cur = 100;
+                return "{\"ok\":true,\"cur\":" + cur + "}";
+            } catch (Exception e) {
+                return "{\"ok\":false,\"error\":\"err\"}";
+            }
+        }
+
+        /** 设置窗口亮度（0-100）：直接改变本窗口的显示亮度，与设备屏幕亮度同步可见；
+            不写系统设置、免权限。退出 App 后该覆盖自动失效，回到系统亮度。 */
+        @JavascriptInterface
+        public void biliSetBrightness(final int pct) {
+            try {
+                final int p = pct < 1 ? 1 : (pct > 100 ? 100 : pct);
+                runOnUiThread(new Runnable() {
+                    public void run() {
+                        try {
+                            WindowManager.LayoutParams lp = getWindow().getAttributes();
+                            lp.screenBrightness = p / 100f;
+                            getWindow().setAttributes(lp);
+                        } catch (Exception e) { }
+                    }
+                });
+            } catch (Exception e) { /* 静默降级 */ }
         }
 
         /** 页面换肤时同步系统栏图标深浅和窗口底色。 */
