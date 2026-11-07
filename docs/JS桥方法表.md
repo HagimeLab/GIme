@@ -4,7 +4,7 @@
 
 这张表是 **P0 的导出面**：把现在暴露出去的东西一次列清楚，标明每个方法的入参形状与信任级别，供 P2 设计 AgentLoop 的工具注册时对照，也供后续安全收口时判断「哪些口子必须先收紧」。
 
-- 生成依据：`app/src/main/java/com/fan/shuatiku/MainActivity.java` 里全部 `@JavascriptInterface` 注解方法（当前 **46 个**）。
+- 生成依据：`app/src/main/java/com/fan/shuatiku/MainActivity.java` 里全部 `@JavascriptInterface` 注解方法（当前 **53 个**）。
 - P0 已加闸的方法在「P0 校验」一列写明；标 `—` 的表示本次未改动（见文末「P0 没做什么」）。
 - 校验规则集中在 `BridgeGuard.java`（纯逻辑、零 Android 依赖），回归用例在 `tools/BridgeTest.java`，由 `tools/check.cmd` 的 `js bridge guard` 段执行。
 
@@ -110,6 +110,13 @@
 | 44 | `uploadChatImage(idx)` | `idx` | `void`（回 `window.onChatImageUp`） | L2 | **idx 越界即拒** | 把相册选的第 idx 张图传到 DeepSeek 网页版换 file id（一张一回调，页面据此显示上传进度） |
 | 45 | `viewChatImage(uri, req)` | `uri`、`req` | `void`（回 `window.onChatImageView`） | L2 | **只认 content:// 前缀** | 点聊天里发出去的图片看大图：按原图地址缩到最长边 1280 回 data URL；`req` 是页面这次展示的编号，回来的原图只对得上同一次，收条或换一张就丢弃 |
 | 46 | `dsUploadProbe(path)` | `path` | `void`（回 `window.onDsUploadProbe`） | L2 | **只认 /sdcard/ 与 /data/local/tmp/** | 仅 debug 生效；把指定图片按图片附件上传一次，回报 file id（验网页版上传链路用） |
+| 47 | `biliStatus()` | — | `String`(JSON) | L0 | — | 绑定状态 `{ok,bound,mid,uname,face,loginAt}`；「我的」那一行和收藏页都读它 |
+| 48 | `biliLogin()` | — | `void`（回 `window.onBiliLogin`） | L2 | — | 拉起 B 站网页登录页；回来只回「成功 / 取消」，真判据（`mid>0`）在原生侧 |
+| 49 | `biliLogout()` | — | `void`（回 `window.onBiliLogout`） | L1 | — | 清本地会话 + 立即回收全部播放编号 |
+| 50 | `biliFolders()` | — | `String`(JSON) | L0 | — | 收藏夹清单（只读）`{ok,folders:[{mediaId,title,count}]}` |
+| 51 | `biliItems(fid, pn)` | `fid`、`pn` | `String`(JSON) | L0 | **`biliFid` / `biliPn`** | 某个收藏夹的分页（每页 20 条）`{ok,list,hasMore}` |
+| 52 | `biliPrepare(bvid, page)` | `bvid`、`page` | `String`(JSON) | L2 | **`biliBvid` / `biliPage`** | 取 cid → playurl → 立刻换回环编号；回包里的 `src` 只可能是 `127.0.0.1:8766`，不带上游直链也不带 cookie |
+| 53 | `biliFullscreen(on)` | `on` | `void` | L2 | — | 进/退全屏：`true` 把 Activity 锁成横屏（`SENSOR_LANDSCAPE`），`false` 恢复跟随系统；只动方向，不碰页面状态 |
 
 ## P0 加的闸门（`BridgeGuard`）
 
@@ -123,6 +130,10 @@
 | `downloadUrl(url)` | `downloadUpdate` / `downloadUpdateFrom` | **必须 https**；主机必须是六个发布源之一；路径必须含 `/HagimeLab/GIme` 与 `/release/`；必须以 `.apk` 结尾；不允许用户信息 |
 | `body(s)` | `chatApi` | ≤ 512 KB。页面单次上行按 18000 字切段（`CHAT_SEG_MAX`），实际远低于此 |
 | `reply(json)` | `mcpReply` | ≤ 4 MB（整库题目回包可能较大）；`null` 仍按空串处理，与原有语义一致 |
+| `biliFid(fid)` | `biliItems` | 纯数字、≤ 20 位（挡住 `1 OR 1=1` 这类拼接，也不误伤真实 id） |
+| `biliBvid(bvid)` | `biliPrepare` | `BV` + 10 位字母数字，或 `av` + 数字；≤ 20 字符 |
+| `biliPn(pn)` | `biliItems` | 1..100 |
+| `biliPage(page)` | `biliPrepare` | 1..1000 |
 
 下载源白名单与 `DownloadSources.forFile()` 生成的六个入口一一对应：
 
