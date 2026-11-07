@@ -153,8 +153,13 @@ public class DeepSeekLoginActivity extends Activity {
         return Math.round(getResources().getDisplayMetrics().density * v);
     }
 
-    /** 登录 WebView 的 UA：Chrome 版本取 WebView 引擎自己的，不再冒充新版本。 */
-    private static String loginUa(android.content.Context ctx) {
+    /**
+     * 登录 WebView 的 UA：Chrome 版本取 WebView 引擎自己的，不再冒充新版本。
+     *
+     * <p>包内可见是因为 {@link BiliLoginActivity} 共用这一条口径 —— 任何「真人登录页」
+     * 都该报真实引擎版本，跟上游是谁无关。
+     */
+    static String loginUa(android.content.Context ctx) {
         String def = "";
         try { def = WebSettings.getDefaultUserAgent(ctx); } catch (Exception ignored) { }
         String ver = "";

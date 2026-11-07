@@ -25,7 +25,7 @@ const CSS_FILE = path.join(ASSETS, "style.css");
    ui/openui-signatures.js 是构建时从 bundle 导出的小文件（约 3.5KB），
    系统提示靠它拿组件签名，因此必须同步加载。 */
 const CORE_JS = "ui/openui-core.js";
-const JS_FILES = ["ui/openui-signatures.js", "ui/openui-ui.js", "app-core.js", "app-admin.js", "app-plan.js", "app-chat.js"];
+const JS_FILES = ["ui/openui-signatures.js", "ui/openui-ui.js", "app-core.js", "app-admin.js", "app-plan.js", "app-chat.js", "app-bili.js"];
 
 let pass = 0;
 const fails = [];
@@ -226,23 +226,28 @@ ok("不再自带任何题目", BANK.questions.length === 0, "还有 " + BANK.que
 let emptyDraw = null;
 try {
   sandbox.goTab("home");
-  const home = String(sandbox.document.getElementById("tasks").innerHTML);
-  const cats = String(sandbox.document.getElementById("cats").innerHTML);
+  const home = String(sandbox.document.getElementById("recent").innerHTML);
   sandbox.goTab("bank");
   const bank = String(sandbox.document.getElementById("bankList").innerHTML);
+  const cats = String(sandbox.document.getElementById("cats").innerHTML);
+  const wrongEntry = String(sandbox.document.getElementById("wrongEntry").innerHTML);
   sandbox.goTab("me");
   const me = String(sandbox.document.getElementById("meStat").innerHTML);
   sandbox.goTab("home");
-  emptyDraw = { home, cats, bank, me };
+  emptyDraw = { home, cats, bank, wrongEntry, me };
 } catch (e) {
   emptyDraw = { err: e.stack };
 }
 ok("空题库下 renderAll 不抛异常", emptyDraw && !emptyDraw.err, emptyDraw && emptyDraw.err);
 ok("「我的」页没有 NaN", emptyDraw && emptyDraw.me.indexOf("NaN") < 0);
 ok("题库页给出导入入口", emptyDraw && emptyDraw.bank.indexOf("openImport") >= 0);
-ok("首页给出导入入口", emptyDraw && emptyDraw.home.indexOf("openImport") >= 0);
-ok("首页六张题型卡片都在", emptyDraw && (emptyDraw.cats.match(/class="cat-wrap/g) || []).length === 6,
+const indexHtmlSrc = fs.readFileSync(path.join(ASSETS, "index.html"), "utf8");
+ok("首页不再有今日待刷 / 学习资料 / 空题库导入卡",
+   !/id="tasks"/.test(indexHtmlSrc) && !/id="studyCard"/.test(indexHtmlSrc));
+ok("题库页六张题型卡片都在", emptyDraw && (emptyDraw.cats.match(/class="cat-wrap/g) || []).length === 6,
    emptyDraw && String((emptyDraw.cats.match(/class="cat-wrap/g) || []).length));
+ok("题库页有错题本入口", emptyDraw && emptyDraw.wrongEntry.indexOf("openWrongPage") >= 0);
+ok("题库页有组卷出题入口", /onclick="openPaper\(\)"/.test(indexHtmlSrc));
 
 /* 组卷在空题库下不能抛异常，只能提示 */
 let paperThrew = null;
@@ -504,10 +509,10 @@ W.startSession("practice", RB, "");
 ok("「继续刷」回到退出前题号", W.S && W.S.idx === rbIdx);
 ok("「继续刷」保留已答题的对错", W.S && W.S.graded[RB + "-0"] === 1 && W.S.graded[RB + "-1"] === 0);
 
-/* 最近练习入口：先退出，再点题库；也要回到同一题。 */
+/* 最近练习入口：先退出，再回首页；也要回到同一题。 */
 W.exitQuiz();
 W.goTab("home");
-W.renderTasks(false);
+W.renderRecent();
 ok("最近练习的题库行可点击", /resumeRecent\(&quot;resume_bank&quot;\)/.test(String(doc.getElementById("recent").innerHTML)));
 W.resumeRecent(RB);
 ok("点最近练习回到退出前题号", W.S && W.S.subject === RB && W.S.idx === rbIdx);
@@ -878,7 +883,7 @@ ok("学习资料动作降为次操作（通栏/描边/非实心）",
    /\.study-card \.sc-go\s*\{[^}]*width:\s*100%/.test(cssSource) &&
    /\.study-card \.sc-go\s*\{[^}]*border:\s*1px solid/.test(cssSource) &&
    !/\.study-card \.sc-go\s*\{[^}]*background:\s*var\(--ink\)/.test(cssSource));
-ok("学习资料动作带方向箭头", /class="sc-go"[\s\S]{0,200}<svg/.test(jsSources[2]));
+ok("学习资料卡已从页面脚本移除", !/class="sc-go"/.test(jsSources[2]));
 ok("对话头部按钮热区补到 44px", /\.chat-head \.chat-cfg::before\s*\{[^}]*top:\s*-7px[^}]*bottom:\s*-7px/.test(cssSource));
 ok("联网开关用描边表示开启（不再是一颗实心块）",
    /\.chat-head \.chat-cfg\.chat-ico\.on\s*\{[^}]*border-color:\s*var\(--ink\)/.test(cssSource) &&
@@ -905,9 +910,11 @@ const emptyStats = { total: 0, seen: 0, rate: 0 };
 BANK.subjects = BANK.subjects.filter((s) => s.id !== TB);
 BANK.questions = BANK.questions.filter((q) => q.subject !== TB);
 W.goTab("home");
-const homeEmpty = String(W.document.getElementById("tasks").innerHTML);
+const homeEmpty = String(W.document.getElementById("recent").innerHTML);
 ok("删光题库后首页无 NaN", homeEmpty.indexOf("NaN") < 0);
-ok("删光题库后首页给导入入口", homeEmpty.indexOf("openImport") >= 0);
+W.goTab("bank");
+const bankEmpty = String(W.document.getElementById("bankList").innerHTML);
+ok("删光题库后题库页给导入入口", bankEmpty.indexOf("openImport") >= 0, bankEmpty.slice(0, 200));
 ok("删光题库后统计为 0", W.stats("all").total === 0, W.stats("all").total);
 const hiSubEl = W.document.getElementById("hiSub");
 ok("空题库时问候语副标题被隐藏", hiSubEl.hidden === true);
@@ -920,8 +927,8 @@ W.goTab("me");
 ok("删光题库后「我的」页无 NaN",
    String(W.document.getElementById("meStat").innerHTML).indexOf("NaN") < 0);
 
-/* ---------- 10. v1.0.4：今日待刷左滑删除 / 不列空库 / 题库改名 ---------- */
-section("[10] v1.0.4：今日待刷左滑 / 过滤空库 / 改名");
+/* ---------- 10. v1.0.4：题库页左滑删除 / 不列空库 / 题库改名 ---------- */
+section("[10] v1.0.4：题库页左滑 / 过滤空库 / 改名");
 const NB = "nb1";
 const mkq = (sid, i, ans) => ({ id: sid + "-" + i, subject: sid, num: i + 1, pnum: i + 1,
   type: "single", stem: "甲乙"[i] + "题", options: [["A", "x"], ["B", "y"]], answer: [ans],
@@ -929,13 +936,14 @@ const mkq = (sid, i, ans) => ({ id: sid + "-" + i, subject: sid, num: i + 1, pnu
 BANK.subjects.push({ id: NB, name: "有题的库", file: "nb1.md", count: 2, custom: true });
 BANK.questions.push(mkq(NB, 0, "A"), mkq(NB, 1, "B"));
 BANK.subjects.push({ id: "empty1", name: "空库不该出现", file: "e.md", count: 0, custom: true });
-W.goTab("home");
-const taskHtml = String(W.document.getElementById("tasks").innerHTML);
-ok("今日待刷列出有题的库", taskHtml.indexOf("有题的库") >= 0);
-ok("今日待刷不列题库页里根本没有的空库", taskHtml.indexOf("空库不该出现") < 0, taskHtml);
-ok("今日待刷每行带左滑面板", taskHtml.indexOf('class="swipe"') >= 0 && taskHtml.indexOf("swipe-act") >= 0);
-ok("今日待刷面板里那格是删除", /swipe-act"[^>]*askDeleteBank/.test(taskHtml), taskHtml.slice(0, 160));
-ok("左滑的面板前景是 .task 本身", taskHtml.indexOf('class="task"') >= 0);
+W.goTab("bank");
+const taskHtml = String(W.document.getElementById("bankList").innerHTML);
+ok("题库页列出有题的库", taskHtml.indexOf("有题的库") >= 0);
+ok("题库页不列一道题都没有的空库", taskHtml.indexOf("空库不该出现") < 0, taskHtml);
+ok("题库卡片带左滑面板", taskHtml.indexOf('class="swipe"') >= 0 && taskHtml.indexOf("swipe-act") >= 0);
+ok("面板里那格是删除", /swipe-act"[^>]*askDeleteBank/.test(taskHtml), taskHtml.slice(0, 160));
+ok("题库页的错题本入口是 .task 按钮",
+   String(W.document.getElementById("wrongEntry").innerHTML).indexOf('class="task"') >= 0);
 
 let saved = null;
 W.Android = { saveBank: (id, json) => { saved = [id, JSON.parse(json)]; return true; } };
@@ -1753,9 +1761,9 @@ ok("大肥鱼 tab 有独立 id", /id="tabAsk"/.test(html));
 ok("大肥鱼 tab 没有 data-tab", !/id="tabAsk"[^>]*data-tab/.test(html));
 ok("大肥鱼 tab 用答题页同款头像",
    /class="tab ask-tab"[^]*?agent-light\.png[^]*?agent-dark\.png/.test(html));
-ok("大肥鱼 tab 在题库与错题本之间",
+ok("大肥鱼 tab 在题库与视频之间",
    html.indexOf('data-tab="bank"') < html.indexOf('id="tabAsk"')
-   && html.indexOf('id="tabAsk"') < html.indexOf('data-tab="wrong"'));
+   && html.indexOf('id="tabAsk"') < html.indexOf('data-tab="video"'));
 
 /* ---------- 18. 卡死 / 重试 / 停止 ---------- */
 section("[18] 大肥鱼：重试提示 / 停止 / 超时兜底");
@@ -2602,8 +2610,8 @@ ok("Key 模式下联网按钮隐藏，登录模式显示", (() => {
   return keyHidden && loginShown;
 })());
 ok("内置请求透传 search 开关", /body\.search = webSearchOn\(\)/.test(html));
-ok("首页有学习资料卡", /id="studyCard"/.test(html)
-   && /function renderStudyCard/.test(html) && /function studyMaterials/.test(html));
+ok("学习资料卡与今日待刷已从界面移除", !/id="studyCard"/.test(html) && !/id="tasks"/.test(html)
+   && !/function renderStudyCard/.test(html));
 ok("OpenUI 渲染器与表单读取器都已就位", typeof W.renderOpenUI === "function" && typeof W.readForm === "function");
 ok("OpenUI 表格包在横滑容器里（列排不下时滑，不被卡片裁掉）",
    /make\('div', 'oui-tablewrap'\)/.test(jsSources[1]) && /wrap\.append\(t\)/.test(jsSources[1])
@@ -2822,7 +2830,7 @@ ok("四个 App 动词都接到 App 既有入口（bank/wrong/drill/redrill）", 
   const chat = jsSources[5];
   return /verb === "bank"/.test(chat) && /verb === "drill"/.test(chat) &&
          /verb === "redrill"/.test(chat) && /function ouiBankArg/.test(chat) &&
-         /goTab\("bank"\)/.test(chat) && /goTab\("wrong"\)/.test(chat) &&
+         /goTab\("bank"\)/.test(chat) && /openWrongPage\(\)/.test(chat) &&
          /startSession\("practice", pick\.sub\.id, tf, "bank"\)/.test(chat) &&
          /startSession\("wrong", pick\.sub \? pick\.sub\.id : "all", tf, ""\)/.test(chat) &&
          /wrongOpen\[pick\.sub\.id\] = true/.test(chat);
@@ -3510,7 +3518,7 @@ ok("nav: 只认四个底部页签，且先收面板再切页", (() => {
   const src = String(W.chatOuiRoute);
   const i = src.indexOf('"nav"');
   const seg = src.slice(i, i + 520);
-  return seg.indexOf('["home", "bank", "wrong", "me"]') >= 0
+  return seg.indexOf('["home", "bank", "video", "me"]') >= 0
       && seg.indexOf("closeTop()") >= 0 && seg.indexOf("goTab(tab)") >= 0;
 })());
 ok("不认识的动词明确说不支持，不静默吞掉", (() => {
@@ -4396,9 +4404,7 @@ ok("完成率 = 已刷 / 总数（答对率另算）", sd.done === 25 && sd.rate
    JSON.stringify({ done: sd.done, rate: sd.rate }));
 
 W.goTab("home");
-const homeRate = String(W.document.getElementById("tasks").innerHTML);
-ok("今日待刷行写「完成率 25%」，不再出现「正确率」",
-   homeRate.indexOf("完成率 25%") >= 0 && homeRate.indexOf("正确率") < 0, homeRate.slice(0, 240));
+ok("首页不再有今日待刷行（搬去题库页）", !/id="tasks"/.test(fs.readFileSync(HTML, "utf8")));
 W.goTab("bank");
 const bankRate = String(W.document.getElementById("bankList").innerHTML);
 ok("题库卡片的大百分比用完成率", bankRate.indexOf(">25%</div>") >= 0, bankRate.slice(0, 240));
@@ -5663,6 +5669,25 @@ ok("全屏搜索页与 doSearch 一并移除，只剩统计/格式举例",
    html.indexOf("搜索题目") < 0 &&
    html.indexOf('.search {') < 0 &&
    html.indexOf('.srch {') < 0);
+
+/* ---------- 38. P5 哔哩哔哩收藏：页面接线 ---------- */
+section("[38] P5 哔哩哔哩收藏：桥 / 页面 / 样式接线");
+const biliSource = fs.readFileSync(path.join(ASSETS, "app-bili.js"), "utf8");
+ok("index.html 有视频页容器 #tab-video / #biliHost", skeletonHtml.indexOf('id="tab-video"') >= 0 && skeletonHtml.indexOf('id="biliHost"') >= 0);
+ok("index.html 同步加载 app-bili.js", skeletonHtml.indexOf('src="app-bili.js"') >= 0);
+ok("「我的」里有哔哩哔哩收藏入口", html.indexOf('row("bili", "哔哩哔哩收藏"') >= 0);
+ok("入口点击走 biliOpen()", html.indexOf('k === "bili" ? "biliOpen()"') >= 0);
+ok("页面实现 biliOpen / biliSub / onBiliLogin",
+   biliSource.indexOf("function biliOpen(") >= 0 &&
+   biliSource.indexOf("function biliSub(") >= 0 &&
+   biliSource.indexOf("window.onBiliLogin =") >= 0 &&
+   biliSource.indexOf("window.onBiliLogout =") >= 0);
+ok("播放准备只走 Android.biliPrepare", biliSource.indexOf("Android.biliPrepare") >= 0);
+ok("页面不碰 cookie / 上游直链",
+   biliSource.indexOf("SESSDATA") < 0 && biliSource.indexOf("bilivideo") < 0 &&
+   biliSource.indexOf("api.bilibili.com") < 0);
+ok("样式里有 .bili- 系列", cssSource.indexOf(".bili-player video") >= 0 &&
+   cssSource.indexOf(".bili-pages") >= 0 && cssSource.indexOf(".bili-empty") >= 0);
 
 /* ---------- 结果 ---------- */
 console.log("\n" + "=".repeat(46));

@@ -122,6 +122,29 @@ public class BridgeTest {
         }
         ok("DownloadSources 生成的 " + real.size() + " 个发布源全部能过闸", all);
 
+        /* ---- 8. 哔哩哔哩收藏闸门（v1.1.7 P5） ---- */
+        System.out.println();
+        System.out.println("[8] bili guards (fid / bvid / pn / page)");
+        allow("biliFid 正常数字", BridgeGuard.biliFid("123456"));
+        reject("biliFid 空串", BridgeGuard.biliFid(""));
+        reject("biliFid 带字母", BridgeGuard.biliFid("12a"));
+        reject("biliFid 注入尝试", BridgeGuard.biliFid("1 OR 1=1"));
+        reject("biliFid 超长", BridgeGuard.biliFid(repeat('9', 21)));
+        allow("biliBvid BV 号", BridgeGuard.biliBvid("BV1xx411c7mD"));
+        allow("biliBvid av 号", BridgeGuard.biliBvid("av170001"));
+        reject("biliBvid 空", BridgeGuard.biliBvid(""));
+        reject("biliBvid 少一位", BridgeGuard.biliBvid("BV1xx411c7m"));
+        reject("biliBvid 路径注入", BridgeGuard.biliBvid("BV1xx411c7mD/../x"));
+        reject("biliBvid av 带字母", BridgeGuard.biliBvid("av12x"));
+        allow("biliPn 1", BridgeGuard.biliPn(1));
+        allow("biliPn 100", BridgeGuard.biliPn(100));
+        reject("biliPn 0", BridgeGuard.biliPn(0));
+        reject("biliPn 101", BridgeGuard.biliPn(101));
+        allow("biliPage 1", BridgeGuard.biliPage(1));
+        allow("biliPage 1000", BridgeGuard.biliPage(1000));
+        reject("biliPage 0", BridgeGuard.biliPage(0));
+        reject("biliPage 1001", BridgeGuard.biliPage(1001));
+
         System.out.println();
         System.out.println(pass + " passed, " + fail + " failed");
         if (fail > 0) System.exit(1);

@@ -160,6 +160,18 @@ java "-Dfile.encoding=UTF-8" -cp "%OUT%;%JSON_JAR%" McpServerTest
 if errorlevel 1 goto fail
 :mcpOk
 echo.
+echo === bili web (fav list / playurl parsing, no wbi) ===
+javac -encoding UTF-8 -cp "%JSON_JAR%" -d "%OUT%" "%~dp0..\app\src\main\java\com\fan\shuatiku\BiliWeb.java" "%~dp0..\app\src\main\java\com\fan\shuatiku\DeepSeekWeb.java" "%~dp0..\app\src\main\java\com\fan\shuatiku\DeepSeekHashV1.java" "%~dp0..\app\src\main\java\com\fan\shuatiku\HttpNet.java" "%~dp0BiliTest.java"
+if errorlevel 1 goto fail
+java "-Dfile.encoding=UTF-8" -cp "%OUT%;%JSON_JAR%" com.fan.shuatiku.BiliTest
+if errorlevel 1 goto fail
+echo.
+echo === bili stream (loopback proxy: token / range / host allowlist) ===
+javac -encoding UTF-8 -cp "%JSON_JAR%" -d "%OUT%" "%~dp0..\app\src\main\java\com\fan\shuatiku\BiliStream.java" "%~dp0..\app\src\main\java\com\fan\shuatiku\BiliWeb.java" "%~dp0..\app\src\main\java\com\fan\shuatiku\DeepSeekWeb.java" "%~dp0..\app\src\main\java\com\fan\shuatiku\DeepSeekHashV1.java" "%~dp0..\app\src\main\java\com\fan\shuatiku\HttpNet.java" "%~dp0..\app\src\main\java\com\fan\shuatiku\McpServer.java" "%~dp0BiliStreamTest.java"
+if errorlevel 1 goto fail
+java "-Dfile.encoding=UTF-8" -cp "%OUT%;%JSON_JAR%" com.fan.shuatiku.BiliStreamTest
+if errorlevel 1 goto fail
+echo.
 echo === release manifest (version/apk name single source of truth) ===
 javac -encoding UTF-8 -d "%OUT%" "%~dp0..\app\src\main\java\com\fan\shuatiku\DownloadSources.java" "%~dp0..\app\src\main\java\com\fan\shuatiku\ReleaseManifest.java" "%~dp0ReleaseManifestTest.java"
 if errorlevel 1 goto fail

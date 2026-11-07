@@ -134,6 +134,69 @@ public final class BridgeGuard {
         return null;
     }
 
+    /* ==================== 哔哩哔哩收藏（v1.1.7 P5） ==================== */
+
+    /**
+     * 收藏夹 id：纯数字。
+     *
+     * <p>这个值来自上游 {@code folders()} 的 {@code mediaId}，本来是 JSON 里的 long，
+     * 但经页面绕一圈回来就成了字符串。只认数字，长度卡在 20 位（long 的十进制上限是
+     * 19 位，留一位余量）——既能挡住 {@code 1 OR 1=1} 这类拼接，也不会误伤真实 id。
+     */
+    static String biliFid(String fid) {
+        if (fid == null || fid.trim().isEmpty()) return "收藏夹 id 为空";
+        String s = fid.trim();
+        if (s.length() > 20) return "收藏夹 id 太长";
+        for (int i = 0; i < s.length(); i++) {
+            char c = s.charAt(i);
+            if (c < '0' || c > '9') return "收藏夹 id 只能是数字";
+        }
+        return null;
+    }
+
+    /**
+     * 视频 id：{@code BV} 开头 + 10 位字母数字，或 {@code av} + 数字。
+     *
+     * <p>页面只从列表里拿 {@code bvid} 再传回来，形状是确定的；这里钉死形状，
+     * 免得一个被污染的历史字符串进了上游请求路径。
+     */
+    static String biliBvid(String bvid) {
+        if (bvid == null || bvid.trim().isEmpty()) return "视频 id 为空";
+        String s = bvid.trim();
+        if (s.length() > 20) return "视频 id 太长";
+        String lower = s.toLowerCase(Locale.ROOT);
+        if (lower.startsWith("av")) {
+            String num = s.substring(2);
+            if (num.isEmpty()) return "av 号缺少数字";
+            for (int i = 0; i < num.length(); i++) {
+                char c = num.charAt(i);
+                if (c < '0' || c > '9') return "av 号只能是数字";
+            }
+            return null;
+        }
+        if (s.length() == 12 && s.charAt(0) == 'B' && s.charAt(1) == 'V') {
+            for (int i = 2; i < 12; i++) {
+                char c = s.charAt(i);
+                boolean ok = (c >= '0' && c <= '9') || (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z');
+                if (!ok) return "bvid 含非法字符";
+            }
+            return null;
+        }
+        return "视频 id 形状不对（要 BV 号或 av 号）";
+    }
+
+    /** 收藏夹分页：1..100。上游一页 20 条，100 页够翻两千条。 */
+    static String biliPn(int pn) {
+        if (pn < 1 || pn > 100) return "页码超出范围（1-100）";
+        return null;
+    }
+
+    /** 视频分 P：1..1000。上游一个稿件不会有比这更多的分 P。 */
+    static String biliPage(int page) {
+        if (page < 1 || page > 1000) return "分 P 超出范围（1-1000）";
+        return null;
+    }
+
     /**
      * http(s) 地址的公共判定。
      *
