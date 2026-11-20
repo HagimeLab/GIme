@@ -50,8 +50,33 @@ public class Updater {
     private long lastBytes = -1;
     private long lastProgressAt = 0;
 
+    /* 下载任务号要跨进程存活：APP 退到后台被回收后，系统下载器还在继续下，
+       回到 APP 只有把 dmId 找回来，才能看到进度、并在下完后拉起安装页。 */
+    private static final String PREF = "updater";
+    private static final String KEY_DM = "dmId";
+
     public Updater(Sink sink) {
         this.sink = sink;
+    }
+
+    private android.content.SharedPreferences prefs() {
+        Activity a = sink.activity();
+        if (a == null) return null;
+        return a.getSharedPreferences(PREF, Context.MODE_PRIVATE);
+    }
+
+    private void saveDm(long id) {
+        try {
+            android.content.SharedPreferences p = prefs();
+            if (p != null) p.edit().putLong(KEY_DM, id).apply();
+        } catch (Throwable ignored) { }
+    }
+
+    private void clearDm() {
+        try {
+            android.content.SharedPreferences p = prefs();
+            if (p != null) p.edit().remove(KEY_DM).apply();
+        } catch (Throwable ignored) { }
     }
 
     /** 后台查一次版本，结果以 JSON 交给页面。 */
@@ -130,6 +155,7 @@ public class Updater {
                 .put("urls", urls)
                 .put("url", urls.length() > 0 ? urls.optString(0, "") : "")
                 .put("page", DownloadSources.releasePage(REPO, m.version))
+                .put("gitee", DownloadSources.giteeReleasePage(m.version))
                 .put("date", m.date)
                 .put("notes", m.notes.length > 0 ? m.notes[0] : "")
                 .put("log", log)
@@ -166,6 +192,7 @@ public class Updater {
                 /* 兼容老字段：取第一个源，老版本页面读这个也能用 */
                 .put("url", urls.length() > 0 ? urls.optString(0, "") : "")
                 .put("page", DownloadSources.releasePage(REPO, latest))
+                .put("gitee", DownloadSources.giteeReleasePage(latest))
                 .put("date", date)
                 .put("notes", notes.trim())
                 .put("log", log)
@@ -265,6 +292,7 @@ public class Updater {
                     r.setDestinationInExternalPublicDir(Environment.DIRECTORY_DOWNLOADS, "GIme-latest.apk");
                     r.setMimeType("application/vnd.android.package-archive");
                     dmId = dm.enqueue(r);
+                    saveDm(dmId);
                     watch();
                     sink.toJs("window.onUpdateDownloading&&window.onUpdateDownloading()");
                 } catch (Exception e) {
@@ -385,8 +413,103 @@ public class Updater {
         sink.toJs("window.onUpdateError&&window.onUpdateError(" + quote(msg) + ")");
     }
 
+    /**
+     * APP 重新回到前台时调用：把「上次没下完的更新包」接回来。
+     *
+     * <p>下载本身归系统 DownloadManager 管，退到后台照样继续；会丢的只是内存里的
+     * dmId——页面回来后拿不到进度、下完也不会自动弹安装。这里按持久化的 id 查一次：
+     * 还在下就恢复轮询把百分比喂回页面，已下完就提示「立即安装」。
+     */
+    public void resumePending() {
+        final Activity act = sink.activity();
+        if (act == null || dmId > 0) return;
+        long id = 0;
+        try {
+            android.content.SharedPreferences p = prefs();
+            id = p == null ? 0 : p.getLong(KEY_DM, 0);
+        } catch (Throwable ignored) { }
+        if (id <= 0) return;
+        Cursor cu = null;
+        try {
+            DownloadManager m = (DownloadManager) act.getSystemService(Context.DOWNLOAD_SERVICE);
+            cu = m.query(new DownloadManager.Query().setFilterById(id));
+            if (cu == null || !cu.moveToFirst()) { clearDm(); return; }
+            int st = cu.getInt(cu.getColumnIndex(DownloadManager.COLUMN_STATUS));
+            long got = cu.getLong(cu.getColumnIndex(DownloadManager.COLUMN_BYTES_DOWNLOADED_SO_FAR));
+            long tot = cu.getLong(cu.getColumnIndex(DownloadManager.COLUMN_TOTAL_SIZE_BYTES));
+            String outcome = outcomeOf(st);
+            /* 这行是给"回来接不上"这类问题留的现场：状态码、已下/总量、以及我们
+               判成什么。只靠界面上的一句文案，没法区分"下载器还没收尾"和"我们的
+               状态映射判错了"。 */
+            Log.i(TAG, "resumePending id=" + id + " status=" + st + " got=" + got
+                    + " tot=" + tot + " -> " + outcome);
+            if ("install".equals(outcome)) {
+                dm = m;
+                dmId = id;
+                sink.toJs("window.onUpdateResume&&window.onUpdateResume(" +
+                        quote("{\"state\":\"done\",\"pct\":100}") + ")");
+                return;
+            }
+            if ("progress".equals(outcome)) {
+                dm = m;
+                dmId = id;
+                lastBytes = -1;
+                int pct = tot > 0 ? (int) (got * 100 / tot) : 0;
+                sink.toJs("window.onUpdateResume&&window.onUpdateResume(" +
+                        quote("{\"state\":\"running\",\"pct\":" + pct + "}") + ")");
+                watch();
+                return;
+            }
+            clearDm();
+            sink.toJs("window.onUpdateResume&&window.onUpdateResume(" +
+                    quote("{\"state\":\"error\"}") + ")");
+        } catch (Throwable e) {
+            Log.w(TAG, "resumePending failed", e);
+            clearDm();
+        } finally {
+            if (cu != null) cu.close();
+        }
+    }
+
+    /** 页面点「立即安装」：把上次已经下好的安装包拉起来。 */
+    public void installPending() {
+        final Activity act = sink.activity();
+        if (act == null) return;
+        if (dmId <= 0) {
+            sink.toJs("window.onUpdateError&&window.onUpdateError(" + quote("没有待安装的更新包") + ")");
+            return;
+        }
+        Cursor cu = null;
+        try {
+            DownloadManager m = dm != null ? dm
+                    : (DownloadManager) act.getSystemService(Context.DOWNLOAD_SERVICE);
+            cu = m.query(new DownloadManager.Query().setFilterById(dmId));
+            if (cu == null || !cu.moveToFirst()) {
+                done();
+                sink.toJs("window.onUpdateError&&window.onUpdateError(" + quote("安装包已经不在了，请重新下载") + ")");
+                return;
+            }
+            String outcome = outcomeOf(cu.getInt(cu.getColumnIndex(DownloadManager.COLUMN_STATUS)));
+            if (!"install".equals(outcome)) {
+                sink.toJs("window.onUpdateError&&window.onUpdateError(" + quote("安装包还没下载完") + ")");
+                return;
+            }
+            final Uri local = m.getUriForDownloadedFile(dmId);
+            done();
+            act.runOnUiThread(new Runnable() {
+                @Override public void run() { install(local); }
+            });
+        } catch (Throwable e) {
+            Log.w(TAG, "installPending failed", e);
+            sink.toJs("window.onUpdateError&&window.onUpdateError(" + quote("打不开安装包：" + e.getMessage()) + ")");
+        } finally {
+            if (cu != null) cu.close();
+        }
+    }
+
     private void done() {
         dmId = -1;
+        clearDm();
         final Activity act = sink.activity();
         if (receiver != null && act != null) {
             try { act.unregisterReceiver(receiver); } catch (Exception ignored) { }

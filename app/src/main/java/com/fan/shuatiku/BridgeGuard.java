@@ -44,6 +44,10 @@ public final class BridgeGuard {
             "gcore.jsdelivr.net",
             "github.com",
             "raw.githubusercontent.com",
+            /* Gitee 是国内镜像：DownloadSources 对 .apk 排的第一位就是它。
+               名单里漏掉这条时，点更新会直接被判「地址不可信」——最该走通的
+               那条路反而永远走不通。 */
+            "gitee.com",
     };
 
     private BridgeGuard() {
@@ -114,8 +118,19 @@ public final class BridgeGuard {
         if (q >= 0) path = path.substring(0, q);
         int hash = path.indexOf('#');
         if (hash >= 0) path = path.substring(0, hash);
-        if (path.indexOf("/HagimeLab/GIme") < 0) return "路径不在本仓库里";
-        if (path.indexOf("/release/") < 0) return "路径不在 release 目录下";
+        /* 两种仓库路径形状：
+           GitHub / jsDelivr → /HagimeLab/GIme/... + release 目录；
+           Gitee 镜像        → /hagemilab/gi/releases/download/<tag>/<file>。
+           后者是小写仓库名，用前者那套大小写敏感的规则永远匹配不上。 */
+        if ("gitee.com".equals(host)) {
+            if (path.indexOf("/hagemilab/gi/") < 0) return "路径不在本仓库镜像里";
+            if (path.indexOf("/releases/download/") < 0) return "路径不在镜像的发布下载目录下";
+        } else {
+            if (path.indexOf("/HagimeLab/GIme") < 0) return "路径不在本仓库里";
+            if (path.indexOf("/release/") < 0 && path.indexOf("/releases/download/") < 0) {
+                return "路径不在 release 目录下";
+            }
+        }
         if (!path.toLowerCase(Locale.ROOT).endsWith(".apk")) return "不是 apk 文件";
         return null;
     }

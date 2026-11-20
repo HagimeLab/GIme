@@ -201,7 +201,13 @@ function openConvList() {
   chatSyncConv();
   chatConvSave();
   var sh = document.getElementById("sheet3");
-  var h = '<div class="handle"></div><h2>历史会话</h2>';
+  /* 「新建对话」放在历史列表上方：头部只留历史入口，开新会话这件事在历史面板里做，
+     用户不用记「头部那颗 + 是干嘛的」。 */
+  var h = '<div class="handle"></div><h2>历史会话</h2>' +
+          '<button class="conv-new" onclick="convNew()">' +
+          '<svg class="nplus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>' +
+          '<span>新建对话</span>' +
+          '<svg class="nchev" viewBox="0 0 24 24"><path d="M9 6l6 6-6 6"/></svg></button>';
   /* 没有消息的会话不列出来：它们不算“对话”，页面上当前那个空会话也不列 */
   var shown = chatConvs.filter(function (c) { return !chatConvEmpty(c); });
   if (!shown.length) {
@@ -228,6 +234,10 @@ function openConvList() {
   }
   sh.innerHTML = h;
   openLayer(sh);
+}
+function convNew() {
+  closeTop();                                   /* 先收历史面板，新会话落在下面的对话面板上 */
+  chatNewConv(true);
 }
 function convPick(id) {
   var c = null, i;
@@ -443,9 +453,10 @@ function dsLogoutNow() {
   chatRender();
   toast("已退出 DeepSeek 登录");
 }
-/* ---- 对话字号：只影响聊天区（气泡 + 思考链），不动 App 其它地方 ----
-   存的是一份百分比，默认 100。真正的字号用 CSS 变量 --chat-fs 乘在
-   原始的 rem 上，所以它还能叠加「我的 → 字号」那个全局缩放。 */
+/* ---- 对话字号：只受大肥鱼面板里这一个开关控制 ----
+   气泡字号写的是 rem（会被 html 的 font-size 放大），所以这里把「我的 → 字号」那一份
+   除回去：最终绝对字号 = .875rem × 16px × chatFs，跟 App 界面字号彻底脱钩。
+   以前是两份乘在一起，改界面字号会把对话一起拖走。 */
 var CHAT_FS_MIN = 80, CHAT_FS_MAX = 150, CHAT_FS_STEP = 10;
 function chatFs() {
   var v = parseInt(set.chatFs, 10);
@@ -454,7 +465,8 @@ function chatFs() {
   return Math.min(CHAT_FS_MAX, Math.max(CHAT_FS_MIN, v));
 }
 function applyChatFs() {
-  document.documentElement.style.setProperty("--chat-fs", chatFs() / 100);
+  var g = (parseInt(set.fscale, 10) || 100) / 100;
+  document.documentElement.style.setProperty("--chat-fs", (chatFs() / 100) / (g || 1));
 }
 /* 面板里 +/- 一下就能看到效果，不关面板、不重绘整个聊天区 */
 function chatFsStep(d) {
@@ -479,6 +491,7 @@ function agFontHtml() {
           (v >= CHAT_FS_MAX ? ' disabled' : '') + '>A＋</button>' +
       '</div>' +
       '<div class="ag-fs-demo">这条消息就按现在的字号显示。</div>' +
+      '<div class="ag-fs-hint">只管对话里的气泡和思考链，「我的 → 字号」动不到这里。</div>' +
     '</div>';
 }
 /* 顶部的切换按钮：第一行是「现在」，第二行是「点下去会变成什么」。 */
@@ -488,11 +501,12 @@ function agSwitchHtml() {
     '<span class="ag-now">当前：' + (login ? "手机号登录" : "API Key") + "</span>" +
     '<span class="ag-go">点这里换成 ' + (login ? "API Key" : "手机号登录") + " ›</span></button>";
 }
-/* 设置里把两条链路的边界说清楚：会话不通用，切换会自动新开 */
+/* 设置里把两条链路的边界说清楚：会话不通用，切换会自动新开。
+   第 42 轮收敛成一句：原来那三句（网页版/Key 隔开 + 自动新开 + 标来源 + 不能拿到另一边继续）
+   要读三遍才明白，而用户打开这个面板只是来切一下接入方式。 */
 function agModeHintHtml() {
   return '<div class="sl-hint" style="margin:16px 0 0;border-top:1px solid var(--line);padding-top:12px">' +
-    "网页版登录和 API Key 的会话互相隔开：切换接入方式会自动新开一条会话，历史里标了来源；" +
-    "一边的会话不能拿到另一边继续。</div>";
+    "两种接入方式的会话不通用，切换会新开一条，历史里会标来源。</div>";
 }
 function openAgentCfg() {
   var a = set.agent || {};
@@ -503,12 +517,11 @@ function openAgentCfg() {
     var line = !st ? '<div class="sl-hint">仅手机版可用。</div>'
       : st.loggedIn
         ? '<div class="ag-ok">已登录 DeepSeek' + (st.mobile ? " · " + esc(st.mobile) : "") +
-          " · 不用填 Key，直接问就行。</div>" +
+          " · 登录态只存本机</div>" +
           '<button class="sheet-act2" style="width:100%;margin:10px 0 0" onclick="dsLogoutNow()">退出登录</button>'
-        : '<div class="sl-hint" style="margin:0 0 10px">还没登录。用手机号登录一次，之后就能直接用，不需要 API Key。</div>' +
+        : '<div class="sl-hint" style="margin:0 0 10px">还没登录，登录一次就能直接用。</div>' +
           '<button class="sheet-act" style="margin:0" onclick="dsLoginNow()">用手机号登录 DeepSeek</button>';
     sh.innerHTML = head + line +
-      '<div class="sl-hint" style="margin:18px 0 0">登录态只存在本机。换设备或过期后，重新登录一次即可。</div>' +
       agModeHintHtml() +
       agFontHtml();
   } else {
@@ -521,7 +534,6 @@ function openAgentCfg() {
       '<div class="sl-hint" style="margin:14px 0 4px">API Key</div>' +
       '<input class="rn-box" id="agKey" type="password" value="' + esc(a.key || "") + '" placeholder="sk-...">' +
       '<button class="sheet-act" style="margin-top:18px" onclick="agentCfgSave()">保存</button>' +
-      '<div class="sl-hint" style="margin:16px 0 0">按标准 /chat/completions 调，Key 不会离开这台手机。</div>' +
       agModeHintHtml() +
       agFontHtml();
   }
@@ -2064,7 +2076,7 @@ function chatRender() {
                   '<div class="blk-head"><span class="blk-tag">回答</span>' +
                     (hasBody ? '<button class="blk-copy" onclick="chatCopyMsg(\'' +
                       esc(m.id || "") + '\')">复制</button>' : "") +
-                  "</div>" + content + chatToolsHtml(m) + "</div>" +
+                  "</div>" + chatToolsHtml(m) + content + "</div>" +
                 ouiSlotHtml(m) +
               "</div>";
     }
@@ -2188,44 +2200,184 @@ function chatBigSend() {
   chatBigClose();
   chatSend();
 }
-/* 首页全屏对话：从顶部把手/头部往下拖，超过阈值就收回 */
+/* 大肥鱼面板：三个停位（1/2 · 2/3 · 全屏），拖动跟手、松手吸附。
+   低于 40% 且不是上甩时收回；速度只看最近 120ms 的位移，停住再松手按位置吸。 */
+var CHAT_DET = [0.5, 2 / 3, 1], chatDetent = 1;
+function chatSetDetent(i) {
+  chatDetent = Math.max(0, Math.min(2, i));
+  var ch = document.getElementById("chat");
+  if (!ch) return;
+  var d = CHAT_DET[chatDetent];
+  ch.style.height = (d * 100) + "vh";
+  ch.style.maxHeight = (d * 100) + "vh";
+  ch.classList.toggle("full", d >= 0.99);
+}
 function chatPullInit() {
   var ch = document.getElementById("chat");
   if (!ch || ch.__pullBound) return;
   ch.__pullBound = 1;
-  var startY = 0, dy = 0, active = false;
-  function onStart(e) {
-    if (!ch.classList.contains("full") || !ch.classList.contains("on")) return;
-    var t = e.target;
-    if (!t || !t.closest || !(t.closest(".handle") || t.closest(".chat-head"))) return;
-    active = true; dy = 0;
-    startY = e.touches && e.touches[0] ? e.touches[0].clientY : 0;
-    ch.style.transition = "none";
+  /* v3.1-fix：三档停位（1/2 · 2/3 · 全屏）拖动跟手、松手吸附。
+     抓取区＝整块面板的空白处（按钮 / 输入区 / 消息里的卡片除外），不再只认把手那一小条：
+     面板缩小之后手指往往落在主体区，只认把手会让人觉得「拖不动」。
+     消息列表：在顶部且方向是往下才接管，往上仍交给列表自己滚。 */
+  var drag = false, pid = null, y0 = 0, h0 = 0, H = 0, lastH = 0, prevH = 0, prevT = 0, vNow = 0, startIdx = 1;
+  var fromList = false, committed = false;
+  var lastCross = -1, tickT = 0, hitTimer = 0, lastTickT = 0, maxMove = 0, tapZone = false;
+  /* 到达档位/跨档时的反馈：短震一下 + 把手轻弹。
+     Android.haptic 是 App 注入的桥（native 侧夹 8~40ms）；纯网页环境回退到 navigator.vibrate。 */
+  function haptic(ms) {
+    try { if (window.Android && Android.haptic) { Android.haptic(ms | 0); return; } } catch (x) { }
+    try { if (navigator.vibrate) navigator.vibrate(ms | 0); } catch (x) { }
   }
-  function onMove(e) {
-    if (!active) return;
-    var y = e.touches && e.touches[0] ? e.touches[0].clientY : startY;
-    dy = Math.max(0, y - startY);
-    ch.style.transform = "translateY(" + dy + "px)";
+  function tick(strong) {
+    var now = performance.now();
+    if (now - lastTickT < 130) return;               /* 连着跨档时不刷屏地猛震 */
+    lastTickT = now;
+    haptic(strong ? 18 : 9);
+    ch.classList.remove("tick");
+    void ch.offsetWidth;                             /* 强制回流，让动画能重放 */
+    ch.classList.add("tick");
+    clearTimeout(hitTimer);
+    hitTimer = setTimeout(function () { ch.classList.remove("tick"); }, 380);
+  }
+  function nearestIdx(h) {
+    var idx = 0, best = 1e9;
+    for (var i = 0; i < CHAT_DET.length; i++) {
+      var diff = Math.abs(CHAT_DET[i] * H - h);
+      if (diff < best) { best = diff; idx = i; }
+    }
+    return idx;
+  }
+  function cancel() {
+    drag = false; committed = false; fromList = false;
+    ch.classList.remove("dragging");
+    try { if (pid !== null && ch.hasPointerCapture && ch.hasPointerCapture(pid)) ch.releasePointerCapture(pid); } catch (x) { }
+    pid = null;
+  }
+  /* 找出这块内容自己能不能滚：能滚就先让给它，别抢手势 */
+  function scrollHost(t) {
+    var n = t;
+    while (n && n !== ch) {
+      if (n.clientHeight > 0 && n.scrollHeight > n.clientHeight + 4) {
+        var oy = "";
+        try { oy = getComputedStyle(n).overflowY; } catch (x) {}
+        if (oy === "auto" || oy === "scroll") return n;
+      }
+      n = n.parentElement;
+    }
+    return null;
+  }
+  function onDown(e) {
+    if (!ch.classList.contains("on")) return;
+    if (e.pointerType === "mouse" && e.button) return;
+    var t = e.target;
+    if (!t || !t.closest) return;
+    if (t.closest("button")) return;                 /* 头部四颗按钮是点击区，不抢手势 */
+    /* 可抓区只有一个：顶部把手 + 头部那行空白（头像和按钮除外）。
+       正文、输入卡、空态大图、提示区都不接管——上下拉动专门属于头部，
+       否则在聊天界面里上下滑会把整个面板拖着走。 */
+    var headBlank = !!t.closest(".chat-head") && !t.closest(".ava");
+    if (!t.closest(".handle") && !headBlank) return;
+    H = window.innerHeight || 800;
+    var baseH = CHAT_DET[chatDetent] * H;
+    h0 = ch.offsetHeight;
+    /* 上一次吸附动画还没走完就又按下：offsetHeight 是中间值，直接拿它当基准会让手指
+       先「跳」一下再跟手。差得多就改用该档的目标高度，起手立刻跟上。 */
+    if (Math.abs(h0 - baseH) > 6) h0 = baseH;
+    lastH = h0; startIdx = chatDetent;
+    prevH = h0; prevT = performance.now(); vNow = 0;
+    y0 = e.clientY; pid = e.pointerId; drag = true;
+    maxMove = 0;                                      /* 轻点判定用：整次手势的最大位移 */
+    tapZone = true;                                   /* 能抓到这里的，点一下也算换档 */
+    fromList = false;
+    lastCross = startIdx;                             /* 跨档反馈的基准 */
+    committed = true;                                 /* 头部空白不需要延迟判定，立即接管 */
+    ch.classList.add("dragging");
+    try { ch.setPointerCapture(e.pointerId); } catch (x) {}
     if (e.cancelable) e.preventDefault();
   }
-  function onEnd() {
-    if (!active) return;
-    active = false;
-    ch.style.transition = "";
-    ch.style.transform = "";
-    if (dy > 110) closeTop();
+  function onMove(e) {
+    if (!drag) return;                               /* pointerId 在个别 WebView/模拟输入下会变，只认 drag 状态 */
+    var dy = e.clientY - y0;
+    if (Math.abs(dy) > maxMove) maxMove = Math.abs(dy);
+    if (!committed) {
+      if (Math.abs(dy) < 4) return;                  /* 4px 就算拖动意图：原来 10px，起手明显发木 */
+      if (fromList && dy < 0) { cancel(); return; } /* 在列表里往上推 → 交给列表滚 */
+      committed = true;
+      ch.classList.add("dragging");
+      try { ch.setPointerCapture(e.pointerId); } catch (x) {}
+      if (e.cancelable) e.preventDefault();
+    }
+    var h = Math.max(H * 0.34, Math.min(H, h0 - dy));
+    lastH = h;
+    var now = performance.now();
+    vNow = (h - prevH) / Math.max(1, now - prevT);   /* 变大（上拖）为正 */
+    prevH = h; prevT = now;
+    ch.style.height = h + "px";
+    ch.style.maxHeight = h + "px";
+    ch.classList.toggle("full", h >= H - 2);
+    /* 拖到另一个档位区间的瞬间给一次轻反馈，手感上「摸到了节点」 */
+    var near = nearestIdx(h);
+    if (near !== lastCross) { lastCross = near; tick(false); }
+    if (e.cancelable) e.preventDefault();
   }
-  ch.addEventListener("touchstart", onStart, { passive: true });
-  ch.addEventListener("touchmove", onMove, { passive: false });
-  ch.addEventListener("touchend", onEnd);
-  ch.addEventListener("touchcancel", onEnd);
+  function onEnd(e) {
+    if (!drag) return;
+    if (!committed) { cancel(); return; }            /* 只是点了一下，没拖动 */
+    drag = false; committed = false;
+    try { if (pid !== null && ch.hasPointerCapture && ch.hasPointerCapture(pid)) ch.releasePointerCapture(pid); } catch (x) { }
+    pid = null;
+    fromList = false;
+    ch.classList.remove("dragging");
+    var h = lastH;
+    var idle = performance.now() - prevT;
+    var v = idle > 120 ? 0 : vNow;                   /* 停住再松手 → 只按位置吸附 */
+    /* 轻点（整次手势位移 < 6px）当成「把手就是按钮」：往上一档；全屏时退回 2/3。
+       之前只有拖动一条路，点一下毫无反应，手感就是「点了没动」。 */
+    if (maxMove < 8 && tapZone) {
+      var tidx = startIdx >= 2 ? 1 : startIdx + 1;
+      tick(true);
+      chatSetDetent(tidx);
+      return;
+    }
+    /* 收到最小档（1/2）再往下带一段就直接收起，不必拖到 0.4 屏 */
+    if (startIdx === 0 && h0 - h >= 36 && v <= 0.2) { tick(true); closeTop(); return; }
+    if (h < H * 0.4 && v < 0.2) { tick(true); closeTop(); return; }
+    var moved = h0 - h;                              /* >0：手指往下走、面板在缩 */
+    var idx = nearestIdx(h);
+    /* 位移门槛：原来 56px 降 / 90px 升，手小的用户经常拉不动，收窄到 32 / 48。
+       门槛之外仍按最近档位吸附，所以小幅拖动不会被强行甩到下一档。 */
+    var forced = false;
+    if (idx === startIdx) {
+      if (moved >= 32 && startIdx > 0) { idx = startIdx - 1; forced = true; }
+      else if (-moved >= 48 && startIdx < 2) { idx = startIdx + 1; forced = true; }
+    }
+    /* 甩动补偿只在「位移还没达到门槛」时生效：两者叠加会把一次 40px 的下拉算成两档
+       （先降一格、再被甩动降一格），用户看到的就是「轻轻一拉直接掉到 1/2」。 */
+    if (!forced && Math.abs(v) > 0.45 && Math.abs(moved) >= 16) {
+      if (v > 0 && idx < 2) idx++;
+      else if (v < 0 && idx > 0) idx--;
+    }
+    /* 落到档位上给一次明确反馈（换档了才重震；原地回弹只轻点一下） */
+    if (idx !== startIdx) tick(true);
+    else if (startIdx !== lastCross) tick(false);
+    chatSetDetent(idx);
+  }
+  ch.addEventListener("pointerdown", onDown, { passive: false });
+  ch.addEventListener("pointermove", onMove, { passive: false });
+  ch.addEventListener("pointerup", onEnd);
+  ch.addEventListener("pointercancel", onEnd);
+  /* WebView 里 pointerdown 的 preventDefault 未必能拦住滚动，真机上往上拖就容易被判成
+     「页面滚动」而 pointercancel；补一条 touchmove 兜底，拖动期间强制不滚。 */
+  ch.addEventListener("touchmove", function (e) {
+    if (drag && committed && e.cancelable) e.preventDefault();
+  }, { passive: false });
 }
 function openChat() {
   if (!S) { toast("先进一道题再问"); return; }
   chatUnread = false;
   var ch = document.getElementById("chat");
-  ch.classList.remove("full");           /* 答题页仍走底部上滑 */
+  chatSetDetent(1);                       /* 答题页：默认 2/3 */
   chatBigClose();
   chatRender();
   openLayer(ch);
@@ -2236,7 +2388,7 @@ function openChat() {
 function openChatTab() {
   chatUnread = false;
   var ch = document.getElementById("chat");
-  ch.classList.add("full");       /* 首页入口：整屏对话，可下拉收回 */
+  chatSetDetent(1);                       /* 首页入口：默认 2/3，可上拉到全屏 */
   chatBigClose();
   chatRender();
   openLayer(ch);

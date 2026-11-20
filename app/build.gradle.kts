@@ -31,8 +31,8 @@ android {
         applicationId = "com.fan.shuatiku"
         minSdk = 24
         targetSdk = 36
-        versionCode = 18
-        versionName = "1.1.7"
+        versionCode = 19
+        versionName = "1.1.8"
         // Cronet 只带 ARM 两种 ABI：x86/x86_64 的 so 每个 5MB，手机上用不到
         ndk { abiFilters += listOf("arm64-v8a", "armeabi-v7a") }
     }
@@ -76,4 +76,12 @@ dependencies {
     // v1.0.9：用 Chromium 的网络栈替换 HttpURLConnection，拿到浏览器系 TLS/ALPN/H2。
     // 版本要和 UA/Client Hints 对齐；500.1.0 的 native 是 Chrome 155。
     implementation("org.chromium.net:cronet-bundled:500.1.0")
+    // 视频实时字幕的离线 ASR：sherpa-onnx 官方 Android AAR（含 libonnxruntime.so
+    // 与 libsherpa-onnx-jni.so，四 ABI；abiFilters 最终只打 arm64-v8a / armeabi-v7a）。
+    // 模型随 APK 放 assets/asr/（26MB int8 + tokens.txt），首次开字幕也无需联网。
+    // 本地 aar，不走 Maven，构建可离线。
+    implementation(files("libs/sherpa-onnx-2.0.1.aar"))
+    // AAR 里的 Kotlin data class 需要 kotlin-stdlib 运行时（Intrinsics 等）。
+    // 用 Gradle 缓存里已有的 2.2.10，--offline 也能解析。
+    implementation("org.jetbrains.kotlin:kotlin-stdlib:2.2.10")
 }

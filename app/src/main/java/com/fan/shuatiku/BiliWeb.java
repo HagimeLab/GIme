@@ -128,6 +128,52 @@ public final class BiliWeb {
         return playOf(d);
     }
 
+    /**
+     * 只取音频流（离线字幕专用，播放器不走这里）。
+     *
+     * <p>{@code fnval=16 + platform=html5} 会返回 DASH：音频单独一条 m4a（AAC），
+     * 直链校验与 html5 的 mp4 完全同口径（Referer + UA 即可，2026-11-20 真机实测
+     * Range 206 / 全量可下）。注意 pc 口径（不带 platform）的 DASH 直链会 403，别改。
+     * 字幕只要 16k 单声道，选最低码率的音频档就够；实测 988s 课程视频 7.8MB，
+     * 是同集 720P mp4（30.5MB）的 25%，高动态视频差距更大。
+     *
+     * <p>拿不到 DASH（老视频/特殊源）返回 url=""，调用方回退 {@link #play}。
+     */
+    public static JSONObject playAudio(String cookie, String bvid, long cid) throws Exception {
+        JSONObject d = call("/x/player/playurl",
+                q("bvid", bvid, "cid", String.valueOf(cid), "qn", "64",
+                        "fnval", "16", "fourk", "1", "platform", "html5", "high_quality", "1"), cookie);
+        return playAudioOf(d);
+    }
+
+    /** DASH 响应 → {url,size,timelength}；size 按码率×时长估算，下载进度以 HTTP 长度为准。 */
+    public static JSONObject playAudioOf(JSONObject data) {
+        JSONObject o = new JSONObject();
+        put(o, "timelength", data.optLong("timelength"));
+        JSONObject dash = data.optJSONObject("dash");
+        JSONArray auds = dash == null ? null : dash.optJSONArray("audio");
+        JSONObject best = null;
+        if (auds != null) {
+            for (int i = 0; i < auds.length(); i++) {
+                JSONObject a = auds.optJSONObject(i);
+                if (a == null) continue;
+                String u = a.optString("baseUrl", a.optString("base_url"));
+                if (u.isEmpty()) continue;
+                if (best == null || a.optLong("bandwidth", Long.MAX_VALUE)
+                        < best.optLong("bandwidth", Long.MAX_VALUE)) best = a;
+            }
+        }
+        if (best == null) {
+            put(o, "url", "");
+            put(o, "size", 0);
+            return o;
+        }
+        put(o, "url", best.optString("baseUrl", best.optString("base_url")));
+        put(o, "size", best.optLong("bandwidth") * data.optLong("timelength") / 8000L);
+        put(o, "audioId", best.optInt("id"));
+        return o;
+    }
+
     /* ==================== 纯解析（回归打这里） ==================== */
 
     /**
@@ -258,11 +304,30 @@ public final class BiliWeb {
 
     /* ==================== 请求装配 ==================== */
 
-    /** 发一次 GET，返回响应里的 data；data 为 null 时给空对象（调用方按缺字段兜底）。 */
+    /** 发一次 GET（网络波动最多重试 5 次），返回 data；超时/断流/5xx 都算可重试。 */
     private static JSONObject call(String path, Map<String, String> query, String cookie)
             throws Exception {
+        Exception last = null;
+        for (int attempt = 0; attempt < 5; attempt++) {
+            try {
+                return callOnce(path, query, cookie);
+            } catch (ApiError e) {
+                /* 5xx 才值得重试；登录失效 / 风控 / 业务错误重试也没用 */
+                if (!(e.code <= -500 && e.code > -600)) throw e;
+                last = e;
+            } catch (java.io.IOException e) {
+                last = e;
+            }
+            try { Thread.sleep(400L * (attempt + 1)); } catch (InterruptedException ignored) { }
+        }
+        if (last != null) throw last;
+        throw new ApiError(-1, "网络波动，重试 5 次仍失败");
+    }
+
+    private static JSONObject callOnce(String path, Map<String, String> query, String cookie)
+            throws Exception {
         HttpNet.Conn c = HttpNet.open(new HttpNet.Request(API + path + qs(query),
-                "GET", headers(cookie), null, 8000, 15000));
+                "GET", headers(cookie), null, 6000, 12000));
         String raw;
         int http;
         try {
@@ -316,6 +381,68 @@ public final class BiliWeb {
         h.put("Accept", "application/json, text/plain, */*");
         if (cookie != null && !cookie.trim().isEmpty()) h.put("Cookie", cookie.trim());
         return h;
+    }
+
+    /** 官方 AI 字幕：player/v2 挑中文轨，下载 JSON 并按上屏规则归一（TrackPost）。 */
+    public static String officialSubs(String cookie, String bvid, long cid) throws Exception {
+        JSONObject d = call("/x/player/v2", q("bvid", bvid, "cid", String.valueOf(cid)), cookie);
+        JSONObject sub = d.optJSONObject("subtitle");
+        JSONArray arr = sub == null ? null : sub.optJSONArray("subtitles");
+        String url = null;
+        if (arr != null) {
+            for (int i = 0; i < arr.length() && url == null; i++) {
+                JSONObject s = arr.optJSONObject(i);
+                if (s == null) continue;
+                if (s.optString("lan", "").startsWith("ai-zh")) url = s.optString("subtitle_url", "");
+            }
+            for (int i = 0; i < arr.length() && (url == null || url.isEmpty()); i++) {
+                JSONObject s = arr.optJSONObject(i);
+                if (s == null) continue;
+                if (s.optString("lan", "").startsWith("zh")) url = s.optString("subtitle_url", "");
+            }
+        }
+        if (url == null || url.isEmpty()) throw new ApiError(-1, "这条视频没有官方字幕");
+        String u = url.startsWith("//") ? "https:" + url : url;
+        JSONObject j = new JSONObject(fetchText(u));
+        JSONArray body = j.optJSONArray("body");
+        JSONArray segs = new JSONArray();
+        for (int i = 0; body != null && i < body.length(); i++) {
+            JSONObject b = body.optJSONObject(i);
+            if (b == null) continue;
+            String t = b.optString("content", "");
+            if (t.trim().isEmpty()) continue;
+            segs.put(new JSONObject()
+                    .put("s", b.optDouble("from", 0))
+                    .put("e", b.optDouble("to", 0))
+                    .put("t", t));
+        }
+        return TrackPost.refine(segs).toString();
+    }
+
+    /** 任意 URL 的 GET（字幕 JSON）；只带 UA/Referer，不带 cookie；网络波动重试 5 次。 */
+    private static String fetchText(String url) throws Exception {
+        Exception last = null;
+        for (int attempt = 0; attempt < 5; attempt++) {
+            try {
+                HttpNet.Conn c = HttpNet.open(new HttpNet.Request(url, "GET", headers(""), null, 6000, 12000));
+                try {
+                    int http = c.code();
+                    String s = HttpNet.readAll(c.body());
+                    if (http != 200) throw new ApiError(-http, "字幕下载失败（HTTP " + http + "）");
+                    return s;
+                } finally {
+                    try { c.close(); } catch (Exception ignored) { }
+                }
+            } catch (ApiError e) {
+                if (!(e.code <= -500 && e.code > -600)) throw e;
+                last = e;
+            } catch (java.io.IOException e) {
+                last = e;
+            }
+            try { Thread.sleep(400L * (attempt + 1)); } catch (InterruptedException ignored) { }
+        }
+        if (last != null) throw last;
+        throw new ApiError(-1, "字幕下载失败（网络波动）");
     }
 
     private static String qs(Map<String, String> q) {

@@ -273,13 +273,17 @@
     }
     panel.innerHTML =
       '<h2>字号</h2>' +
-      '<p>拖动旋钮调节，指针停在刻度上</p>' +
+      /* 百分比从盘面里搬出来放到标题下方：字号调大时数字会跟着变大，
+         留在盘心就会顶到刻度与指针上。 */
+      '<div class="fd-read"><b id="fdVal">' + (set.fscale || 100) + '</b><span>%</span></div>' +
+      '<p>拖住旋钮，指针所指即字号</p>' +
       '<div class="fd-dial" id="fdDial">' +
         '<div class="fd-ring"></div>' + ticks +
+        '<div class="fd-hub"></div>' +
         '<div class="fd-pointer" id="fdPointer"></div>' +
-        '<div class="fd-val"><b id="fdVal">' + (set.fscale || 100) + '</b><span>%</span></div>' +
       '</div>' +
-      '<button class="fd-done" type="button">完成</button>';
+      '<button class="fd-done" type="button">完成</button>' +
+      '<div class="fd-hint">只缩放 App 界面文字；对话字号在大肥鱼 → 设置里单独调。</div>';
     document.body.appendChild(scrim);
     document.body.appendChild(panel);
     var prevOverflow = document.body.style.overflow;

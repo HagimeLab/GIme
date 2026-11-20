@@ -244,8 +244,10 @@ ok("题库页给出导入入口", emptyDraw && emptyDraw.bank.indexOf("openImpor
 const indexHtmlSrc = fs.readFileSync(path.join(ASSETS, "index.html"), "utf8");
 ok("首页不再有今日待刷 / 学习资料 / 空题库导入卡",
    !/id="tasks"/.test(indexHtmlSrc) && !/id="studyCard"/.test(indexHtmlSrc));
-ok("题库页六张题型卡片都在", emptyDraw && (emptyDraw.cats.match(/class="cat-wrap/g) || []).length === 6,
-   emptyDraw && String((emptyDraw.cats.match(/class="cat-wrap/g) || []).length));
+ok("空题库时分类区收成一行提示（不再铺六张 0 题的格子）",
+   emptyDraw && emptyDraw.cats.indexOf("cats-line") >= 0
+   && (emptyDraw.cats.match(/class="cat-wrap/g) || []).length === 0,
+   emptyDraw && emptyDraw.cats.slice(0, 80));
 ok("题库页有错题本入口", emptyDraw && emptyDraw.wrongEntry.indexOf("openWrongPage") >= 0);
 ok("题库页有组卷出题入口", /onclick="openPaper\(\)"/.test(indexHtmlSrc));
 
@@ -839,12 +841,15 @@ W.grade([correct]);
 ok("haptics 存成字符串 \"false\" 也算关闭", vibes === 0, "实际 " + vibes);
 W.set.haptics = true;
 
-/* 9.4 分类区整体折叠：一个开关管六张卡片，卡片本身只负责进练习 */
-W.S = null; W.goTab("home");
+/* 9.4 题型六宫格搬到题库页（首页只管对话与最近练习），卡片仍只负责进练习 */
+W.S = null; W.goTab("bank");
 const catHtml = () => String(W.document.getElementById("cats").innerHTML);
 const foldEl = () => W.document.getElementById("catsFold");
 const toggleBtn = () => W.document.getElementById("catsToggle");
-ok("首页六张卡片", (catHtml().match(/class="cat-wrap/g) || []).length === 6);
+ok("题库页六张卡片", (catHtml().match(/class="cat-wrap/g) || []).length === 6);
+ok("六宫格只在题库页画（首页不再调 catsHtml）",
+   (html.match(/innerHTML = catsHtml\(\)/g) || []).length === 1 &&
+   /function renderBank\(\)[\s\S]{0,200}innerHTML = catsHtml\(\)/.test(html));
 ok("卡片不再带展开面板", catHtml().indexOf("cat-panel") < 0 && catHtml().indexOf("cat-in") < 0);
 ok("卡片不再有 aria-expanded（没有单卡展开了）", catHtml().indexOf("aria-expanded") < 0);
 ok("卡片点击直接进练习", /onclick="catGo\(/.test(catHtml()));
@@ -873,7 +878,9 @@ ok("学习资料卡去重阴影与图标底", /\.study-card\s*\{[^}]*border:\s*1
    !/\.study-card\s*\{[^}]*box-shadow/.test(cssSource) &&
    !/\.study-card \.sc-ic\s*\{[^}]*background/.test(cssSource) &&
    /\.study-card \.sc-go\s*\{[^}]*min-height:\s*44px/.test(cssSource));
-ok("回答卡只用边框、标签≥12px", !/\.msg\.ai \.blk\s*\{[^}]*box-shadow/.test(cssSource) &&
+ok("回答卡用描边 + 单一投影变量，标签≥12px",
+   /\.msg\.ai \.blk\s*\{[^}]*border:\s*1px solid var\(--line\)/.test(cssSource) &&
+   !/\.msg\.ai \.blk\s*\{[^}]*box-shadow:\s*(?:0|[0-9])/.test(cssSource) &&
    /\.blk-tag\s*\{[^}]*font-size:\s*\.75rem/.test(cssSource) &&
    /\.blk-copy\s*\{[^}]*font-size:\s*\.75rem/.test(cssSource));
 ok("次要文字用 ink-2 对比", /\.sec-title span\s*\{[^}]*var\(--ink-2\)/.test(cssSource) &&
@@ -891,8 +898,10 @@ ok("联网开关用描边表示开启（不再是一颗实心块）",
 ok("思考过程行高不低于 12px 且可收起", /\.think > summary\s*\{[^}]*font-size:\s*\.75rem/.test(cssSource) &&
    /\.think > summary\s*\{[^}]*border-bottom:\s*1px solid/.test(cssSource));
 ok("hidden 不会被按钮的 display 覆盖", /\[hidden\]\s*\{\s*display:\s*none\s*!important/.test(cssSource));
-ok("卡片统一用边框，不再自带投影", /\.card\s*\{[^}]*border:\s*1px solid var\(--line\)/.test(cssSource) &&
-   !/\.card\s*\{[^}]*box-shadow/.test(cssSource));
+/* v3.1：卡片统一「描边 + 同一档柔和投影」，投影只走变量，不再逐卡手写 rgba */
+ok("卡片统一用描边，投影只走单一变量", /\.card\s*\{[^}]*border:\s*1px solid var\(--line\)/.test(cssSource) &&
+   /\.card\s*\{[^}]*box-shadow:\s*var\(--sh\)/.test(cssSource) &&
+   !/\.card\s*\{[^}]*box-shadow:\s*rgba/.test(cssSource));
 ok("OpenUI 指标不再包色块", !/\.oui-metric\s*\{[^}]*background/.test(cssSource));
 ok("对话免责声明用 12px ink-2", /\.chat-note\s*\{[^}]*font-size:\s*\.75rem[^}]*var\(--ink-2\)/.test(cssSource));
 ok("底部导航未选中项用 ink-2", /\.tab\s*\{[^}]*color:\s*var\(--ink-2\)/.test(cssSource));
@@ -917,11 +926,15 @@ const bankEmpty = String(W.document.getElementById("bankList").innerHTML);
 ok("删光题库后题库页给导入入口", bankEmpty.indexOf("openImport") >= 0, bankEmpty.slice(0, 200));
 ok("删光题库后统计为 0", W.stats("all").total === 0, W.stats("all").total);
 const hiSubEl = W.document.getElementById("hiSub");
-ok("空题库时问候语副标题被隐藏", hiSubEl.hidden === true);
+/* v3：大标题恒定是时间问候，状态一律走上面那行小字，空题库也不例外 */
+ok("空题库时副标题写「还没有导入题库」且不隐藏",
+   hiSubEl.hidden === false && String(hiSubEl.textContent).indexOf("还没有导入题库") >= 0,
+   String(hiSubEl.textContent));
 ok("空题库时不再显示格式说明", String(hiSubEl.textContent).indexOf("支持 .docx") < 0,
    String(hiSubEl.textContent));
-ok("空题库时标题仍是「先导入一个题库」",
-   W.document.getElementById("hiName").textContent === "先导入一个题库",
+ok("空题库时标题仍是问候语，不写操作指令",
+   ["夜深了", "早上好", "中午好", "下午好", "晚上好"].indexOf(
+     W.document.getElementById("hiName").textContent) >= 0,
    W.document.getElementById("hiName").textContent);
 W.goTab("me");
 ok("删光题库后「我的」页无 NaN",
@@ -940,10 +953,12 @@ W.goTab("bank");
 const taskHtml = String(W.document.getElementById("bankList").innerHTML);
 ok("题库页列出有题的库", taskHtml.indexOf("有题的库") >= 0);
 ok("题库页不列一道题都没有的空库", taskHtml.indexOf("空库不该出现") < 0, taskHtml);
-ok("题库卡片带左滑面板", taskHtml.indexOf('class="swipe"') >= 0 && taskHtml.indexOf("swipe-act") >= 0);
-ok("面板里那格是删除", /swipe-act"[^>]*askDeleteBank/.test(taskHtml), taskHtml.slice(0, 160));
-ok("题库页的错题本入口是 .task 按钮",
-   String(W.document.getElementById("wrongEntry").innerHTML).indexOf('class="task"') >= 0);
+ok("题库卡片是 deck 里的一张 .bcard（改名/删除在展开层里）",
+   taskHtml.indexOf('class="bcard') >= 0 && taskHtml.indexOf('class="bc-acts"') >= 0);
+ok("面板里那格是删除", /bc-act"[^>]*askDeleteBank/.test(taskHtml), taskHtml.slice(0, 160));
+ok("题库页的错题本入口是 .card wrong（点开整页层）",
+   String(W.document.getElementById("wrongEntry").innerHTML).indexOf('class="card wrong"') >= 0 &&
+   String(W.document.getElementById("wrongEntry").innerHTML).indexOf("openWrongPage()") >= 0);
 
 let saved = null;
 W.Android = { saveBank: (id, json) => { saved = [id, JSON.parse(json)]; return true; } };
@@ -1736,7 +1751,7 @@ await W.chatSend();
 ok("锁定的会话不能发送", W.chatMsgs.length === beforeLockedSend, "msgs=" + W.chatMsgs.length);
 W.chatCurId = keepLoginId;
 W.chatMsgs = (W.chatCurConv().msgs || []).slice();
-ok("设置里写明会话按接入方式隔离", W.agModeHintHtml().indexOf("互相隔开") >= 0);
+ok("设置里写明会话按接入方式隔离", W.agModeHintHtml().indexOf("会话不通用") >= 0);
 ok("会话接入方式已落盘",
    JSON.parse(sandbox.localStorage.getItem("stk.convs.v1")).list.some((c) => c.mode === "login")
    && JSON.parse(sandbox.localStorage.getItem("stk.convs.v1")).list.some((c) => c.mode === "key"));
@@ -1759,8 +1774,9 @@ ok("删光后自动留一个空会话", W.chatConvs.length === 1 && W.chatCurCon
 /* 底部导航：大肥鱼那颗不能有 data-tab（否则会被 goTab 标成选中态） */
 ok("大肥鱼 tab 有独立 id", /id="tabAsk"/.test(html));
 ok("大肥鱼 tab 没有 data-tab", !/id="tabAsk"[^>]*data-tab/.test(html));
-ok("大肥鱼 tab 用答题页同款头像",
-   /class="tab ask-tab"[^]*?agent-light\.png[^]*?agent-dark\.png/.test(html));
+/* v3.1：中间那颗从底栏 tab 改成悬浮 FAB，头像仍与答题页同源（明暗两张） */
+ok("大肥鱼 FAB 用答题页同款头像",
+   /class="ask-fab" id="tabAsk"[^]*?agent-light\.png[^]*?agent-dark\.png/.test(html));
 ok("大肥鱼 tab 在题库与视频之间",
    html.indexOf('data-tab="bank"') < html.indexOf('id="tabAsk"')
    && html.indexOf('id="tabAsk"') < html.indexOf('data-tab="video"'));
@@ -1940,8 +1956,9 @@ section("[20] 对话字号");
 /* CSS 层：气泡和思考链吃同一个变量，否则调了字号只有正文变、思维链不变 */
 ok("气泡字号用 --chat-fs 变量", /\.msg \.bubble \{[^}]*font-size: calc\(\.875rem \* var\(--chat-fs/.test(html));
 ok("思维链字号也跟随变量", /\.think \{[^}]*font-size: calc\(\.75rem \* var\(--chat-fs/.test(html));
-ok("输入框字号不跟着变（只调对话正文）",
-   !/\.chat-in textarea \{[^}]*--chat-fs/.test(html));
+/* v3：输入框和正文同一口径——改「对话字号」时输入框一起长，不会正文大、框里小 */
+ok("输入框字号与正文同源（也吃 --chat-fs）",
+   /\.chat-in textarea \{[^}]*font-size:\s*calc\(\.875rem \* var\(--chat-fs,\s*1\)\)/.test(cssSource));
 ok("字号面板有独立分隔线", html.indexOf(".ag-sep {") >= 0);
 
 /* 默认值与边界 */
@@ -2327,7 +2344,7 @@ section("[25] 固定前缀与 token 裁剪");
 ok("固定段单独成函数", typeof W.chatSysBase === "function");
 ok("固定段不含题目", W.chatSysBase().indexOf("当前题目上下文") < 0);
 ok("固定段两次调用逐字相同", W.chatSysBase() === W.chatSysBase());
-ok("题目段以标记开头", W.chatCtxMsg({ id: "x" }).indexOf("当前题目上下文（JSON）：") === 0);
+ok("题目段以标记开头", W.chatCtxMsg({ id: "x" }).indexOf("当前题目上下文（JSON，仅在用户问题与本题相关时才参考") === 0);
 ok("聊天请求里题目单独一条 system 消息",
    /messages = \[\{ role: "system", content: chatSysBase\(\) \}\][\s\S]{0,120}?chatCtxMsg\(ctx\)/.test(html));
 ok("方案进度作为独立 system 消息追加，固定段不掺方案",
@@ -2923,9 +2940,11 @@ ok("裸围栏兜底认得全部组件（名单从 signatures 现取，不手写�
 ok("Stack 的 gap 参数已接通（渲染器带 gap-sm，CSS 有对应档）",
    /' gap-sm'/.test(jsSources[1]) &&
    /\.oui-stack\.gap-sm > \* \+ \* \{[^}]*margin-top:\s*6px/.test(cssSource));
-ok("卡片字号跟随「对话字号」与全局字号（.oui 用 calc，内部不再写死 px）",
+ok("卡片字号跟随「对话字号」与全局字号（.oui 用 calc，卡内文字用 em 不再写死 px）",
    /\.oui\s*\{[^}]*font-size:\s*calc\(\.875rem \* var\(--chat-fs, 1\)\)/.test(cssSource) &&
-   !/\.oui-[\w.-]+\s*\{[^}]*font-size:\s*[0-9.]+px/.test(cssSource));
+   /* 例外只有 SVG 图形内文字（环/雷达/仪表盘/图标标记）：那里的 px 是图形单位，
+      跟着 rem 缩放会把图形撑破；卡片正文类一律用 em 跟随 .oui */
+   !/\.oui-(?!ring-|radar-|gauge-|callout-)[\w.-]+\s*\{[^}]*font-size:\s*[0-9.]+px/.test(cssSource));
 /* 一条回答画两张卡：以前只 match 第一段围栏，第二段会被 mdToHtml 当代码块渲染成源码 */
 const multiUi = W.ouiSplit({
   id: "multi_fence",
@@ -3533,13 +3552,14 @@ ok("面板关着时点历史卡片也能把对话打开", (() => {
       && src.indexOf('contains("on")') >= 0
       && src.indexOf("openChatTab()") >= 0;
 })());
-ok("首页对话整屏，答题页仍走底部上滑", (() => {
-  return /\.sheet\.chat\.full/.test(html)
-      && /ch\.classList\.add\("full"\)/.test(html)
-      && /ch\.classList\.remove\("full"\)/.test(html);
+/* v3.1：大肥鱼不再开成一个「整屏 sheet」，而是三档停位（1/2 · 2/3 · 全屏），默认停在 2/3 */
+ok("大肥鱼按三档停位打开（默认 2/3，可上拉到全屏）", (() => {
+  return /var CHAT_DET = \[0\.5, 2 \/ 3, 1\], chatDetent = 1;/.test(html)
+      && /function openChatTab\(\) \{[\s\S]{0,200}chatSetDetent\(1\)/.test(html)
+      && /function chatSetDetent/.test(html);
 })());
-ok("全屏对话可下拉收回", /function chatPullInit/.test(html)
-   && /touchmove/.test(html) && /dy > 110/.test(html));
+ok("全屏对话可下拉收回（拖到 40% 高度松手即关，回弹速度门限）", /function chatPullInit/.test(html)
+   && /pointermove/.test(html) && /h < H \* 0\.4 && v < 0\.2/.test(html) && /closeTop\(\); return;/.test(html));
 /* 输入框的展开改成「按需悬浮」：短文本没这颗按钮，写长了才露出来，点开是浮窗 */
 ok("输入框：超过字数才露「展开」，点开是悬浮窗", (() => {
   const ta = W.document.getElementById("chatText"), btn = W.document.getElementById("chatExpand");
@@ -4407,7 +4427,7 @@ W.goTab("home");
 ok("首页不再有今日待刷行（搬去题库页）", !/id="tasks"/.test(fs.readFileSync(HTML, "utf8")));
 W.goTab("bank");
 const bankRate = String(W.document.getElementById("bankList").innerHTML);
-ok("题库卡片的大百分比用完成率", bankRate.indexOf(">25%</div>") >= 0, bankRate.slice(0, 240));
+ok("题库卡片的大百分比用完成率", bankRate.indexOf('class="bc-pct">25%<') >= 0, bankRate.slice(0, 240));
 
 W.goTab("me");
 const meRate = String(W.document.getElementById("meStat").innerHTML);
@@ -5071,7 +5091,7 @@ ok("省电豁免有跳转入口，找不到就退应用详情",
    /ACTION_APPLICATION_DETAILS_SETTINGS/.test(mainSrc));
 ok("改完权限回来会刷新页面状态",
    /onRequestPermissionsResult[\s\S]{0,400}onRemindPerm/.test(mainSrc) &&
-   /onResume[\s\S]{0,400}onRemindPerm/.test(mainSrc));
+   /onResume[\s\S]{0,900}onRemindPerm/.test(mainSrc));
 ok("我的页画出权限现状与两个入口",
    html.indexOf('row("notify", "通知权限"') >= 0 &&
    html.indexOf('row("battery", "省电豁免"') >= 0 &&
@@ -5591,7 +5611,7 @@ ok("展开卡时记录所属会话；重画时若已换会话先收回旧卡（�
    html.indexOf('_ouiWinConv = chatCurId || "";') >= 0 &&
    html.indexOf('if (_ouiWinMid && _ouiWinConv !== (chatCurId || "")) chatOuiCollapse();') >= 0);
 ok("收回卡片时清空会话标记，避免下次误判",
-   html.indexOf('_ouiWinMid = "";\n  _ouiWinConv = "";') >= 0);
+   /_ouiWinMid = "";\r?\n\s*_ouiWinConv = "";\r?\n\s*_ouiWinH = 0;/.test(html));
 
 /* ---------- 结果 ---------- */
 section("[30b-10] 点「下一张卡」一次就换过去，且浮窗永远认自己那张卡");
@@ -5633,13 +5653,13 @@ ok("落盘「上次停在哪一页」（tab / 大肥鱼 / 方案页）并在切�
    html.indexOf('function saveView()') >= 0 &&
    /swapPage\(from, to, which\);\s*\r?\n\s*saveView\(\);/.test(html) &&
    /syncLayerScrim\(\);\s*\r?\n\s*if \(typeof saveView === "function"\) saveView\(\);/.test(html));
-ok("启动时先还原页面；本来在首页才播启动页（还原时把 #splash 摘掉，不闪首页）",
-   html.indexOf('function restoreView()') >= 0 &&
-   html.indexOf('if (tab === "home" && !chatOn && !planMode) return false;') >= 0 &&
-   html.indexOf("planRestored = !!planDeepLink();") >= 0 &&
-   html.indexOf("viewRestored = restoreView();") >= 0 &&
-   /if \(viewRestored \|\| planRestored\) \{\s*\r?\n\s*var spBoot = document\.getElementById\("splash"\);/.test(html) &&
-   html.indexOf("if (chatOn && typeof openChatTab === \"function\") { openChatTab(); did = true; }") >= 0);
+/* v3.1：改成「每次启动固定停在首页」——视图不再自动还原，但地址栏方案深链照旧落地 */
+ok("启动固定回首页：视图不还原，方案深链仍落地；落地过就不再播启动页", (() => {
+  return html.indexOf('var viewRestored = false; /* 需求：每次启动固定停在首页，不还原上次 tab/对话 */') >= 0
+      && html.indexOf("var planRestored = false;") >= 0
+      && html.indexOf("try { if (typeof planDeepLink === \"function\") planRestored = !!planDeepLink(); }") >= 0
+      && /if \(viewRestored \|\| planRestored\) \{\s*\r?\n\s*var spBoot = document\.getElementById\("splash"\);/.test(html);
+})());
 ok("方案详情优先按地址栏深链落地，不被落盘的旧状态覆盖成列表；没真换页就不算还原成功",
    html.indexOf("var hashPlan = false;") >= 0 &&
    html.indexOf('hashPlan = /^#?\\/?(?:plan\\/|plans\\b)/') >= 0 &&
@@ -5655,8 +5675,9 @@ ok("方案页只算「首页下的子页面」：切到别的 tab 不会被记�
 ok("方案页进出都落盘（planShow / planPageClosed 各一处 saveView）",
    /planHash\(mode, id\);\s*\r?\n\s*\/\*[\s\S]{0,120}?\*\/\s*\r?\n\s*if \(typeof saveView === "function"\) saveView\(\);/.test(html) &&
    /planHash\("", ""\);\s*\r?\n\s*\/\*[\s\S]{0,120}?\*\/\s*\r?\n\s*if \(typeof saveView === "function"\) saveView\(\);/.test(html));
-ok("考试进行中不抢页面（先恢复考试，再决定要不要还原别的页）",
-   /document\.getElementById\("quiz"\)\.classList\.add\("on"\);[\s\S]{0,900}viewRestored = restoreView\(\);/.test(html));
+/* 考试中断后回来：restoreView 先看 quiz 是否还在 on，在考试里就不许抢页面 */
+ok("考试进行中不抢页面（restoreView 认出 quiz.on 就直接让位）",
+   /var qz = document\.getElementById\("quiz"\);[\s\S]{0,200}if \(qz && qz\.classList\.contains\("on"\)\) return false;/.test(html));
 
 section("[30b-12] 首页搜索入口与搜索框已删除");
 ok("首页不再有搜索按钮（既不渲染，也不再往启动动画里排）",
@@ -5675,7 +5696,9 @@ section("[38] P5 哔哩哔哩收藏：桥 / 页面 / 样式接线");
 const biliSource = fs.readFileSync(path.join(ASSETS, "app-bili.js"), "utf8");
 ok("index.html 有视频页容器 #tab-video / #biliHost", skeletonHtml.indexOf('id="tab-video"') >= 0 && skeletonHtml.indexOf('id="biliHost"') >= 0);
 ok("index.html 同步加载 app-bili.js", skeletonHtml.indexOf('src="app-bili.js"') >= 0);
-ok("「我的」里有哔哩哔哩收藏入口", html.indexOf('row("bili", "哔哩哔哩收藏"') >= 0);
+/* v3.1：按用户要求把「哔哩哔哩收藏」「记忆」两项从设置里撤掉——视频页本身就有入口 */
+ok("「我的」里不再放哔哩哔哩收藏入口（视频页直接进）",
+   html.indexOf('row("bili"') < 0 && html.indexOf("biliOpen") >= 0);
 ok("入口点击走 biliOpen()", html.indexOf('k === "bili" ? "biliOpen()"') >= 0);
 ok("页面实现 biliOpen / biliSub / onBiliLogin",
    biliSource.indexOf("function biliOpen(") >= 0 &&

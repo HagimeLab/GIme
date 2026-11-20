@@ -1,30 +1,46 @@
-# GIme 字幕模型（v1.1.8 测试标记）
+# GIme 字幕模型包（v1.1.8）
 
-这里是 APP 内「我的 → 字幕模型」下载通道对应的模型清单。模型二进制**不进 git 对象**，
-实际文件挂在仓库的 [v1.1.8 Release 资产](https://github.com/HagimeLab/GIme/releases/tag/v1.1.8) 上，
-APP 通过 GitHub API 的 release asset 端点下载（带 `Accept: application/octet-stream`，
-302 到 CDN，支持 206 Range 断点续传）。Gitee 只作 APK 国内中转，模型一律走 GitHub 分块续传
-（`AsrModels.USE_GITEE_MODELS=false`，实测 Gitee 附件 >15MB 会随机断流且不支持 Range）。
+APP 内「设置 → 字幕模型」的下载清单。当前只支持 **X-ASR** 一套。模型二进制**不进 git 对象**
+（169MB 的 onnx 会把仓库撑大，且 GitHub 单文件 push 上限 100MB），实际挂在发行版附件上。
 
-| id | 名称 | 特点 | 字节数 | 下载端点（仓库位置） | sha256 |
+| id | 名称 | 特点 | 字节数 | 下载源 | sha256 |
 |---|---|---|---|---|---|
-| `ctc` | 中文 CTC 小模型 | 26MB，速度快、体积小 | 26355930 | https://api.github.com/repos/HagimeLab/GIme/releases/assets/722682414 | `699531bd5d9ad38cae3165adc45a3775ebcc8f9e6c9761e156cd3e9f82ea7e98` |
-| `bilingual` | 中英双语 transducer | 60MB，句首更完整 | 60143397 | https://api.github.com/repos/HagimeLab/GIme/releases/assets/722682620 | `8151a74a3489324c04761b2c769a7f9b9ec681298b77d985b6fdb4b90db17624` |
-| `xasr` | X-ASR 中英大模型（480ms） | 160MB，流式带标点 | 167043993 | https://api.github.com/repos/HagimeLab/GIme/releases/assets/723187192 | `4d7e22bc534175fe8f2723901e11ed7a9dd6af2afe9c1cb6b8389be538220935` |
-| `sensevoice` | SenseVoice 多语大模型 | 230MB，中英日韩粤 + 标点，整句最准、非流式 | 239762935 | https://api.github.com/repos/HagimeLab/GIme/releases/assets/723574193 | `d6922fbb8b11250bfb02de9258972c8f74fedc3fc5dd9d38326899e60e6996b6` |
+| `xasr` | X-ASR 中英大模型（1920ms 快模型） | MatMul int8 + onnxsim，整轨比 480ms 全 int8 快约 3.5× | 168,586,449 | Gitee `v1.1.8-models` 9 卷（首源）→ 直链 → GitHub 分块 | `ffb6733dfbf8f0dee3cab678c1e42caf33853edc61f7c180b968a05df370f7d4` |
 
-## 下载与解压
+## 下载源与分卷
 
-- 请求头：`Accept: application/octet-stream`（否则 API 返回 JSON 元数据，不是二进制）。
-- 支持 `Range: bytes=<start>-`，APP 内 4MB 分块 + 断点续传，合并后校验长度与 sha256。
-- zip 内是平铺的模型文件，解压到 APP 私有目录 `files/asr/<id>/`：
-  - `ctc`：`model.int8.onnx` + `tokens.txt`（走 `setZipformer2Ctc`）
-  - `bilingual` / `xasr`：encoder/decoder/joiner 三件套 + `tokens.txt`（走 `setTransducer`）
-  - `sensevoice`：`model.int8.onnx` + `tokens.txt` + `silero_vad.int8.onnx`
-    （走 `setSenseVoice` + Silero VAD 切句，整句上屏）
+Gitee 发行版单附件上限 100MB、下载不支持 Range，故整包按 **20MB × 9 卷**拆开：
 
-## 关于本标记
+```
+https://gitee.com/hagemilab/gi/releases/download/v1.1.8-models/gime-asr-xasr-1920ms-int8.zip.p1
+…                                                                              .p8
+…                                                                              .p9   (795KB)
+```
 
-- **仅用于测试**：不含安装包（APK），`release/latest.json` 仍为 1.1.7。
-- 本 Release 是 **prerelease**，不会被 `/releases/latest` 返回，不会触发 APP 内版本更新通知。
-- 模型随用随下，APK 不内置任何权重；切换模型会释放旧识别器并重新加载。
+- 每卷独立下载，先写 `.part` 再改名，装完即删；中断后只补没下完的卷。
+- 9 卷拼接后校验整包 sha256，再解压。
+- 地址由 `AsrModels.giteeUrl()` 拼接，tag 与文件名改了要同步改那里。
+
+## 包内文件（解压到 `files/asr/xasr/`）
+
+- `encoder.onnx`（154,636,721，MatMul int8 + onnxsim）
+- `decoder.onnx`（11,309,084，fp32 —— int8 decoder 精度损失明显）
+- `joiner.onnx`（2,581,422）
+- `tokens.txt`（58,806）
+
+包内**不含** 480ms 慢模型；Rust 加载失败时没有 sherpa 回退，只报明确错误。
+
+## 出包与发布
+
+```bat
+python tools\pack-model.py  --dir D:\desktop\加速推理框架\models_1920_int8\sim --out dist\gime-asr-xasr-1920ms-int8.zip
+python tools\split-model.py --src dist\gime-asr-xasr-1920ms-int8.zip --out models\gitee-parts
+python tools\upload-gitee.py --dir models\gitee-parts --tag v1.1.8-models
+```
+
+上传脚本幂等，重跑只补缺卷。发布后先匿名下第 1 卷核对 sha256，再上真机点一次「下载模型」。
+
+## GitHub 侧
+
+169MB 单文件不能直接 push（单文件 100MB 硬限制）。要放 GitHub 只能走发行版资产（单资产 ≤2GB）
+或 LFS；如果放发行版，建议沿用同一套 `…zip.p1…p9` 文件名，App 加一条「GitHub 分卷」降级分支即可。

@@ -4,7 +4,7 @@
 
 这张表是 **P0 的导出面**：把现在暴露出去的东西一次列清楚，标明每个方法的入参形状与信任级别，供 P2 设计 AgentLoop 的工具注册时对照，也供后续安全收口时判断「哪些口子必须先收紧」。
 
-- 生成依据：`app/src/main/java/com/fan/shuatiku/MainActivity.java` 里全部 `@JavascriptInterface` 注解方法（当前 **53 个**）。
+- 生成依据：`app/src/main/java/com/fan/shuatiku/MainActivity.java` 里全部 `@JavascriptInterface` 注解方法（当前 **91 个**）。
 - P0 已加闸的方法在「P0 校验」一列写明；标 `—` 的表示本次未改动（见文末「P0 没做什么」）。
 - 校验规则集中在 `BridgeGuard.java`（纯逻辑、零 Android 依赖），回归用例在 `tools/BridgeTest.java`，由 `tools/check.cmd` 的 `js bridge guard` 段执行。
 
@@ -117,6 +117,59 @@
 | 51 | `biliItems(fid, pn)` | `fid`、`pn` | `String`(JSON) | L0 | **`biliFid` / `biliPn`** | 某个收藏夹的分页（每页 20 条）`{ok,list,hasMore}` |
 | 52 | `biliPrepare(bvid, page)` | `bvid`、`page` | `String`(JSON) | L2 | **`biliBvid` / `biliPage`** | 取 cid → playurl → 立刻换回环编号；回包里的 `src` 只可能是 `127.0.0.1:8766`，不带上游直链也不带 cookie |
 | 53 | `biliFullscreen(on)` | `on` | `void` | L2 | — | 进/退全屏：`true` 把 Activity 锁成横屏（`SENSOR_LANDSCAPE`），`false` 恢复跟随系统；只动方向，不碰页面状态 |
+
+### 字幕识别（v1.1.6 起：整段入队走服务，不再由页面驱动引擎）
+
+| # | 方法 | 入参 | 返回 | 级别 | P0 校验 | 说明 |
+| --- | --- | --- | --- | --- | --- | --- |
+| 54 | `subsStart(bvid, pageStr, title)` | `bvid`、`pageStr`、`title` | `void` | L2 | — | 入队识别某一集；服务会顺带补下一集。页码非法时静默忽略 |
+| 55 | `subsStartV(bvid, pageStr, title, vtitle)` | 同上 + `vtitle` | `void` | L2 | — | 带视频标题的入队：缓存目录按视频分组，缺 `vtitle` 会落到 `unknown` 分组 |
+| 56 | `subsQueueAll(bvid, pagesCsv, titlesJson, vtitle)` | 逗号分隔页码、与页码同序的标题 JSON 数组 | `String`（入队条数） | L2 | — | 一次把「缓存全集」缺的集写进队列；失败回 `-1`，页面据此退回逐集入队 |
+| 57 | `subsCancel(bvid, pageStr)` | `bvid`、`pageStr` | `void` | L2 | — | 取消某一集（排队中直接出队，跑着的在段边界收尾） |
+| 58 | `subsPause()` | — | `void` | L1 | — | 暂停：跑到段边界停，队列与断点都保留 |
+| 59 | `subsResume()` | — | `void` | L1 | — | 从断点继续 |
+| 60 | `subsPaused()` | — | `String`（`"1"` / `"0"`） | L0 | — | 当前是否处于暂停态 |
+| 61 | `subsJump(bvid, pageStr)` | `bvid`、`pageStr` | `void` | L2 | — | 插队：当前这集段边界收尾让位，立刻改跑指定集 |
+| 62 | `subsPending()` | — | `String`(JSON) | L0 | — | 全库正在跑 + 排队中的前两条 `[{b,p,t,vt,s,c}]`，给收藏页顶部状态条用 |
+| 63 | `subsCatalog()` | — | `String`(JSON) | L0 | — | 缓存目录全量：`items` + `running/queued/ready` 计数，分组由页面做（逐条 / 整部取消都读它） |
+| 64 | `subsQueue(bvid)` | `bvid` | `String`(JSON) | L0 | — | 某部视频所有分P的进度 `[{p,s,c}]`；队列里没有但轨文件已在的集直接算 `ready`/100 |
+| 65 | `subsState(bvid, pageStr)` | `bvid`、`pageStr` | `String`(JSON) | L0 | — | 单集状态：`{ok,state,done,total,pct,title,pending}`，`state` ∈ none/queued/running/ready/failed |
+| 66 | `subsRepost(bvid, pageStr)` | `bvid`、`pageStr` | `String`(JSON) | L1 | — | 调试/迁移：把已有轨按整句重新编排（碎片合并 + 按宽度分行）后覆写，回 `{ok,segs}` |
+| 67 | `subsTrack(bvid, pageStr)` | `bvid`、`pageStr` | `String`(JSON) / `null` | L0 | — | 整条字幕轨；没有轨时回空 |
+| 68 | `biliOfficialSubs(bvid, pageStr)` | `bvid`、`pageStr` | `void`（回 `window.onOfficialSubs`） | L2 | — | 取上游 AI 字幕：先读本地缓存，未命中才带 cookie 走一次接口；回 `{ok,segs}` |
+
+### 语音识别引擎与会话级探针（多为 debug 专用）
+
+| # | 方法 | 入参 | 返回 | 级别 | P0 校验 | 说明 |
+| --- | --- | --- | --- | --- | --- | --- |
+| 69 | `asrStart()` | — | `void` | L2 | — | 开始实时识别会话（配合 `asrPcm` 逐段喂 PCM） |
+| 70 | `asrPcm(b64)` | base64 的 16k 单声道 PCM | `void` | L2 | — | 喂一段音频；引擎按帧切，回包走 `asrHost` |
+| 71 | `asrStop()` | — | `void` | L2 | — | 收尾出结果并释放会话 |
+| 72 | `asrSelfTest(engine)` | `engine`（`rust` / `sherpa`，可空） | `void`（回 `asrHost`） | L1 | **仅 debug** | 内置音频自检，发布包直接 return |
+| 73 | `asrSelfTestTrack()` | — | `void` | L1 | **仅 debug** | 用整轨流程跑一遍自检，结果进 `XASR_SELFTEST` 日志 |
+| 74 | `asrBenchTrack(pcmName)` | `pcmName`（可空，默认 `test600.pcm`） | `void` | L1 | **仅 debug** | 基准跑一段测试 PCM，量实时率 |
+| 75 | `asrProbe()` | — | `String` | L0 | **仅 debug 出细节** | 自检探针：模型文件在位情况、测试音频、版本号；发布包只回 `release` |
+| 76 | `audioProbe(url)` | `url` | `void`（回 `window.onAudioProbe`） | L2 | — | 调试用：拉一次 MP4 解成 16k PCM，回时长/峰值/RMS/耗时；文件用完即删 |
+
+### 模型、网络与播放器
+
+| # | 方法 | 入参 | 返回 | 级别 | P0 校验 | 说明 |
+| --- | --- | --- | --- | --- | --- | --- |
+| 77 | `asrModels()` | — | `String`(JSON) | L0 | — | 字幕模型清单：`{models:[{id,type,size,desc,state,dir}],active}`，字典在 `AsrModels` |
+| 78 | `asrModelDownload(id)` | `id` | `void`（进度走通知栏 + `subsState` 式轮询） | L2 | — | 交给前台服务下载：退后台/熄屏继续、进程被杀也能续；源在 `AsrModels`（Gitee 分卷 → GitHub 直链 → 分块 API） |
+| 79 | `asrModelSelect(id)` | `id` | `void` | L1 | — | 切换当前模型（识别会话随之重建） |
+| 80 | `asrModelDelete(id)` | `id` | `void` | L1 | — | 删除模型目录，回到「未就绪」 |
+| 81 | `netKind()` | — | `String` | L0 | — | `wifi` / `mobile` / `none` / `unknown`；WiFi 才让 `<video preload="auto">` 提前囤 |
+| 82 | `biliPrefetch(bvid, pageStr)` | `bvid`、`pageStr` | `void` | L2 | **`biliBvid` / `biliPage`** | 页面进播放器后显式预取；入参不过闸就静默丢弃，失败也不弹提示 |
+| 83 | `biliVolume()` | — | `String`(JSON) | L0 | — | 设备媒体音量 `{ok,max,cur}` |
+| 84 | `biliSetVolume(cur)` | `cur` | `void` | L1 | **夹到 0..max** | 设 STREAM_MUSIC；`flag=0` 不弹系统音量条，条由页面自绘 |
+| 85 | `biliBrightness()` | — | `String`(JSON) | L0 | — | 本窗口亮度 `{ok,cur:0-100}`；未单独覆盖时按系统亮度折算 |
+| 86 | `biliSetBrightness(pct)` | `pct` | `void` | L1 | **夹到 1..100** | 只改本窗口亮度（免权限、不写系统设置），退出 App 自动回到系统值 |
+| 87 | `markMigrated()` | — | `void` | L1 | — | 存档搬完后打标记：置 `ls_migrated` 并清掉中转的那份，下次启动不再重复搬运 |
+| 88 | `haptic(ms)` | `ms` | `void` | L1 | **夹到 8..40ms** | 显式触感反馈（面板吸附到某一档时震一下）；框架自带触摸震动已关 |
+| 89 | `legacyStorage(json)` | `String`(JSON) | `void` | L1 | — | 首次升级把旧 `file://` 域的 localStorage 存进 SharedPreferences 中转 |
+| 90 | `takeLegacyStorage()` | — | `String` | L0 | — | 取回中转的存档（新域启动时读一次） |
+| 91 | `installPendingUpdate()` | — | `void` | **L3** | **只认本 App 已下好的包** | 装上次下完的更新包（`REQUEST_INSTALL_PACKAGES` + 系统授权页）；地址来自清单，页面无法指定 |
 
 ## P0 加的闸门（`BridgeGuard`）
 

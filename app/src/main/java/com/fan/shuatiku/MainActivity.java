@@ -4,11 +4,20 @@ import java.io.ByteArrayOutputStream;
 import java.io.File;
 import java.io.FileInputStream;
 import java.io.FileOutputStream;
+import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
 import java.net.HttpURLConnection;
 import java.net.URL;
+import java.net.URLConnection;
 import java.util.ArrayDeque;
+import java.util.HashMap;
+import java.util.HashSet;
+import java.util.LinkedHashMap;
+import java.util.Map;
+import java.util.Set;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 
 import org.json.JSONArray;
 import org.json.JSONObject;
@@ -17,16 +26,21 @@ import android.app.Activity;
 import android.content.ClipData;
 import android.content.ClipboardManager;
 import android.content.ContentValues;
+import android.content.Context;
 import android.content.Intent;
 import android.content.SharedPreferences;
 import android.content.pm.ActivityInfo;
 import android.database.Cursor;
 import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
+import android.net.ConnectivityManager;
+import android.net.NetworkInfo;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
 import android.os.Environment;
+import android.os.VibrationEffect;
+import android.os.Vibrator;
 import android.provider.MediaStore;
 import android.provider.OpenableColumns;
 import android.provider.Settings;
@@ -39,6 +53,8 @@ import android.webkit.JavascriptInterface;
 import android.webkit.ValueCallback;
 import android.webkit.WebSettings;
 import android.webkit.WebView;
+import android.webkit.WebResourceRequest;
+import android.webkit.WebResourceResponse;
 import android.webkit.WebViewClient;
 
 /**
@@ -87,6 +103,12 @@ public class MainActivity extends Activity {
     private static final String PREFS = "ui";
     private static final String PREF_LIGHT = "light";
     private static final String PREFS_MCP = "mcp";
+    /* WebView 从 file:///android_asset 改为 https://appassets.androidplatform.net 提供服务：
+       只有安全源下 AudioWorklet 才能 addModule（file:// 下必报 The user aborted a request）。
+       资产由 AssetClient 拦截这个虚拟域后从 assets/ 直读，不联网、不依赖 androidx.webkit。 */
+    private static final String ASSET_HOST = "appassets.androidplatform.net";
+    private static final String ASSET_BASE = "https://appassets.androidplatform.net/assets/";
+    private static final String PREF_LS_MIGRATED = "ls_migrated";
     private static final String PREF_MCP_TOKEN = "token";
 
     private volatile McpServer mcp;
@@ -127,6 +149,9 @@ public class MainActivity extends Activity {
     @Override
     protected void onCreate(Bundle saved) {
         super.onCreate(saved);
+        LIVE = new java.lang.ref.WeakReference<>(this);
+        /* 整页固定竖屏：全屏视频的横屏由页面把播放器层旋转实现，Activity 不再跟着转 */
+        setRequestedOrientation(ActivityInfo.SCREEN_ORIENTATION_PORTRAIT);
         CronetNet.install(this);
         DeepSeekWeb.setDevice(android.os.Build.MODEL, android.os.Build.VERSION.RELEASE);
         bankDir = new File(getFilesDir(), "banks");
@@ -196,7 +221,7 @@ public class MainActivity extends Activity {
            startActivity(file:///android_asset/index.html)，被 StrictMode 判成
            FileUriExposed 直接崩掉进程（10-19 用 CDP 触发一次 location.reload() 就复现）。
            页面里没有任何 <a href>，挂一个默认 client 只关这条崩溃路径，不改变现有行为。 */
-        web.setWebViewClient(new WebViewClient());
+        web.setWebViewClient(new AssetClient());
         updater = new Updater(new Updater.Sink() {
             @Override public void toJs(String script) { js(script); }
             @Override public Activity activity() { return MainActivity.this; }
@@ -210,7 +235,11 @@ public class MainActivity extends Activity {
         dsBridge = new DeepSeekBridge(this, new DeepSeekBridge.Sink() {
             @Override public void toJs(String script) { js(script); }
         });
-        web.loadUrl("file:///android_asset/index.html");
+        /* 首次升级（file:// 旧数据还没搬过）先用 file:// 起一次，让页面把 localStorage
+           经 Android.legacyStorage() 交出来并跳转到 https 源；搬完 markMigrated() 后
+           后续冷启就直接用 https 源，AudioWorklet 才可用。 */
+        boolean lsMigrated = getSharedPreferences(PREFS, MODE_PRIVATE).getBoolean(PREF_LS_MIGRATED, false);
+        web.loadUrl(lsMigrated ? ASSET_BASE + "index.html" : "file:///android_asset/index.html");
         setContentView(web);
         edgeToEdge();
 
@@ -644,6 +673,24 @@ public class MainActivity extends Activity {
         });
     }
 
+    /* ---------------- 后台服务的 WebView 出口 ----------------
+       模型下载跑在 AsrModelService 里，页面可能已经退回后台甚至被回收。
+       服务只拿到一个 Application Context，所以留一个弱引用入口：
+       Activity 活着就把进度喂给页面，Activity 没了就静默丢弃（服务自己更新通知）。 */
+    private static java.lang.ref.WeakReference<MainActivity> LIVE =
+            new java.lang.ref.WeakReference<>(null);
+
+    /** 服务线程调用：把一段 JS 送到当前页面前台（没有 Activity 就什么也不做）。 */
+    public static void pushJs(final String script) {
+        final MainActivity a = LIVE.get();
+        if (a == null) return;
+        a.runOnUiThread(new Runnable() {
+            @Override public void run() {
+                try { if (a.web != null) a.web.evaluateJavascript(script, null); } catch (Throwable ignored) { }
+            }
+        });
+    }
+
     /* ---------------- 流式批量上屏 ----------------
        上游一个 token 一帧地吐，逐帧 evaluateJavascript 会把 WebView 主线程
        打满：页面卡、字反而冒得更慢。这里把增量先攒在 StringBuilder 里，
@@ -816,9 +863,39 @@ public class MainActivity extends Activity {
         }
     }
 
+    /** 字幕后台生成前申请一次省电豁免：Freeme 等 ROM 熄屏后会直接 force-stop 进程，
+        没有豁免前台服务和 wake lock 都撑不住。只问一次，用户拒绝后可从「我的」再进。 */
+    private void askBatteryExemptOnce() {
+        if (Build.VERSION.SDK_INT < 23) return;
+        try {
+            android.os.PowerManager pm = (android.os.PowerManager) getSystemService(POWER_SERVICE);
+            if (pm != null && pm.isIgnoringBatteryOptimizations(getPackageName())) return;
+            android.content.SharedPreferences sp = getSharedPreferences("ds", MODE_PRIVATE);
+            if (sp.getBoolean("subs_battery_asked", false)) return;
+            sp.edit().putBoolean("subs_battery_asked", true).apply();
+            runOnUiThread(new Runnable() {
+                @Override public void run() {
+                    try {
+                        Intent i = new Intent(android.provider.Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS);
+                        i.setData(android.net.Uri.parse("package:" + getPackageName()));
+                        startActivity(i);
+                    } catch (Throwable t) {
+                        try {
+                            startActivity(new Intent(android.provider.Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS));
+                        } catch (Throwable ignored) { }
+                    }
+                }
+            });
+        } catch (Throwable ignored) { }
+    }
+
     @Override
     protected void onResume() {
         super.onResume();
+        /* 进程被杀会留下 running/queued 记录，回前台时把字幕队列接上，进度才不会停住 */
+        try { SubsJobService.resumeIfPending(getApplicationContext()); } catch (Throwable ignored) { }
+        /* 上次退 APP 时还在下的更新包：系统下载器没停，这里把进度和「去安装」接回来 */
+        try { if (pageReady) updater.resumePending(); } catch (Throwable ignored) { }
         if (remindCheckPending && pageReady) {
             remindCheckPending = false;
             js("window.onRemindPerm&&window.onRemindPerm();");
@@ -845,6 +922,7 @@ public class MainActivity extends Activity {
         /* 收藏流是回环服务：页面一走就没有观众了，先回收发出去的编号再停服务。 */
         BiliStream.revokeAll();
         BiliStream.stop();
+        LIVE = new java.lang.ref.WeakReference<>(null);
         super.onDestroy();
     }
 
@@ -879,7 +957,174 @@ public class MainActivity extends Activity {
         }
     }
 
+    /**
+     * 把 https://appassets.androidplatform.net/assets/… 映射到 APK 内的 assets/。
+     * 这样页面仍是本地资产、不联网，但 origin 是安全源（https），AudioWorklet 可用。
+     * 不引入 androidx.webkit，避免多一个离线拿不到的依赖。
+     */
+    private class AssetClient extends WebViewClient {
+        @Override public WebResourceResponse shouldInterceptRequest(WebView view, WebResourceRequest req) {
+            Uri u = req.getUrl();
+            if (u != null && ASSET_HOST.equals(u.getHost())) {
+                String path = u.getPath();
+                if (path != null && path.startsWith("/assets/")) {
+                    String name = path.substring("/assets/".length());
+                    try {
+                        InputStream is = getAssets().open(name);
+                        String mime = URLConnection.guessContentTypeFromName(name);
+                        if (mime == null) {
+                            if (name.endsWith(".js") || name.endsWith(".mjs")) mime = "text/javascript";
+                            else if (name.endsWith(".css")) mime = "text/css";
+                            else if (name.endsWith(".html")) mime = "text/html";
+                            else if (name.endsWith(".json")) mime = "application/json";
+                            else if (name.endsWith(".wasm")) mime = "application/wasm";
+                            else mime = "application/octet-stream";
+                        }
+                        WebResourceResponse r = new WebResourceResponse(mime, "utf-8", is);
+                        Map<String, String> h = new HashMap<>();
+                        h.put("Access-Control-Allow-Origin", "*");
+                        h.put("Cache-Control", "no-store");
+                        r.setResponseHeaders(h);
+                        return r;
+                    } catch (IOException e) {
+                        return null;
+                    }
+                }
+            }
+            return null;
+        }
+    }
+
     private class Bridge {
+
+        /** 字幕引擎回 JS 的出口：统一回主线程执行，识别线程不直接碰 WebView。 */
+        private final AsrEngine.Host asrHost = new AsrEngine.Host() {
+            @Override public void js(final String code) {
+                runOnUiThread(new Runnable() {
+                    @Override public void run() {
+                        try { web.evaluateJavascript(code, null); } catch (Exception ignored) { }
+                    }
+                });
+            }
+        };
+
+        /**
+         * 页面的触感反馈：大肥鱼面板拖到某一档（1/2 · 2/3 · 全屏）时震一下。
+         *
+         * <p>长度由页面给（8~40ms），这里再夹一次：桥对页面全开，页面传个 5000 就会把
+         * 马达当成闹钟。框架自带的那套触摸震动在 {@link #killTouchHaptics} 里已经关掉了，
+         * 这条是显式调用，跟它不冲突。
+         */
+        @JavascriptInterface
+        public void haptic(final int ms) {
+            final int d = ms < 8 ? 8 : (ms > 40 ? 40 : ms);
+            runOnUiThread(new Runnable() {
+                @Override public void run() {
+                    try {
+                        Vibrator v = (Vibrator) getSystemService(VIBRATOR_SERVICE);
+                        if (v == null || !v.hasVibrator()) return;
+                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                            v.vibrate(VibrationEffect.createOneShot(d, VibrationEffect.DEFAULT_AMPLITUDE));
+                        } else {
+                            v.vibrate(d);
+                        }
+                    } catch (Throwable ignored) { }
+                }
+            });
+        }
+
+        @JavascriptInterface
+        public void asrStart() { AsrEngine.start(getApplicationContext(), asrHost); }
+
+        @JavascriptInterface
+        public void asrPcm(final String b64) { AsrEngine.feed(b64, asrHost); }
+
+        @JavascriptInterface
+        public void asrStop() { AsrEngine.stop(asrHost); }
+
+        /** 仅 debug：不依赖视频播放，直接跑一遍 Rust 引擎自检（用内置 20s 测试音频的 PCM）。
+         *  结果写 logcat 的 XASR_SELFTEST 与 asrHost 的 JS 回调。 */
+        @JavascriptInterface
+        public void asrBenchTrack(final String pcmName) {
+            if (!BuildConfig.DEBUG) return;
+            new Thread(new Runnable() {
+                @Override public void run() {
+                    AsrEngine.benchTrack(getApplicationContext(), asrHost,
+                            pcmName == null || pcmName.isEmpty() ? "test600.pcm" : pcmName);
+                }
+            }, "asr-bench-track").start();
+        }
+
+        @JavascriptInterface
+        public void asrSelfTestTrack() {
+            if (!BuildConfig.DEBUG) return;
+            new Thread(new Runnable() {
+                @Override public void run() {
+                    AsrEngine.selfTestTrack(getApplicationContext(), asrHost);
+                }
+            }, "asr-track-test").start();
+        }
+
+        /** 仅 debug：自检探针——回报构建变体、模型文件在位情况，避免盲猜线程有没有起来。 */
+        @JavascriptInterface
+        public String asrProbe() {
+            if (!BuildConfig.DEBUG) return "release";
+            java.io.File dir = AsrModels.modelDir(getApplicationContext(), AsrModels.MODEL_ID);
+            java.io.File pcm = new java.io.File(getApplicationContext().getFilesDir(),
+                    "asr/test60.pcm");
+            java.io.File dbg = new java.io.File(getApplicationContext().getFilesDir(),
+                    "asr/.track_debug");
+            return "debug|enc=" + new java.io.File(dir, "encoder.onnx").isFile()
+                    + "|slow=" + new java.io.File(dir, "encoder-epoch-99-avg-1.int8.onnx").isFile()
+                    + "|pcm=" + pcm.isFile() + "|dbg=" + dbg.isFile()
+                    + "|size=" + dbg.length() + "|ver=" + BuildConfig.VERSION_NAME;
+        }
+
+        @JavascriptInterface
+        public void asrSelfTest(final String engine) {
+            if (!BuildConfig.DEBUG) return;
+            new Thread(new Runnable() {
+                @Override public void run() {
+                    AsrEngine.selfTest(getApplicationContext(), asrHost, engine == null ? "rust" : engine);
+                }
+            }, "asr-selftest").start();
+        }
+
+        /* 首次升级把旧 file:// 域的 localStorage 经原生 SharedPreferences 中转搬到新 https 域 */
+        @JavascriptInterface
+        public void legacyStorage(String json) {
+            getSharedPreferences(PREFS, MODE_PRIVATE).edit().putString("legacy_ls", json == null ? "" : json).apply();
+        }
+
+        @JavascriptInterface
+        public String takeLegacyStorage() {
+            return getSharedPreferences(PREFS, MODE_PRIVATE).getString("legacy_ls", "");
+        }
+
+        @JavascriptInterface
+        public void markMigrated() {
+            getSharedPreferences(PREFS, MODE_PRIVATE).edit().putBoolean(PREF_LS_MIGRATED, true).remove("legacy_ls").apply();
+        }
+
+        /* 设置页「字幕模型」：清单 / 下载 / 切换 / 删除，都走 AsrModels。 */
+        @JavascriptInterface
+        public String asrModels() { return AsrModels.listJson(getApplicationContext()); }
+
+        @JavascriptInterface
+        public void asrModelDownload(final String id) {
+            /* 交给前台服务：退后台/熄屏继续下，通知栏有进度，进程被杀也能续 */
+            AsrModelService.start(getApplicationContext(), id);
+        }
+
+        @JavascriptInterface
+        public void asrModelSelect(final String id) {
+            AsrModels.select(getApplicationContext(), asrHost, id);
+        }
+
+        @JavascriptInterface
+        public void asrModelDelete(final String id) {
+            AsrModels.delete(getApplicationContext(), asrHost, id);
+        }
 
         /** 页面把脚本跑完、事件函数都挂上之后调这里，之后才开始放行排队的导入。 */
         @JavascriptInterface
@@ -890,6 +1135,8 @@ public class MainActivity extends Activity {
                     pushInsets();          /* 页面（含重载后的）刚把 __insets 挂上，补灌一次安全区 */
                     pumpImports();
                     mcpStart();
+                    /* 页面这次才真的能收 JS：把上次没下完的更新包状态推过去 */
+                    try { updater.resumePending(); } catch (Throwable ignored) { }
                 }
             });
         }
@@ -1147,6 +1394,321 @@ public class MainActivity extends Activity {
         /* ==================== 哔哩哔哩收藏（v1.1.7 P5） ==================== */
 
         /** 绑定状态：页面据此决定显示「绑定」还是「已绑定 · 昵称」。 */
+        /** 调试用：把一段 MP4 解成 16k PCM，量时长/峰值/耗时。结果回 window.onAudioProbe。 */
+        @JavascriptInterface
+        public void audioProbe(final String url) {
+            new Thread(new Runnable() {
+                @Override public void run() {
+                    String json;
+                    try {
+                        java.io.File dir = new java.io.File(getCacheDir(), "probe");
+                        if (!dir.isDirectory() && !dir.mkdirs()) throw new IllegalStateException("建目录失败");
+                        java.io.File f = new java.io.File(dir, "probe.mp4");
+                        long dl = AudioPcm.download(url, f);
+                        AudioPcm.Result r = AudioPcm.decode(f);
+                        long bytes = f.length();
+                        f.delete();
+                        json = new JSONObject().put("ok", true)
+                                .put("downloadMs", dl).put("decodeMs", r.decodeMs)
+                                .put("srcRate", r.srcRate).put("ch", r.channels)
+                                .put("samples", r.samples).put("sec", Math.round(r.samples * 10.0 / 16000) / 10.0)
+                                .put("peak", Math.round(r.peak * 1000) / 1000.0)
+                                .put("rms", Math.round(r.rms * 1000) / 1000.0)
+                                .put("bytes", bytes).toString();
+                    } catch (Throwable t) {
+                        try {
+                            json = new JSONObject().put("ok", false).put("err", String.valueOf(t)).toString();
+                        } catch (Throwable e) { json = "{\"ok\":false}"; }
+                    }
+                    js("window.onAudioProbe&&onAudioProbe(" + json + ")");
+                }
+            }, "gime-audio-probe").start();
+        }
+
+        /** 入队生成某集字幕（同时会由服务自动补下一集）。 */
+        @JavascriptInterface
+        public void subsStart(String bvid, String pageStr, String title) {
+            askBatteryExemptOnce();
+            try { SubsJobService.enqueue(MainActivity.this, bvid, Integer.parseInt(pageStr.trim()), title); } catch (Throwable ignored) { }
+        }
+
+        /** 带视频标题的入队：缓存目录按视频分组，需要知道这一集属于哪部视频。 */
+        @JavascriptInterface
+        public void subsStartV(String bvid, String pageStr, String title, String vtitle) {
+            askBatteryExemptOnce();
+            try {
+                SubsJobService.enqueue(MainActivity.this, bvid, Integer.parseInt(pageStr.trim()), title, vtitle);
+            } catch (Throwable ignored) { }
+        }
+
+        /**
+         * 批量入队「缓存全集」：一次调用把这一部视频缺的集全部写进队列。
+         *
+         * @param pagesCsv   逗号分隔的分P号，例如 "3,4,5"
+         * @param titlesJson 分P标题的 JSON 数组，和 pagesCsv 顺序对应；可为空
+         * @return 真正新入队的集数；失败返回 -1（前端据此决定是否退回逐集入队）
+         */
+        @JavascriptInterface
+        public String subsQueueAll(String bvid, String pagesCsv, String titlesJson, String vtitle) {
+            try {
+                if (bvid == null || pagesCsv == null) return "-1";
+                String[] ps = pagesCsv.split(",");
+                int[] pages = new int[ps.length];
+                int n = 0;
+                for (int i = 0; i < ps.length; i++) {
+                    String s = ps[i].trim();
+                    if (s.isEmpty()) continue;
+                    try { pages[n++] = Integer.parseInt(s); } catch (Throwable ignored) { }
+                }
+                if (n == 0) return "0";
+                int[] realPages = new int[n];
+                System.arraycopy(pages, 0, realPages, 0, n);
+                String[] titles = new String[n];
+                if (titlesJson != null && !titlesJson.isEmpty()) {
+                    JSONArray a = new JSONArray(titlesJson);
+                    for (int i = 0; i < n && i < a.length(); i++) titles[i] = a.optString(i, "");
+                }
+                return String.valueOf(SubsJobService.enqueueBatch(MainActivity.this, bvid, realPages, titles, vtitle));
+            } catch (Throwable t) {
+                return "-1";
+            }
+        }
+
+        @JavascriptInterface
+        public void subsCancel(String bvid, String pageStr) {
+            try { SubsJobService.cancel(MainActivity.this, bvid, Integer.parseInt(pageStr.trim())); } catch (Throwable ignored) { }
+        }
+
+        /** 暂停字幕识别：跑到段边界就停，队列与断点都留着。 */
+        @JavascriptInterface
+        public void subsPause() {
+            try { SubsJobService.pause(MainActivity.this); } catch (Throwable ignored) { }
+        }
+
+        /** 继续字幕识别：从断点接着跑。 */
+        @JavascriptInterface
+        public void subsResume() {
+            try { SubsJobService.resume(MainActivity.this); } catch (Throwable ignored) { }
+        }
+
+        @JavascriptInterface
+        public String subsPaused() {
+            try { return SubsStore.paused(MainActivity.this) ? "1" : "0"; } catch (Throwable t) { return "0"; }
+        }
+
+        /** 插队识别：当前这一集在段边界收尾让位，立刻改跑这一集。 */
+        @JavascriptInterface
+        public void subsJump(String bvid, String pageStr) {
+            try { SubsJobService.jump(MainActivity.this, bvid, Integer.parseInt(pageStr.trim())); } catch (Throwable ignored) { }
+        }
+
+        /** 官方字幕：异步取上游 AI 字幕，完成后回调 window.onOfficialSubs({ok,segs})。 */
+        @JavascriptInterface
+        public void biliOfficialSubs(final String bvid, final String pageStr) {
+            new Thread(new Runnable() {
+                @Override public void run() {
+                    JSONObject out = new JSONObject();
+                    try {
+                        int page = Integer.parseInt(pageStr == null || pageStr.trim().isEmpty() ? "1" : pageStr.trim());
+                        File dir = new File(getFilesDir(), "subs");
+                        if (!dir.isDirectory()) dir.mkdirs();
+                        File f = new File(dir, bvid + "-" + page + "-official.json");
+                        String body = null;
+                        if (f.isFile() && f.length() > 2) {
+                            try {
+                                java.io.FileInputStream in = new java.io.FileInputStream(f);
+                                java.io.ByteArrayOutputStream bos = new java.io.ByteArrayOutputStream();
+                                byte[] buf = new byte[8192];
+                                int n;
+                                while ((n = in.read(buf)) > 0) bos.write(buf, 0, n);
+                                in.close();
+                                body = new String(bos.toByteArray(), "UTF-8");
+                            } catch (Throwable ignored) { body = null; }
+                        }
+                        if (body == null) {
+                            String ck = biliCookie();
+                            if (ck.isEmpty()) throw new IllegalStateException("还没绑定哔哩哔哩");
+                            JSONObject v = BiliWeb.view(ck, bvid);
+                            JSONArray pages = v.optJSONArray("pages");
+                            if (pages == null || page > pages.length()) throw new IllegalStateException("没有这一集");
+                            long cid = pages.getJSONObject(page - 1).getLong("cid");
+                            body = BiliWeb.officialSubs(ck, bvid, cid);
+                            File tmp = new File(f.getPath() + ".tmp");
+                            java.io.FileOutputStream fos = new java.io.FileOutputStream(tmp);
+                            fos.write(body.getBytes("UTF-8"));
+                            fos.close();
+                            if (f.exists()) f.delete();
+                            if (!tmp.renameTo(f)) tmp.delete();
+                        }
+                        out.put("ok", true).put("segs", new JSONArray(body));
+                    } catch (Throwable t) {
+                        try {
+                            out.put("ok", false).put("error",
+                                    readable(t instanceof Exception ? (Exception) t : new Exception(t)));
+                        } catch (Throwable ignored) { }
+                    }
+                    final String s = out.toString();
+                    runOnUiThread(new Runnable() {
+                        @Override public void run() {
+                            try {
+                                web.evaluateJavascript("window.onOfficialSubs&&onOfficialSubs(" + s + ")", null);
+                            } catch (Throwable ignored) { }
+                        }
+                    });
+                }
+            }).start();
+        }
+
+        /** 全库正在加载字幕的视频（最多两个）：[{b,p,t,s,c}]，给收藏页顶部状态条用。 */
+        @JavascriptInterface
+        public String subsPending() {
+            JSONArray out = new JSONArray();
+            try {
+                JSONArray q = SubsStore.queue(MainActivity.this);
+                for (int i = 0; i < q.length(); i++) {
+                    JSONObject o = q.optJSONObject(i);
+                    if (o == null) continue;
+                    String st = o.optString("status");
+                    if (!"running".equals(st) && !"queued".equals(st)) continue;
+                    int done = o.optInt("done"), total = o.optInt("total");
+                    double pct = total > 0 ? Math.min(99.99, 100.0 * done / total) : 0;
+                    JSONObject e = new JSONObject();
+                    e.put("b", o.optString("bvid"));
+                    e.put("p", o.optInt("page"));
+                    e.put("t", o.optString("title"));
+                    e.put("vt", o.optString("vt", ""));
+                    e.put("s", st);
+                    e.put("c", pct);
+                    out.put(e);
+                }
+            } catch (Throwable ignored) { }
+            return out.toString();
+        }
+
+        /**
+         * 缓存目录：一次取回全库「正在跑 + 排队中」的清单和计数。
+         *
+         * <p>原来的 subsPending 只服务于顶部的 4 张小卡，够看不够管——用户要的是能看到
+         * 所有在排队的集、能逐条或整部取消。这里把状态、视频标题、进度一并给出，
+         * 分组交给页面做（同一个视频的集在队列里本来就是连续的，但页面按 bvid 分组更稳）。
+         */
+        @JavascriptInterface
+        public String subsCatalog() {
+            JSONObject out = new JSONObject();
+            JSONArray items = new JSONArray();
+            int running = 0, queued = 0, ready = 0;
+            try {
+                JSONArray q = SubsStore.queue(MainActivity.this);
+                for (int i = 0; i < q.length(); i++) {
+                    JSONObject o = q.optJSONObject(i);
+                    if (o == null) continue;
+                    String st = o.optString("status");
+                    if ("ready".equals(st)) { ready++; continue; }
+                    if (!"running".equals(st) && !"queued".equals(st)) continue;
+                    if ("running".equals(st)) running++; else queued++;
+                    int done = o.optInt("done"), total = o.optInt("total");
+                    double pct = total > 0 ? Math.min(99.99, 100.0 * done / total) : 0;
+                    JSONObject e = new JSONObject();
+                    e.put("b", o.optString("bvid"));
+                    e.put("p", o.optInt("page"));
+                    e.put("t", o.optString("title"));
+                    e.put("vt", o.optString("vt", ""));
+                    e.put("s", st);
+                    e.put("c", pct);
+                    e.put("g", o.optString("stage", ""));
+                    items.put(e);
+                }
+                out.put("running", running).put("queued", queued).put("ready", ready);
+                out.put("tracks", SubsStore.trackCount(MainActivity.this));
+                out.put("paused", SubsStore.paused(MainActivity.this));
+                out.put("items", items);
+            } catch (Throwable ignored) { }
+            return out.toString();
+        }
+        /** 这个视频所有分P的生成状态：[{p:1,s:"running",c:43}]，给分P按钮挂进度徽标用。 */
+        @JavascriptInterface
+        public String subsQueue(String bvid) {
+            JSONArray out = new JSONArray();
+            try {
+                java.util.HashSet<Integer> seen = new java.util.HashSet<>();
+                JSONArray q = SubsStore.queue(MainActivity.this);
+                for (int i = 0; i < q.length(); i++) {
+                    JSONObject o = q.optJSONObject(i);
+                    if (o == null || bvid == null || !bvid.equals(o.optString("bvid"))) continue;
+                    int done = o.optInt("done"), total = o.optInt("total");
+                    String st0 = o.optString("status");
+                    double pct = "ready".equals(st0) ? 100.0
+                            : (total > 0 ? Math.min(99.99, 100.0 * done / total) : 0);
+                    JSONObject e = new JSONObject();
+                    int pg = o.optInt("page");
+                    e.put("p", pg);
+                    e.put("s", st0);
+                    e.put("c", pct);
+                    out.put(e);
+                    seen.add(pg);
+                }
+                /* 队列里没有、但轨文件已经存在的集，直接算「100% 已完成」 */
+                for (Integer p : SubsStore.trackPages(MainActivity.this, bvid)) {
+                    if (seen.contains(p)) continue;
+                    JSONObject e = new JSONObject();
+                    e.put("p", p).put("s", "ready").put("c", 100);
+                    out.put(e);
+                }
+            } catch (Throwable ignored) { }
+            return out.toString();
+        }
+
+        /** none | queued | running | ready | failed，外加进度百分比和队列长度。 */
+        @JavascriptInterface
+        public String subsState(String bvid, String pageStr) {
+            JSONObject o = new JSONObject();
+            try {
+                int page = Integer.parseInt(pageStr.trim());
+                boolean ready = SubsStore.hasTrack(MainActivity.this, bvid, page);
+                JSONObject e = SubsStore.entry(MainActivity.this, bvid, page);
+                String st = ready ? "ready" : (e == null ? "none" : e.optString("status", "none"));
+                o.put("ok", true).put("state", st).put("pending", SubsStore.pendingCount(MainActivity.this));
+                if (e != null) {
+                    int done = e.optInt("done"), total = e.optInt("total");
+                    o.put("done", done).put("total", total);
+                    double pct = "ready".equals(st) ? 100.0
+                            : (total > 0 ? Math.min(99.99, 100.0 * done / total) : 0);
+                    o.put("pct", pct);
+                    o.put("title", e.optString("title"));
+                }
+            } catch (Throwable t) {
+                try { o.put("ok", false).put("err", String.valueOf(t)); } catch (Throwable ignored) { }
+            }
+            return o.toString();
+        }
+
+        /** 调试/迁移：把已有轨道按整句重新编排一遍（碎片合并 + 按宽度分行）。 */
+        @JavascriptInterface
+        public String subsRepost(String bvid, String pageStr) {
+            try {
+                int page = Integer.parseInt(pageStr.trim());
+                String raw = SubsStore.readTrack(MainActivity.this, bvid, page);
+                if (raw == null) return "{\"ok\":false,\"err\":\"no track\"}";
+                JSONObject o = new JSONObject(raw);
+                JSONArray segs = TrackPost.refine(o.optJSONArray("segs"));
+                SubsStore.saveTrack(MainActivity.this, bvid, page, segs);
+                return new JSONObject().put("ok", true).put("segs", segs.length()).toString();
+            } catch (Throwable t) {
+                try { return new JSONObject().put("ok", false).put("err", String.valueOf(t)).toString(); }
+                catch (Throwable e) { return "{\"ok\":false}"; }
+            }
+        }
+
+        /** 整条字幕轨（JSON 字符串）；没有就返回空串。 */
+        @JavascriptInterface
+        public String subsTrack(String bvid, String pageStr) {
+            try {
+                return SubsStore.readTrack(MainActivity.this, bvid, Integer.parseInt(pageStr.trim()));
+            } catch (Throwable t) {
+                return null;
+            }
+        }
+
         @JavascriptInterface
         public String biliStatus() {
             try {
@@ -1181,6 +1743,12 @@ public class MainActivity extends Activity {
             getSharedPreferences(BiliLoginActivity.PREFS, MODE_PRIVATE).edit().clear().apply();
             BiliStream.revokeAll();
             BiliStream.stop();
+            /* prepare 缓存里的 src 票刚被 revokeAll 回收，且键不含账号维度：
+               不清的话换号后 5min 内会命中旧缓存 → 播放器 404 / 拿到上一账号的清晰度。 */
+            synchronized (PREPARE_CACHE) {
+                PREPARE_CACHE.clear();
+                PREPARING.clear();
+            }
             js("window.onBiliLogout&&window.onBiliLogout()");
         }
 
@@ -1233,6 +1801,92 @@ public class MainActivity extends Activity {
          * 没有上游直链，也没有 cookie。页面把 src 塞进 {@code <video>} 即可，
          * 拖进度条的 Range 由 BiliStream 透传。
          */
+        /* —— 播放准备结果的短缓存：切集与相邻集预取共用 ——
+           同一个 bvid|page 在 5 分钟内再问，直接回上次的 JSON，省掉 view+playurl 两次 API。
+           票本身 2 小时，所以缓存过期只影响「要不要重新取地址」，不影响已在播的流。 */
+        private static final int PREPARE_CACHE_MAX = 6;
+        private static final long PREPARE_CACHE_TTL_MS = 5 * 60 * 1000L;
+        private static final LinkedHashMap<String, String[]> PREPARE_CACHE =
+                new LinkedHashMap<String, String[]>(PREPARE_CACHE_MAX, 0.75f, true) {
+                    @Override protected boolean removeEldestEntry(Map.Entry<String, String[]> e) {
+                        return size() > PREPARE_CACHE_MAX;
+                    }
+                };
+        /** 正在预取的键：防抖，同一集被连续触发两次也只发一份请求。 */
+        private static final Set<String> PREPARING = new HashSet<String>();
+        /** 预取线程：单线程、低优先级、守护线程，不去抢播放和字幕的 CPU。 */
+        private static ExecutorService PREFETCH;
+
+        private static String prepareKey(String bvid, int page) { return bvid + "|" + page; }
+
+        private static String cacheGet(String key) {
+            synchronized (PREPARE_CACHE) {
+                String[] v = PREPARE_CACHE.get(key);
+                if (v == null) return null;
+                long at = 0L;
+                try { at = Long.parseLong(v[1]); } catch (Throwable ignored) { }
+                if (System.currentTimeMillis() - at > PREPARE_CACHE_TTL_MS) {
+                    PREPARE_CACHE.remove(key);
+                    return null;
+                }
+                return v[0];
+            }
+        }
+
+        private static void cachePut(String key, String json) {
+            synchronized (PREPARE_CACHE) {
+                PREPARE_CACHE.put(key, new String[]{json, Long.toString(System.currentTimeMillis())});
+            }
+        }
+
+        /**
+         * 预取下一集：用户在播放器里停留一下就提前把地址备好，切集时省掉两趟 API。
+         * 只预取「下一集」，不预取上一集，省接口配额。
+         */
+        private void prefetchNext(final String bvid, int page) {
+            String json = cacheGet(prepareKey(bvid, page));
+            if (json == null) return;
+            int pages = 0;
+            try { pages = new JSONObject(json).optInt("pages", 0); } catch (Throwable ignored) { }
+            if (pages > 0 && page >= pages) return;      // 已经是最后一集
+            enqueuePrefetch(bvid, page + 1);
+        }
+
+        private void enqueuePrefetch(final String bvid, final int page) {
+            final String key = prepareKey(bvid, page);
+            if (cacheGet(key) != null) return;
+            synchronized (PREPARE_CACHE) {
+                if (!PREPARING.add(key)) return;          // 已在排队或正在做
+            }
+            if (PREFETCH == null) {
+                PREFETCH = Executors.newSingleThreadExecutor(new java.util.concurrent.ThreadFactory() {
+                    @Override public Thread newThread(Runnable r) {
+                        Thread t = new Thread(r, "bili-prefetch");
+                        t.setPriority(Thread.MIN_PRIORITY);
+                        t.setDaemon(true);
+                        return t;
+                    }
+                });
+            }
+            try {
+                PREFETCH.execute(new Runnable() {
+                    @Override public void run() {
+                        try {
+                            String cookie = biliCookie();
+                            if (cookie.isEmpty()) return;
+                            /* chain=false：预取不再往下链，避免一次播放把整季都请求一遍 */
+                            prepareJson(bvid, page, cookie, key, false);
+                        } catch (Throwable ignored) {
+                        } finally {
+                            synchronized (PREPARE_CACHE) { PREPARING.remove(key); }
+                        }
+                    }
+                });
+            } catch (Throwable e) {
+                synchronized (PREPARE_CACHE) { PREPARING.remove(key); }
+            }
+        }
+
         @JavascriptInterface
         public String biliPrepare(String bvid, String pageStr) {
             String bad = BridgeGuard.biliBvid(bvid);
@@ -1247,6 +1901,48 @@ public class MainActivity extends Activity {
             if (bad != null) return biliErr(bad);
             String cookie = biliCookie();
             if (cookie.isEmpty()) return biliErr("还没绑定哔哩哔哩");
+            String key = prepareKey(bvid, page);
+            String hit = cacheGet(key);
+            if (hit != null) {
+                prefetchNext(bvid, page);
+                return hit;
+            }
+            return prepareJson(bvid, page, cookie, key, true);
+        }
+
+        /** 页面显式请求预取（进入播放器后调用）；不阻塞 JS，失败静默。 */
+        @JavascriptInterface
+        public void biliPrefetch(String bvid, String pageStr) {
+            if (BridgeGuard.biliBvid(bvid) != null) return;
+            int page;
+            try {
+                page = Integer.parseInt(pageStr == null || pageStr.trim().isEmpty() ? "1" : pageStr.trim());
+            } catch (Exception e) {
+                return;
+            }
+            if (BridgeGuard.biliPage(page) != null) return;
+            enqueuePrefetch(bvid, page);
+        }
+
+        /** 当前网络类型：WiFi 才让 <video preload="auto"> 提前囤，蜂窝只取元数据省流量。 */
+        @JavascriptInterface
+        public String netKind() {
+            try {
+                ConnectivityManager cm = (ConnectivityManager) getSystemService(Context.CONNECTIVITY_SERVICE);
+                if (cm == null) return "unknown";
+                NetworkInfo ni = cm.getActiveNetworkInfo();
+                if (ni == null || !ni.isConnected()) return "none";
+                int t = ni.getType();
+                if (t == ConnectivityManager.TYPE_WIFI || t == ConnectivityManager.TYPE_ETHERNET) {
+                    return "wifi";
+                }
+                return "mobile";
+            } catch (Throwable e) {
+                return "unknown";
+            }
+        }
+
+        private String prepareJson(String bvid, int page, String cookie, String key, boolean chain) {
             try {
                 JSONObject v = BiliWeb.view(cookie, bvid);
                 JSONArray pages = v.optJSONArray("pages");
@@ -1260,16 +1956,31 @@ public class MainActivity extends Activity {
                 String url = play.optString("url", "");
                 if (url.isEmpty()) return biliErr("这条视频没有可播地址（可能是付费 / 番剧 / 地区限制）");
                 String src = BiliStream.issue(url);
-                return new JSONObject().put("ok", true)
+                /* 分P标题清单：选集列表要显示每集题目（长条选集用），一次带回去省一次网络请求 */
+                JSONArray parts = new JSONArray();
+                for (int i = 0; i < pages.length(); i++) {
+                    JSONObject pp = pages.optJSONObject(i);
+                    if (pp == null) continue;
+                    JSONObject x = new JSONObject();
+                    x.put("p", pp.optInt("page", i + 1));
+                    x.put("t", pp.optString("part", ""));
+                    x.put("d", pp.optInt("duration", 0));
+                    parts.put(x);
+                }
+                String json = new JSONObject().put("ok", true)
                         .put("title", v.optString("title", ""))
                         .put("part", pg.optString("part", ""))
                         .put("page", page)
                         .put("pages", pages.length())
+                        .put("parts", parts)
                         .put("quality", play.optInt("quality", 0))
                         .put("qualityName", play.optString("qualityName", ""))
                         .put("size", play.optLong("size", 0L))
                         .put("duration", pg.optLong("duration", 0L))
                         .put("src", src).toString();
+                cachePut(key, json);
+                if (chain) prefetchNext(bvid, page);
+                return json;
             } catch (BiliWeb.ApiError e) {
                 return biliErr(e.getMessage());
             } catch (Exception e) {
@@ -1277,19 +1988,16 @@ public class MainActivity extends Activity {
             }
         }
 
-        /** 哔哩哔哩播放进/退全屏：进全屏锁横屏 + 收起系统栏（跟手机播放器一致），
-            退出恢复跟随系统并还原系统栏外观。只动窗口状态，不碰页面状态。 */
+        /** 哔哩哔哩播放进/退全屏：页面始终锁竖屏，横屏画面由页面把播放器层旋转 90° 实现，
+            所以这里进全屏也只锁竖屏、只收起系统栏。 */
         @JavascriptInterface
         public void biliFullscreen(final boolean on) {
             runOnUiThread(new Runnable() {
                 @Override
                 public void run() {
-                    /* 退全屏一律锁回竖屏，且不再交还系统（UNSPECIFIED）：
-                       手机平放时传感器报「不变」，交还系统后整页会卡在横屏；
-                       再叠上连点退出会排多个 800ms 回调，更容易偶发整个 App 横屏。 */
-                    setRequestedOrientation(on
-                            ? ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
-                            : ActivityInfo.SCREEN_ORIENTATION_PORTRAIT);
+                    /* 永远竖屏：进全屏若锁 SENSOR_LANDSCAPE，整页（tab/列表）都会跟着横过来，
+                       连点退出还会排多个回调导致偶发卡横屏。横屏只由页面内播放器层旋转承担。 */
+                    setRequestedOrientation(ActivityInfo.SCREEN_ORIENTATION_PORTRAIT);
                     View decor = getWindow().getDecorView();
                     if (on) {
                         decor.setSystemUiVisibility(View.SYSTEM_UI_FLAG_LAYOUT_STABLE
@@ -1664,10 +2372,15 @@ public class MainActivity extends Activity {
             updater.download(url);
         }
 
+        /** 上次已经下好的更新包：页面点「立即安装」走这里。 */
+        @JavascriptInterface
+        public void installPendingUpdate() {
+            updater.installPending();
+        }
+
         /** 页面传多个下载源时走这里；逐个试，第一个通的就是它。 */
         @JavascriptInterface
-        public void downloadUpdateFrom(String urlsJson) {
-            java.util.List<String> list = new java.util.ArrayList<String>();
+        public void downloadUpdateFrom(String urlsJson) {            java.util.List<String> list = new java.util.ArrayList<String>();
             try {
                 JSONArray arr = new JSONArray(urlsJson);
                 for (int i = 0; i < arr.length(); i++) {

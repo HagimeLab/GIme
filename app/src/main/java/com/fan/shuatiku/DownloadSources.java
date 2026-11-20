@@ -74,8 +74,24 @@ public final class DownloadSources {
         List<String> out = new ArrayList<String>();
         String path = CDN_DIR + "/" + file;
 
-        /* jsDelivr 的四个入口实测都能直出 APK（含 .apk 后缀），
-           国内网络下 cdn/fastly 通常几十毫秒就返回，且能命中缓存。 */
+        /* 安装包不进仓库历史：66MB 的包过不了 Git Data API 的 blob 单次上传上限
+           （422 input too large），仓库里也就没有 jsDelivr 能直出的对象。
+           所以安装包只走两个发布资产入口：Gitee 发行版（国内首源）→ GitHub Release 资产。 */
+        if (file.toLowerCase().endsWith(".apk")) {
+            String gv = versionFromApkName(file);
+            if (gv != null) {
+                out.add("https://gitee.com/hagemilab/gi/releases/download/v" + gv + "/" + file);
+                out.add("https://github.com/" + repo + "/releases/download/v" + gv + "/" + file);
+                return out;
+            }
+        }
+
+        /* Gitee 国内中转仓库（用户自建镜像）。
+           Gitee 的 raw 只对文本文件直出，二进制会 403，
+           所以文本清单走 raw、安装包走发行版附件。 */
+        out.add("https://gitee.com/hagemilab/gi/raw/main/" + path);
+
+        /* jsDelivr 的四个入口：清单类小文件走它们最快，且能命中缓存。 */
         out.add("https://cdn.jsdelivr.net/gh/" + repo + "@" + ref + "/" + path);
         out.add("https://fastly.jsdelivr.net/gh/" + repo + "@" + ref + "/" + path);
         out.add("https://testingcf.jsdelivr.net/gh/" + repo + "@" + ref + "/" + path);
@@ -88,9 +104,24 @@ public final class DownloadSources {
         return out;
     }
 
+    /**
+     * 从安装包文件名里取版本号：GIme-v1.1.7-4e235173.apk → 1.1.7。
+     * 取不到返回 null（调用方就不放 Gitee Release 源）。
+     */
+    static String versionFromApkName(String file) {
+        java.util.regex.Matcher m = java.util.regex.Pattern
+                .compile("^GIme-v([0-9]+(?:\\.[0-9]+)*)").matcher(file == null ? "" : file);
+        return m.find() ? m.group(1) : null;
+    }
+
     /** 发布页：让用户在浏览器里自己取安装包时用。 */
     public static String releasePage(String repo, String version) {
         return "https://github.com/" + repo + "/releases/tag/v" + version;
+    }
+
+    /** 国内镜像发布页（Gitee）：GitHub 连不上时从这里手动取安装包。 */
+    public static String giteeReleasePage(String version) {
+        return "https://gitee.com/hagemilab/gi/releases/tag/v" + version;
     }
 }
 

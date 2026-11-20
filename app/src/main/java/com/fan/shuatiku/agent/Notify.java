@@ -48,7 +48,7 @@ public final class Notify {
         Notification.Builder b = Build.VERSION.SDK_INT >= 26
                 ? new Notification.Builder(c, CHANNEL)
                 : new Notification.Builder(c);
-        b.setSmallIcon(android.R.drawable.stat_notify_chat)
+        b.setSmallIcon(com.fan.shuatiku.R.drawable.ic_stat_gime)
                 .setContentTitle(title == null ? "" : title)
                 .setContentText(body == null ? "" : body)
                 .setStyle(new Notification.BigTextStyle().bigText(body == null ? "" : body))

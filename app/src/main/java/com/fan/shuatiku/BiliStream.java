@@ -34,11 +34,21 @@ public final class BiliStream {
 
     public static final int PORT = 8766;
     /** 编号存活时间。直链本身就比这个短命，做长了也没意义。 */
-    static final long TTL_MS = 20 * 60 * 1000L;
+    /** 播放票有效期：长视频要看两小时，过期只影响「新开的 Range」，一次访问就续期。 */
+    static final long TTL_MS = 2 * 60 * 60 * 1000L;
     /** 同时在拉的上游条数上限：一次拖动会瞬发好几个 Range 请求，放开没好处。 */
     static final int MAX_ACTIVE = 8;
     /** 表里最多留多少个旧编号，超了就挤掉最老的（过期回收之外的兜底）。 */
     static final int MAX_TICKETS = 32;
+
+    /* 播放流的两段超时：首包容忍 20s（弱网握手/首片慢是常态），
+       开了头之后卡 60s 才算真断；断流缝合最多接 3 次。 */
+    static final int FIRST_BYTE_TIMEOUT_MS = 20000;
+    static final int IDLE_TIMEOUT_MS = 60000;
+    /** 并发名额满时最多排队这么久，再回 503。 */
+    static final long MAX_WAIT_MS = 3000L;
+    /** 中途断流后按已写字节续 Range 的次数上限。 */
+    static final int RESUME_RETRIES = 3;
 
     private static final int MAX_HEAD = 8 * 1024;
     private static final int SOCKET_TIMEOUT_MS = 15000;
@@ -71,9 +81,11 @@ public final class BiliStream {
 
     private static final class Ticket {
         final String url;
-        final long at;
+        volatile long at;
         Ticket(String url) { this.url = url; this.at = System.currentTimeMillis(); }
         boolean alive() { return System.currentTimeMillis() - at < TTL_MS; }
+        /** 每被用一次就续期：播了两小时后拖进度条不会突然 410。 */
+        void touch() { at = System.currentTimeMillis(); }
     }
 
     /** 访问序 LinkedHashMap：正在播的编号不会被最久没碰的挤掉。 */
@@ -170,10 +182,15 @@ public final class BiliStream {
 
     private static void serve(Socket sock) {
         HttpNet.Conn up = null;
+        OutputStream out = null;
+        boolean headSent = false;
         try {
+            /* 这里只读请求头，一次写完就进转发；给足时间，别在慢网络下把
+               一次正常的请求读断（读超时会让 serve 直接退出，播放器就卡在加载态）。 */
+            CLIENT_GONE.remove();
             sock.setSoTimeout(SOCKET_TIMEOUT_MS);
             InputStream in = sock.getInputStream();
-            OutputStream out = sock.getOutputStream();
+            out = sock.getOutputStream();
             String head = readHead(in);
             if (head == null) return;
 
@@ -200,25 +217,95 @@ public final class BiliStream {
                 Ticket t = TICKETS.get(token);
                 if (t == null) { plain(out, 404, "no such stream"); return; }
                 if (!t.alive()) { plain(out, 410, "link expired"); return; }
+                t.touch();
                 url = t.url;
             }
 
-            if (ACTIVE.incrementAndGet() > MAX_ACTIVE) {
-                ACTIVE.decrementAndGet();
+            /* 播放器拖进度条会瞬发好几个 Range（实测 12 个并发里 4 个被 503 挡掉，
+               播放器只能报错重试）。超限就先排队，等不到才回 503。 */
+            if (!acquireSlot(MAX_WAIT_MS)) {
                 plain(out, 503, "too many concurrent streams");
                 return;
             }
             try {
-                Map<String, String> up1 = BiliWeb.headers(cookies.cookie());
                 String range = h.get("range");
-                if (range != null && !range.isEmpty()) up1.put("Range", range);
-                up = HttpNet.open(new HttpNet.Request(url, method, up1, null, 8000, 30000));
-                pipe(out, up, method);
+                long cliStart = rangeStart(range);
+                long cliEnd = rangeEnd(range);
+                Exception last = null;
+                /* 阶段一：连上游、拿响应头。还没写给播放器，整条可以重来。 */
+                for (int attempt = 0; attempt < 2; attempt++) {
+                    Map<String, String> up1 = BiliWeb.headers(cookies.cookie());
+                    if (range != null && !range.isEmpty()) up1.put("Range", range);
+                    try {
+                        up = HttpNet.open(new HttpNet.Request(url, method, up1, null,
+                                8000, FIRST_BYTE_TIMEOUT_MS, IDLE_TIMEOUT_MS, null));
+                        last = null;
+                        break;
+                    } catch (Exception pe) {
+                        last = pe;
+                        closeQuietly(up);
+                        up = null;
+                    }
+                }
+                if (up == null) throw last;
+
+                long need = writeHead(out, up, method, cliStart);
+                headSent = true;   /* 响应头已写给播放器（含 writeHead 内部的 502），不能再写第二个头 */
+                if (need > 0 && !"HEAD".equals(method)) {
+                    /* 阶段二：吐字节。中途断流时按「已写字节」续 Range 缝合，
+                       播放器完全无感，也不用整段重下。 */
+                    long absStart = upstreamStart(up, cliStart);
+                    long wrote = 0;
+                    int fails = 0;
+                    while (wrote < need) {
+                        /* 进度必须由 pump 回传：抛异常时调用方拿不到返回值，
+                           少了这一份就会把断点算成 0，续流从头发、数据整段错位。 */
+                        long[] prog = new long[1];
+                        try {
+                            pump(out, up, need - wrote, prog);
+                            wrote += prog[0];
+                            if (prog[0] <= 0) break;       /* 上游正常结束但没给满 */
+                        } catch (IOException e) {
+                            wrote += prog[0];              /* 已经写给播放器的那部分要算数 */
+                            if (clientGone()) break;       /* 播放器自己走了，别再连上游 */
+                            last = e;
+                        }
+                        if (wrote >= need) break;
+                        if (++fails > RESUME_RETRIES) break;
+                        try {
+                            Thread.sleep(200L * fails);
+                        } catch (InterruptedException ie) {
+                            Thread.currentThread().interrupt();
+                            break;
+                        }
+                        long from = absStart + wrote;
+                        Map<String, String> h2 = BiliWeb.headers(cookies.cookie());
+                        h2.put("Range", "bytes=" + from + (cliEnd > 0 ? "-" + cliEnd : "-"));
+                        closeQuietly(up);
+                        try {
+                            up = HttpNet.open(new HttpNet.Request(url, method, h2, null,
+                                    8000, FIRST_BYTE_TIMEOUT_MS, IDLE_TIMEOUT_MS, null));
+                        } catch (Exception e) {
+                            up = null;
+                            break;
+                        }
+                        if (up.code() != 206) break;
+                        /* 起点对不上的话（CDN 回了别的区间）宁可放弃缝合，
+                           也别把错位的数据接着往播放器里灌。 */
+                        if (upstreamStart(up, from) != from) break;
+                    }
+                    if (last != null && wrote < need && !clientGone()) throw last;
+                }
             } finally {
                 ACTIVE.decrementAndGet();
             }
         } catch (Exception e) {
-            // 半截断开是常态（用户拖进度条、划走页面），不值得往日志里灌栈
+            /* 头还没写给播放器（阶段一连上游失败等）：给一个干净的 502，
+               而不是直接掐连接让播放器只看到 connection reset、丢了诊断信息。
+               头已写则不能再写第二个响应头；半截断开是常态，静默收尾。 */
+            if (!headSent && out != null) {
+                try { plain(out, 502, "upstream failed: " + e.getMessage()); } catch (Exception ignored) { }
+            }
             if (running) androidFree(e);
         } finally {
             if (up != null) {
@@ -234,8 +321,13 @@ public final class BiliStream {
         System.err.println("[GImeBili] " + e.getClass().getSimpleName() + ": " + e.getMessage());
     }
 
-    /** 上游的头只透传这四个，其余一概不带 —— 特别是 transfer-encoding 与 set-cookie。 */
-    private static void pipe(OutputStream out, HttpNet.Conn up, String method) throws IOException {
+    /**
+     * 把上游响应头写给播放器，返回本次响应的 Content-Length（拿不到时为 0）。
+     *
+     * <p>上游的头只透传这几个，其余一概不带 —— 特别是 transfer-encoding 与 set-cookie。
+     */
+    private static long writeHead(OutputStream out, HttpNet.Conn up, String method,
+                                  long cliStart) throws IOException {
         int code = up.code();
         String type = pick(up, "content-type", "video/mp4");
         /* CDN 对 mp4 经常回 application/octet-stream，个别 <video> 会当成「不认识的类型」直接报
@@ -248,7 +340,7 @@ public final class BiliStream {
         if (len == null) {
             // 没有长度就没法写 Content-Length，也就没法定位「拖到第几秒」；宁可明说
             plain(out, 502, "upstream gave no content length");
-            return;
+            return 0;
         }
         StringBuilder sb = new StringBuilder();
         sb.append("HTTP/1.1 ").append(code).append(' ').append(reason(code)).append("\r\n");
@@ -257,18 +349,131 @@ public final class BiliStream {
         if (range != null) sb.append("Content-Range: ").append(range).append("\r\n");
         sb.append("Accept-Ranges: ").append(acc).append("\r\n");
         sb.append("Cache-Control: no-store\r\n");
+        /* 页面用 Web Audio 抓 <video> 的采样做实时字幕：跨源媒体源不带 CORS 头时
+           createMediaElementSource 会输出静音，这里必须显式放行。 */
+        sb.append("Access-Control-Allow-Origin: *\r\n");
+        sb.append("Access-Control-Expose-Headers: Content-Length, Content-Range, Accept-Ranges\r\n");
         sb.append("Connection: close\r\n\r\n");
         out.write(sb.toString().getBytes(StandardCharsets.US_ASCII));
-        if ("HEAD".equals(method)) { out.flush(); return; }
-
-        InputStream body = up.body();
-        if (body == null) { out.flush(); return; }
-        byte[] buf = new byte[64 * 1024];
-        int n;
-        while ((n = body.read(buf)) > 0) {
-            out.write(buf, 0, n);
-        }
         out.flush();
+        try {
+            return Long.parseLong(len.trim());
+        } catch (Throwable ignored) {
+            return 0;
+        }
+    }
+
+    /**
+     * 从一个上游连接搬最多 limit 字节给播放器；返回实际搬了多少。
+     *
+     * <p>{@code prog[0]} 是「已经写给播放器的字节数」，中途抛异常时调用方靠它知道断在哪，
+     * 所以每写一块就必须先更新它、再往下走。
+     */
+    private static long pump(OutputStream out, HttpNet.Conn up, long limit, long[] prog)
+            throws IOException {
+        InputStream body = up.body();
+        if (body == null) return 0;
+        byte[] buf = new byte[64 * 1024];
+        long got = 0;
+        while (got < limit) {
+            int n = body.read(buf);
+            if (n <= 0) break;
+            int w = (int) Math.min(n, limit - got);
+            try {
+                out.write(buf, 0, w);
+            } catch (IOException e) {
+                /* 写不出去是播放器先走了（拖进度条/划走页面），不是上游的问题 */
+                CLIENT_GONE.set(Boolean.TRUE);
+                throw e;
+            }
+            got += w;
+            prog[0] = got;
+        }
+        try {
+            out.flush();
+        } catch (IOException e) {
+            CLIENT_GONE.set(Boolean.TRUE);
+            throw e;
+        }
+        return got;
+    }
+
+    /** 本次这类连接里，客户端是否已经断开（断开了就别再白连上游）。 */
+    private static final ThreadLocal<Boolean> CLIENT_GONE = new ThreadLocal<Boolean>();
+
+    private static boolean clientGone() {
+        Boolean b = CLIENT_GONE.get();
+        return b != null && b;
+    }
+
+    /** 拿并发名额：满了先等一会儿再回 503，避免播放器并发预读时直接报错。 */
+    private static boolean acquireSlot(long maxWaitMs) {
+        long deadline = System.currentTimeMillis() + maxWaitMs;
+        while (true) {
+            int n = ACTIVE.get();
+            if (n < MAX_ACTIVE && ACTIVE.compareAndSet(n, n + 1)) return true;
+            if (System.currentTimeMillis() >= deadline) return false;
+            try {
+                Thread.sleep(50);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                return false;
+            }
+        }
+    }
+
+    /** 客户端 Range 的起点；没有/不可解析返回 -1。 */
+    static long rangeStart(String range) {
+        if (range == null) return -1;
+        int i = range.indexOf('=');
+        if (i < 0) return -1;
+        String s = range.substring(i + 1).trim();
+        int dash = s.indexOf('-');
+        if (dash < 0) return -1;
+        try {
+            String a = s.substring(0, dash).trim();
+            return a.isEmpty() ? -1 : Long.parseLong(a);
+        } catch (Throwable t) {
+            return -1;
+        }
+    }
+
+    /** 客户端 Range 的终点（含）；开放区间返回 -1。 */
+    static long rangeEnd(String range) {
+        if (range == null) return -1;
+        int i = range.indexOf('=');
+        if (i < 0) return -1;
+        String s = range.substring(i + 1).trim();
+        int dash = s.indexOf('-');
+        if (dash < 0) return -1;
+        try {
+            String b = s.substring(dash + 1).trim();
+            return b.isEmpty() ? -1 : Long.parseLong(b);
+        } catch (Throwable t) {
+            return -1;
+        }
+    }
+
+    /** 上游这条响应的绝对起点（续流缝合时的基准）：优先 Content-Range，其次客户端 Range。 */
+    static long upstreamStart(HttpNet.Conn up, long cliStart) {
+        String cr = up.header("content-range");
+        if (cr != null) {
+            int i = cr.indexOf(' ');
+            if (i >= 0) {
+                int dash = cr.indexOf('-', i);
+                if (dash > 0) {
+                    try { return Long.parseLong(cr.substring(i + 1, dash).trim()); }
+                    catch (Throwable ignored) { }
+                }
+            }
+        }
+        return up.code() == 206 && cliStart > 0 ? cliStart : 0;
+    }
+
+    private static void closeQuietly(HttpNet.Conn c) {
+        if (c == null) return;
+        try { c.abort(); } catch (Throwable ignored) { }
+        try { c.close(); } catch (Throwable ignored) { }
     }
 
     private static String pick(HttpNet.Conn up, String name, String fallback) {

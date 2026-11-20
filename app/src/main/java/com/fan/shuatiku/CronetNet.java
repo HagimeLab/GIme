@@ -80,7 +80,8 @@ public final class CronetNet implements HttpNet.Impl {
         final AtomicReference<Throwable> failure = new AtomicReference<Throwable>();
         final AtomicBoolean done = new AtomicBoolean(false);
         final Map<String, List<String>> hdrs = new LinkedHashMap<String, List<String>>();
-        final RequestState st = new RequestState(req.readTimeoutMs, failure);
+        final RequestState st = new RequestState(req.readTimeoutMs,
+                req.idleTimeoutMs > 0 ? req.idleTimeoutMs : req.readTimeoutMs, failure);
 
         UrlRequest.Callback cb = new UrlRequest.Callback() {
             @Override public void onRedirectReceived(UrlRequest r, UrlResponseInfo info, String url) {
@@ -113,15 +114,23 @@ public final class CronetNet implements HttpNet.Impl {
                 buf.flip();
                 int n = buf.remaining();
                 if (n > 0) {
+                    /* 首块到达后切到「闲置 60s 才算卡死」的口径：弱网首包慢不再直接掐断 */
+                    st.firstByteArrived();
                     byte[] b = new byte[n];
                     buf.get(b);
+                    /* 消费端慢（播放器反压 → 本地代理 → 这里的 PipedOutputStream）时，
+                       out.write 会阻塞很久。这段阻塞不代表上游没数据，必须先摘掉空闲守卫，
+                       否则 30 秒后守卫会把一条健康的上游连接 cancel 掉 ——
+                       表现就是「视频突然一直转圈，拖一下进度条才恢复」。 */
+                    st.suspend();
                     try {
-                        st.touch();
                         out.write(b);
                     } catch (Exception e) {
                         failure.compareAndSet(null, e);
                         r.cancel();
                         return;
+                    } finally {
+                        st.resume();
                     }
                 }
                 buf.clear();
@@ -227,13 +236,17 @@ public final class CronetNet implements HttpNet.Impl {
     }
 
     private static final class RequestState {
-        private final int readTimeoutMs;
+        private final int firstByteTimeoutMs;
+        private final int idleTimeoutMs;
         private final AtomicReference<Throwable> failure;
         private volatile UrlRequest request;
         private volatile ScheduledFuture<?> idle;
+        /** 是否已经收到过首块数据：到了才算进入「后面用 idleTimeoutMs」阶段。 */
+        private volatile boolean gotFirstByte;
 
-        RequestState(int readTimeoutMs, AtomicReference<Throwable> failure) {
-            this.readTimeoutMs = readTimeoutMs;
+        RequestState(int firstByteTimeoutMs, int idleTimeoutMs, AtomicReference<Throwable> failure) {
+            this.firstByteTimeoutMs = firstByteTimeoutMs;
+            this.idleTimeoutMs = idleTimeoutMs;
             this.failure = failure;
         }
 
@@ -247,15 +260,36 @@ public final class CronetNet implements HttpNet.Impl {
             schedule();
         }
 
+        /** 暂停空闲守卫（消费端阻塞期间用）：此时上游没被读取是正常的，不算超时。 */
+        void suspend() {
+            if (idle != null) { idle.cancel(false); idle = null; }
+        }
+
+        /** 恢复空闲守卫；请求已结束/已失败时不再重挂，免得 cancel 掉已经完成的请求。 */
+        void resume() {
+            UrlRequest r = request;
+            if (r == null || r.isDone() || failure.get() != null) return;
+            schedule();
+        }
+
         private void schedule() {
             UrlRequest r = request;
-            if (readTimeoutMs <= 0 || r == null) return;
+            int ms = gotFirstByte ? idleTimeoutMs : firstByteTimeoutMs;
+            if (ms <= 0 || r == null) return;
             idle = TIMER.schedule(new Runnable() {
                 @Override public void run() {
-                    failure.compareAndSet(null, new SocketTimeoutException("读超时"));
+                    failure.compareAndSet(null, new SocketTimeoutException(
+                            gotFirstByte ? "读超时" : "等待首包超时"));
                     r.cancel();
                 }
-            }, readTimeoutMs, TimeUnit.MILLISECONDS);
+            }, ms, TimeUnit.MILLISECONDS);
+        }
+
+        /** 首次收到数据：后续改用 idleTimeoutMs 判定卡死。 */
+        void firstByteArrived() {
+            if (gotFirstByte) return;
+            gotFirstByte = true;
+            touch();
         }
 
         void finish() {

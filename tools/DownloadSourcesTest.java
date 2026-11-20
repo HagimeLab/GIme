@@ -16,23 +16,35 @@ public class DownloadSourcesTest {
     public static void main(String[] args) {
         List<String> urls = DownloadSources.forVersion("HagimeLab/GIme", "1.0.2");
 
-        checkBool("至少给出 4 个下载源", urls.size() >= 4);
-        checkBool("首选是 jsDelivr", urls.get(0).startsWith("https://cdn.jsdelivr.net/gh/"));
-        checkBool("包含 fastly 备用入口", hasPrefix(urls, "https://fastly.jsdelivr.net/gh/"));
-        checkBool("包含 testingcf 备用入口", hasPrefix(urls, "https://testingcf.jsdelivr.net/gh/"));
-        checkBool("保留 GitHub 原始地址作兜底", hasPrefix(urls, "https://raw.githubusercontent.com/"));
+        checkBool("安装包只给两个发布资产入口", urls.size() == 2);
+        /* 双源口径（v1.1.8）：安装包不再进仓库（66MB 过不了 Git Data API 的 blob 上限），
+           所以只剩两个发布资产源——Gitee 首源，GitHub Release 兜底。 */
+        checkBool("首选是 Gitee Release 附件（国内直连）",
+                  urls.get(0).startsWith("https://gitee.com/hagemilab/gi/releases/download/v"));
+        checkBool("Gitee 源与版本号同 tag", urls.get(0).contains("/download/v1.0.2/"));
+        checkBool("其次才是 GitHub Release 资产",
+                  urls.get(1).startsWith("https://github.com/HagimeLab/GIme/releases/download/v1.0.2/"));
+        boolean anyJsdelivr = false;
+        for (String u : urls) if (u.contains("jsdelivr")) anyJsdelivr = true;
+        checkBool("安装包不再列 jsDelivr（仓库里没有对象）", !anyJsdelivr);
 
-        // 路径稳定：不论版本号是多少，仓库内路径都必须是 release/GIme-latest.apk
+        // 路径稳定：不论版本号是多少，两个源都必须以 /GIme-v<版本>.apk 结尾
         boolean allFixed = true;
         for (String u : urls) {
-            if (!u.endsWith("/release/GIme-v1.0.2.apk")) { allFixed = false; break; }
+            if (!u.endsWith("/GIme-v1.0.2.apk")) { allFixed = false; break; }
         }
         checkBool("所有源都指向带版本号的路径", allFixed);
 
         List<String> other = DownloadSources.forVersion("HagimeLab/GIme", "9.9.9");
         checkBool("换版本号会改变下载路径（避开 CDN 强缓存）", !other.get(0).equals(urls.get(0)));
 
-        checkBool("CDN 引用固定为 main（缓存靠版本化路径规避）", urls.get(0).contains("@main/"));
+        /* 清单类文本文件仍走 Gitee raw + jsDelivr 四入口 + GitHub raw，CDN 引用固定 main */
+        List<String> man = DownloadSources.forFile("HagimeLab/GIme", "main", "latest.json");
+        checkBool("清单走 Gitee raw 与 CDN 多入口", man.size() >= 6
+                  && man.get(0).startsWith("https://gitee.com/hagemilab/gi/raw/main/"));
+        boolean manMain = false;
+        for (String u : man) if (u.contains("@main/")) manMain = true;
+        checkBool("CDN 引用固定为 main（缓存靠版本化路径规避）", manMain);
 
         checkStr("发布页按版本号生成",
                  DownloadSources.releasePage("HagimeLab/GIme", "1.0.2"),

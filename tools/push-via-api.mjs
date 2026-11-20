@@ -2,15 +2,17 @@
  * 用 GitHub Git Data API 一次性提交若干文件到 main。
  * 走 API 而不是 git push：本机 git 走代理连不上 github.com，但 api.github.com 可达。
  *
- * 用法：node tools/push-via-api.mjs <token> <owner/repo> <branch> <commitMessage> <file1> <file2> ...
+ * 用法：node tools/push-via-api.mjs <token|-> <owner/repo> <branch> <commitMessage> <file1> <file2> ...
+ *   令牌写 "-" 时从环境变量 GITHUB_TOKEN 取（推荐：令牌不进命令行参数，也就不进 shell 历史）。
  * 删除文件：在参数前加 "!"，例如 !release/GIme-v1.0.3.apk（tree 里该路径写 null）。
  */
 import fs from "node:fs";
 import path from "node:path";
 
-const [token, repo, branch, message, ...files] = process.argv.slice(2);
+let [token, repo, branch, message, ...files] = process.argv.slice(2);
+if (token === "-") token = (process.env.GITHUB_TOKEN || "").trim();
 if (!token || !repo || !branch || !message || !files.length) {
-  console.error("用法: node push-via-api.mjs <token> <owner/repo> <branch> <message> <files...>");
+  console.error("用法: node push-via-api.mjs <token|-> <owner/repo> <branch> <message> <files...>");
   process.exit(2);
 }
 
@@ -22,7 +24,7 @@ const headers = {
   "Content-Type": "application/json",
 };
 
-async function api(method, url, body) {
+async function apiOnce(method, url, body) {
   const res = await fetch(API + url, { method, headers, body: body ? JSON.stringify(body) : undefined });
   const text = await res.text();
   let json = null;
@@ -31,6 +33,23 @@ async function api(method, url, body) {
     throw new Error(`${method} ${url} -> ${res.status} ${json ? JSON.stringify(json).slice(0, 300) : text.slice(0, 200)}`);
   }
   return json;
+}
+
+/* 这条网络到 api.github.com 时不时握手就超时（undici 默认 10s），
+   单发一次失败不代表令牌或接口有问题，重试 4 次再判死。 */
+async function api(method, url, body) {
+  let last;
+  for (let i = 0; i < 4; i++) {
+    try { return await apiOnce(method, url, body); }
+    catch (e) {
+      last = e;
+      const transient = /fetch failed|ConnectTimeout|UND_ERR|socket hang up|ECONNRESET|EAI_AGAIN/i.test(String(e.message));
+      if (!transient || i === 3) throw e;
+      console.log(`  ~ 重试 ${i + 1}/4（${String(e.cause?.code || e.message).slice(0, 60)}）`);
+      await new Promise((r) => setTimeout(r, 2000 + i * 1500));
+    }
+  }
+  throw last;
 }
 
 const root = path.resolve(process.cwd());

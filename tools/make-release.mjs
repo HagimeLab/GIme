@@ -14,18 +14,22 @@ import fs from "node:fs";
 import path from "node:path";
 import { execFileSync } from "node:child_process";
 
-const [tag, ver, bodyFile, apkPath, srcPath] = process.argv.slice(2);
+const [tag, ver, bodyFile, apkPath, srcPath, ...extraAssets] = process.argv.slice(2);
 if (!tag || !ver || !bodyFile || !apkPath || !srcPath) {
-  console.error("用法: node make-release.mjs <tag> <版本名> <正文文件> <apk> <源码包>");
+  console.error("用法: node make-release.mjs <tag> <版本名> <正文文件> <apk> <源码包> [附加资产…]");
   process.exit(2);
 }
 const REPO = execFileSync("git", ["remote", "get-url", "origin"], { encoding: "utf8" })
   .replace(/\.git\s*$/, "").split("github.com/")[1];
 const API = "https://api.github.com";
-const credOut = execFileSync("git", ["credential", "fill"], {
-  input: "protocol=https\nhost=github.com\n\n", encoding: "utf8", timeout: 30000,
-});
-const token = /^password=(.*)$/m.exec(credOut)[1].trim();
+/* 令牌优先取环境变量（不进命令行、不进 shell 历史）；没有才回落到 git credential */
+let token = (process.env.GITHUB_TOKEN || "").trim();
+if (!token) {
+  const credOut = execFileSync("git", ["credential", "fill"], {
+    input: "protocol=https\nhost=github.com\n\n", encoding: "utf8", timeout: 30000,
+  });
+  token = /^password=(.*)$/m.exec(credOut)[1].trim();
+}
 
 const HEADERS = { "User-Agent": "GIme-make-release", Authorization: `token ${token}`,
   Accept: "application/vnd.github+json", "Content-Type": "application/json" };
@@ -60,7 +64,7 @@ try {
 }
 
 const uploadBase = rel.upload_url.replace(/\{.*\}$/, "");
-for (const p of [apkPath, srcPath]) {
+for (const p of [apkPath, srcPath, ...extraAssets]) {
   const abs = path.resolve(p);
   const name = path.basename(abs);
   const bytes = fs.readFileSync(abs);

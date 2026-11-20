@@ -22,14 +22,47 @@ dist/
 *.apk
 *.aab
 
-# 例外：release/ 是给 CDN 直出的下载目录，安装包必须入库。
-# 原因：GitHub 的 Release 资产会 302 到 release-assets.githubusercontent.com，
-# 该域名在部分网络下不通；jsDelivr 可以直接从仓库按路径直出这个文件。
-!release/
-!release/*.apk
+# 安装包不进仓库：66MB 过不了 Git Data API 的 blob 单次上传上限（当前这台机器 git 协议又推不上去），
+# 而仓库里没有对象，jsDelivr 也就没有可直出的路径。
+# 安装包只存两个发布资产：Gitee 发行版（国内首源）+ GitHub Release。
+# release/latest.json 是文本清单，仍要入库——App 的检查更新读它。
+/release/*.apk
 
 # 本地周期方案：只在本机维护，不进 Git、不参与 GitHub 推送
 /plan/
 
 # taste-skill 的本地截图与报告：只在本机复查时生成，不入库
 .taste-skill/
+
+# 本地真机测试取证（截图 + CDP 脚本 + 报告）与旧版备份：只在本机，
+# 体积上百 MB 且是一次性过程材料，永不提交跟踪
+/develop/ui-v3-test/
+/develop/ui-v3-backup/
+
+# 设计原型稿（ui-v3 的 index.html / ui.css / app.js / 图片）：设计资产，
+# 只在 design/ 里演进，不进仓库
+/design/ui-v3/
+
+# 本机探测与调试脚本：跑真机取数用的，不随源码发布
+/tools/probe-*.py
+/tools/asr-fast-model.py
+
+# 本机审计产出的实现检测报告（2026-11-20 三篇），只在本机留存
+/docs/后端逻辑全面检测-2026-11-20.md
+/docs/快模型与满模型准确率对照-2026-11-20.md
+/docs/模型与推理框架运行逻辑检测-2026-11-20.md
+
+# JVM / native 崩溃日志：每跑一次构建就可能新增一个，不入库
+hs_err_pid*.log
+replay_pid*.log
+*.hprof
+
+# 本地打出来的候选安装包：release/ 只保留正式版那一个（见上方 !release/*.apk）
+/release/*-candidate.apk
+
+# ASR 模型包（约 169MB）：走 CDN / 本地存放，不进仓库历史
+# 原因：GitHub 单文件 push 上限 100MB，塞进来会直接被拒；发行版资产才是它的位置
+/models/*.zip
+# Gitee 分卷（169MB 按 20MB 切成的 9 卷）与清单：只在本机用于上传
+/models/*.zip.p*
+/models/gitee-parts/

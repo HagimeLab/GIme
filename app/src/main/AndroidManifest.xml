@@ -11,6 +11,14 @@
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <!-- 闹钟在重启后会被系统清空，开机时得重新挂一遍 -->
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+    <!-- 字幕生成要在退到后台后继续跑：前台服务 + 数据同步类型（Android 14+ 需要声明类型） -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
+    <!-- 熄屏继续识别：CPU 保持唤醒；下载阶段再保持 Wi-Fi 不休眠 -->
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
+    <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
+    <!-- 字幕生成开始前申请省电豁免；没有它，部分 ROM 熄屏后会直接 force-stop 整个进程 -->
+    <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
 
     <application
         android:allowBackup="false"
@@ -53,6 +61,20 @@
                 <data android:mimeType="*/*" />
             </intent-filter>
         </activity>
+
+        <!-- 字幕生成服务：一次只做一个视频，通知栏给进度和取消 -->
+        <service
+            android:name=".SubsJobService"
+            android:exported="false"
+            android:stopWithTask="false"
+            android:foregroundServiceType="dataSync" />
+
+        <!-- 字幕模型下载服务：167MB 的包退到后台也要下完，通知栏给百分比 -->
+        <service
+            android:name=".AsrModelService"
+            android:exported="false"
+            android:stopWithTask="false"
+            android:foregroundServiceType="dataSync" />
 
         <!-- 每日提醒：闹钟到点、以及开机后重挂。exported=false 是因为
              BOOT_COMPLETED 是系统广播，系统能送到非 exported 的静态 receiver；

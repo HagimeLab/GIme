@@ -217,7 +217,8 @@ window.onUpdateError = function (m) {
   updSheet('<div class="icon">!</div><h2>更新失败</h2><p>' + esc(m) + "</p>" +
     '<div class="upd-acts">' +
       '<button class="sec" id="upClose">关闭</button>' +
-      '<button class="sec" id="upPage">打开发布页</button>' +
+      '<button class="sec" id="upPage">GitHub 发布页</button>' +
+      '<button class="sec" id="upGitee">Gitee 下载</button>' +
       '<button class="pri" id="upRetry">重试</button>' +
     "</div>", "upd");
   document.getElementById("upClose").onclick = function () { closeTop(); };
@@ -225,9 +226,44 @@ window.onUpdateError = function (m) {
     if (updInfo && updInfo.page) { closeTop(); Android.openUrl(updInfo.page); }
     else toast("没有可打开的发布页");
   };
+  /* 国内镜像：Gitee 的安装包直下最快，GitHub 连不上时基本都能走这条路。 */
+  document.getElementById("upGitee").onclick = function () {
+    if (updInfo && updInfo.gitee) { closeTop(); Android.openUrl(updInfo.gitee); }
+    else toast("没有可打开的镜像页");
+  };
   document.getElementById("upRetry").onclick = function () {
     if (updInfo && ((updInfo.urls && updInfo.urls.length) || updInfo.url)) startDownload(updInfo);
   };
+};
+/* 退 APP 再回来：系统下载器可能还在下、也可能已经下好。
+   原生按持久化的 dmId 查一次状态，这里把对应的界面接回来。 */
+window.onUpdateResume = function (s) {
+  var o;
+  try { o = (typeof s === "string") ? JSON.parse(s) : (s || {}); } catch (e) { o = {}; }
+  var st = o.state || "", pct = Math.max(0, Math.min(100, o.pct || 0));
+  if (st === "running") {
+    if (updInfo) {
+      renderDownload(updInfo);
+      window.onUpdateProgress(pct);
+    } else {
+      updSheet('<div class="icon">↓</div><div class="big" id="upPct">' + pct + '%</div>' +
+        "<h2>更新包还在后台下载</h2>" +
+        '<div class="track" style="margin:14px 0 8px"><i id="upBar" style="width:' + pct + '%"></i></div>' +
+        "<p>退出 APP 也不会中断下载，下完后回到这里点「立即安装」即可</p>");
+    }
+    return;
+  }
+  if (st === "done") {
+    updSheet('<div class="icon">✓</div><h2>更新包已下载完成</h2>' +
+      "<p>上次下载的安装包还在手机里，直接安装就能升级，进度和题库都不会丢</p>" +
+      '<div class="upd-acts"><button class="sec" id="upLater">稍后</button>' +
+      '<button class="pri" id="upInstall">立即安装</button></div>', "upd");
+    document.getElementById("upLater").onclick = function () { closeTop(); };
+    document.getElementById("upInstall").onclick = function () {
+      closeTop();
+      if (Android.installPendingUpdate) Android.installPendingUpdate();
+    };
+  }
 };
 window.onUpdateInstalled = function () { closeTop(); toast("请在安装页确认安装"); };
 window.onUpdateNeedPermission = function () {
@@ -466,14 +502,105 @@ function syncLayerScrim() {
   var top = openLayers[openLayers.length - 1];
   ov.className = "overlay" + (layerNeedsScrim(top) ? " on" : "");
 }
+/* ---- 第 42 轮：底部面板统一交互 ----
+   ① 右上角 ✕：面板内容经常整块重写（innerHTML），所以 ✕ 必须作为 .sheet 的子节点注入，
+      不能写进 innerHTML；已经自带关闭按钮的（导入面板 .imp-close、对话页 .chat-head）
+      或已经注入过的，不重复加。
+   ② 拖拽关闭：按住 .handle 往下拖跟手 1:1，松手按「位移过 1/4 面板高，或甩得够快」判关，
+      否则回弹。关闭走 200ms ease-in，回弹走 250ms 的 var(--ease)。
+   ③ 退场统一 200ms：closeLayer 里给 .sheet 临时挂一条更快的 transition。 */
+function ensureSheetClose(el) {
+  if (!el || !el.classList || !el.classList.contains("sheet")) return;
+  if (el.classList.contains("chat")) return;          /* 对话页头部已有一排按钮 */
+  if (el.querySelector(".imp-close, .sh-close")) return;
+  var b = document.createElement("button");
+  b.type = "button";
+  b.className = "sh-close";
+  b.setAttribute("aria-label", "关闭");
+  b.innerHTML = '<svg class="ico" viewBox="0 0 24 24" style="width:16px;height:16px">' +
+                '<path d="M6 6l12 12M18 6L6 18"/></svg>';
+  b.onclick = function () { closeLayer(el); };
+  el.appendChild(b);
+}
+
+(function () {
+  var drag = null;
+  function sheetOf(el) {
+    while (el && el !== document.body) {
+      if (el.classList && el.classList.contains("sheet")) return el;
+      el = el.parentNode;
+    }
+    return null;
+  }
+  document.addEventListener("touchstart", function (e) {
+    var t = e.touches[0];
+    if (!t) return;
+    var h = e.target.closest ? e.target.closest(".sheet .handle") : null;
+    if (!h) { drag = null; return; }
+    var sh = sheetOf(h);
+    if (!sh || !sh.classList.contains("on")) { drag = null; return; }
+    drag = { sh: sh, y0: t.clientY, t0: Date.now(), dy: 0 };
+    sh.style.transition = "none";                     /* 跟手时不带缓动 */
+  }, { passive: true });
+
+  document.addEventListener("touchmove", function (e) {
+    if (!drag) return;
+    var t = e.touches[0];
+    if (!t) return;
+    var dy = t.clientY - drag.y0;
+    /* 往上拉给一点阻尼，别把面板从底边提起来 */
+    if (dy < 0) dy = Math.max(-18, dy * 0.22);
+    drag.dy = dy;
+    drag.sh.style.transform = "translateY(" + dy.toFixed(1) + "px)";
+    if (e.cancelable) e.preventDefault();
+  }, { passive: false });
+
+  function settle() {
+    var d = drag;
+    drag = null;
+    if (!d) return;
+    var sh = d.sh, dy = d.dy, ms = Date.now() - d.t0;
+    var H = sh.getBoundingClientRect().height || 1;
+    var fast = ms < 260 && dy / Math.max(1, ms) > 0.55;    /* 甩上去也算 */
+    if (dy > H * 0.25 || fast) {
+      sh.style.transition = "transform .2s ease-in";
+      sh.style.transform = "translateY(100%)";
+      setTimeout(function () {
+        closeLayer(sh);                                /* 先摘 .on：目标位置也是 100%，不会跳回来 */
+        setTimeout(function () { sh.style.transition = ""; sh.style.transform = ""; }, 60);
+      }, 200);
+    } else {
+      sh.style.transition = "transform .25s var(--ease)";
+      sh.style.transform = "";
+      setTimeout(function () { sh.style.transition = ""; }, 260);
+    }
+  }
+  document.addEventListener("touchend", settle, { passive: true });
+  document.addEventListener("touchcancel", function () {
+    if (!drag) return;
+    var sh = drag.sh;
+    drag = null;
+    sh.style.transition = "transform .25s var(--ease)";
+    sh.style.transform = "";
+    setTimeout(function () { sh.style.transition = ""; }, 260);
+  }, { passive: true });
+})();
+
 function openLayer(el) {
   el.classList.add("on");
+  ensureSheetClose(el);
   /* 面板重绘会再次调用本函数，同一元素只算一层，否则返回键弹不完、遮罩会留在屏上挡住点击 */
   if (openLayers.indexOf(el) < 0) openLayers.push(el);
   syncLayerScrim();
   if (typeof saveView === "function") saveView();   /* 对话/方案页开着的状态要能跨进程重启 */
 }
 function closeLayer(el) {
+  /* 第 42 轮：退场比入场快一档（250 → 200ms ease-in），收得利落；
+     拖拽关闭自己已经挂好 transition，这里只负责普通关闭路径。 */
+  if (el && el.classList && el.classList.contains("sheet") && !el.classList.contains("chat")) {
+    el.style.transition = "transform .2s ease-in";
+    setTimeout(function () { el.style.transition = ""; }, 240);
+  }
   el.classList.remove("on");
   var i = openLayers.indexOf(el);
   if (i >= 0) openLayers.splice(i, 1);
@@ -494,6 +621,13 @@ function closeTop() {
 }
 window.onBack = function () {
   var top = openLayers[openLayers.length - 1];
+  /* 字幕识别页是自绘的全屏页，不在 openLayers 里：先退它，
+     否则一按返回会连着把视频页也退掉。 */
+  var sp = document.getElementById("biliSubsPage");
+  if (sp && sp.classList.contains("on")) {
+    if (typeof biliSubsPageClose === "function") biliSubsPageClose();
+    return true;
+  }
   /* 方案页在最上面：详情先回列表，再按一次才关整页。
      面板/弹窗压在方案页上面时仍先收面板——不能从详情背后偷偷换页。 */
   if (top && top.id === "planPage") {
@@ -720,7 +854,7 @@ function openQuestion(id) {
     var p = e.touches[0], t = e.target;
     var sheet = document.querySelector(".sheet.on");
     if (sheet && p.clientY - sheet.getBoundingClientRect().top < 56) {
-      drag = { el: sheet, axis: "y", y0: p.clientY, h: sheet.offsetHeight };
+      drag = { el: sheet, axis: "y", y0: p.clientY, h: sheet.offsetHeight, top: sheet.scrollTop };
     } else if (!openLayers.length && S && document.getElementById("quiz").classList.contains("on")
                && t.closest && t.closest(".q-body")) {
       drag = { swipe: true, x0: p.clientX, y0: p.clientY, axis: "" };
@@ -730,6 +864,11 @@ function openQuestion(id) {
     if (!drag) return;
     var p = e.touches[0];
     if (drag.el) {
+      /* 面板内容已经往下滚过（scrollTop > 0）时，手指下拉是在滚内容，不是要关面板；
+         这时把这一划完全让给面板自己的滚动，否则会出现「想往上翻内容却在拖面板」的卡顿。 */
+      if (drag.top > 0 && p.clientY > drag.y0) { drag = null; return; }
+      if (p.clientY - drag.y0 < 0) { drag.el.style.transform = ""; drag.el.style.transition = ""; drag = null; return; }
+      if (e.preventDefault) e.preventDefault();
       drag.el.style.transition = "none";
       drag.el.style.transform = "translateY(" + Math.max(0, p.clientY - drag.y0) + "px)";
       return;

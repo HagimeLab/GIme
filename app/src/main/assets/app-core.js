@@ -1154,10 +1154,25 @@ function moveTabPill(slide) {
   var bar = document.getElementById("tabs"), p = document.getElementById("tabPill");
   var b = bar && bar.querySelector(".tab.on");
   if (!b || !p) return;
-  var x = b.offsetLeft, y = b.offsetTop, w = b.offsetWidth, h = b.offsetHeight;
+  /* v3.1-fix：托底要盖住整格内容（图标 + 文字），高度按两者外接框算、水平居中于按钮 */
+  var ico = b.querySelector(".ico"), lab = b.querySelector("span");
+  var br = bar.getBoundingClientRect(), bt = bar.clientTop || 0;
+  var w = 58, h = 30, x, y = 11;
+  if (ico && lab) {
+    var ir = ico.getBoundingClientRect(), lr = lab.getBoundingClientRect();
+    var top = ir.top - br.top - bt, bottom = lr.bottom - br.top - bt;
+    h = Math.round(bottom - top + 12);                 /* 上下各留 6px 余量 */
+    y = Math.round(top - 6);
+    var cw = Math.max(ir.width, lr.width);
+    w = Math.round(Math.max(58, Math.min(b.offsetWidth - 4, cw + 30)));
+    if (h > bar.clientHeight - 4) h = bar.clientHeight - 4;
+    if (y < 2) y = 2;
+    if (y + h > bar.clientHeight - 2) y = bar.clientHeight - 2 - h;
+  }
+  x = b.offsetLeft + (b.offsetWidth - w) / 2;
   p.style.left = x + "px"; p.style.top = y + "px";
   p.style.width = w + "px"; p.style.height = h + "px";
-  if (slide && p.animate && pillBox && (pillBox.x !== x || pillBox.w !== w)) {
+  if (slide && p.animate && pillBox && (pillBox.x !== x || pillBox.w !== w || pillBox.h !== h)) {
     /* 起点是关键帧、终点是元素自己的行内值：动画跑完自然停在终点，不需要 fill 也不需要收尾回调。
        回弹来自 BOUNCE 这条 >1 的曲线——left 与 width 同时过冲，胶囊会先被拉长再弹回。 */
     p.animate([{ left: pillBox.x + "px", top: pillBox.y + "px", width: pillBox.w + "px", height: pillBox.h + "px" },
@@ -1253,7 +1268,7 @@ function enterGroups(which, pg) {
     return [
       { els: bankCats ? [].slice.call(bankCats.children) : [], step: 20 },
       { els: list && list.firstElementChild ? [list.firstElementChild] : [], step: 0 },
-      { els: list ? [].slice.call(list.querySelectorAll(".tbar")) : [], step: 0 },
+      { els: list ? [].slice.call(list.querySelectorAll(".chips")) : [], step: 0 },
       { els: cards.slice(0, 8), step: 40 }
     ];
   }
@@ -1297,7 +1312,7 @@ var banksLoaded = false;
 function bootGroups(home) {
   var hero = pageKidById(home, "planHero");
   return [
-    { els: pageKids(home, "hello"), step: 0 },
+    { els: pageKids(home, "lt"), step: 0 },
     { els: hero ? [hero] : [], step: 0 },
     { els: sectionOf(home, "recent"), step: 0 },
     { els: [document.getElementById("tabs")], step: 0 }
@@ -1456,6 +1471,10 @@ function goTab(which) {
   var from = document.querySelector(".page.on");
   var to = document.getElementById("tab-" + which);
   curTab = which;
+  /* 概览卡的入场动画只在"真的切进这一页"时才播，不在每次重渲染时播 */
+  if (which === "me") ovIntroPending = true;
+  /* 实时识别已退出播放链路（字幕改由预生成轨道提供），这里不再预热识别器：
+     153MB 的模型只在后台生成任务里加载，前台播放不再占用这份内存。 */
   /* 离开视频页就把 <video> 的 src 拔掉：回到列表再进来重新取票，
      不然回环连接和原生票会一直占着 */
   if (which !== "video" && typeof biliPauseForLeave === "function") biliPauseForLeave();
@@ -1493,6 +1512,8 @@ function swapPage(from, to, which) {
     to.style.transform = "";
     renderAll();
     enterPage(which, to);
+    /* v3.1：切页后按当前滚动位置同步大标题收起态（className 刚被重置过） */
+    if (typeof syncLtFold === "function") syncLtFold();
   }
   if (!from || from === to || !from.animate) { show(); return; }
   /* 先把行内值压成 0 再跑 1→0 的动画：动画结束后不 fill，靠这个行内值保持隐藏。
@@ -1519,12 +1540,16 @@ function renderHome() {
 
   var all = stats("all");
   var noQ = !all.total;
-  document.getElementById("hiName").textContent = noQ ? "先导入一个题库" : (all.seen ? "继续上次进度" : "先挑一个题库");
-  /* 空题库时下面那张「还没有题目」的卡已经把该导入什么说清楚了，
-     这里再挂一行格式说明就是重复，而且会把问候语挤成两行 */
+  /* 大标题只放"人话"，不放命令。原来无题库时这行会被写成「先导入一个题库」——
+     一句操作指令占着 32px 的大标题位，整页第一眼像系统提示而不像首页。
+     现在标题恒定是时间问候，状态一律走上面那行小字。 */
+  var hh = new Date().getHours();
+  var hi = hh < 5 ? "夜深了" : hh < 11 ? "早上好" : hh < 14 ? "中午好"
+         : hh < 18 ? "下午好" : hh < 23 ? "晚上好" : "夜深了";
+  document.getElementById("hiName").textContent = hi;
   var sub = document.getElementById("hiSub");
-  sub.textContent = noQ ? "" : "共 " + all.total + " 题 · 已刷 " + all.seen + " 题";
-  sub.hidden = noQ;
+  sub.textContent = noQ ? "还没有导入题库" : "共 " + all.total + " 题 · 已刷 " + all.seen + " 题";
+  sub.hidden = false;
 
   renderRecent();
 }
@@ -1532,6 +1557,11 @@ function renderHome() {
 /* 六张题型卡片：题库分类已经从首页搬到题库页，DOM 还是同一个 #cats，
    只由 renderBank 画；这里单独抽出来，省得两处各写一遍 */
 function catsHtml() {
+  /* 第 42 轮：0 题的时候六宫格是「图标 + 名称 + 0 题」×6 —— 一排没有信息的装饰，
+     还把首屏挤到看不见「导入题库」。空态收成一行提示，有题才铺格子。 */
+  if (!subjQs("all", "").length) {
+    return '<div class="cats-line">导入后，这里按题型分开统计。</div>';
+  }
   var h = "";
   TYPES.forEach(function (t) {
     var n, sub2;
@@ -1620,8 +1650,25 @@ function renderRecent() {
     return '<button class="rec" onclick="resumeRecent(&quot;' + t.id + '&quot;)">' +
              '<span class="n">' + esc(t.name) + "<i>" + sub + "</i></span>" +
              '<span class="p"><b>' + t.done + "%</b><small>完成率</small></span></button>";
-  }).join("") : '<div class="cap" style="margin:0">还没有练习记录</div>';
+  }).join("") : emptyRow("book", "还没有练习记录",
+                         BANK.subjects.length ? "选个题型做一组，进度就记在这儿" : "导入题库后开始第一组",
+                         BANK.subjects.length ? "去刷题" : "导入题库",
+                         BANK.subjects.length ? "tabTap('bank')" : "openImport()");
   renderVideoRecent();
+}
+
+/* 空态不做成一行灰字（那样只是一个占位符，也最容易显得"AI 拼出来的"）：
+   给图标 + 一句话说清"这里会出现什么" + 一个能立刻做的下一步。
+   无数据时整张卡仍保有内容感，而不是一个空胶囊。 */
+function emptyRow(ic, title, note, act, fn) {
+  var p = ic === "play"
+    ? '<circle cx="12" cy="12" r="7.5"/><path d="M10.3 9.1l4.2 2.9-4.2 2.9z"/>'
+    : '<path d="M5 4h9a3 3 0 0 1 3 3v13H8a3 3 0 0 1-3-3z"/><path d="M17 7h2v13H8"/>';
+  return '<button class="empty-row" type="button" onclick="' + fn + '">' +
+           '<i class="er-ic"><svg class="ico" viewBox="0 0 24 24">' + p + "</svg></i>" +
+           '<span class="er-tx"><b>' + title + "</b><em>" + note + "</em></span>" +
+           '<span class="er-go">' + act + "</span>" +
+         "</button>";
 }
 /* 兼容旧调用点：以前渲染「今日待刷 + 最近练习」，现在只剩最近练习 */
 function renderTasks() { renderRecent(); }
@@ -1638,7 +1685,8 @@ function renderVideoRecent() {
     if (Object.prototype.toString.call(arr) === "[object Array]") list = arr.slice(0, 2);
   } catch (e) { list = []; }
   if (!list.length) {
-    box.innerHTML = '<div class="cap" style="margin:0">还没有观看记录</div>';
+    box.innerHTML = emptyRow("play", "还没有观看记录",
+                             "在视频页看过一集就会出现在这里", "去视频页", "tabTap('video')");
     return;
   }
   box.innerHTML = list.map(function (v) {
@@ -1649,7 +1697,7 @@ function renderVideoRecent() {
     /* 占位播放图标用内联 path，不依赖 <use href>（老 WebView 兼容）；
        真封面盖在它上面，外链加载失败时 onerror 隐藏 <img>，露出下面这枚占位。 */
     var cov = '<svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5.5v13l11-6.5z"/></svg>' +
-      (v.cover ? '<img src="' + esc(v.cover) + '" alt="" loading="lazy" onerror="this.style.display=\'none\'">' : "");
+      (v.cover ? '<img referrerpolicy="no-referrer" src="' + esc(v.cover) + '" alt="" loading="lazy" onerror="this.style.display=\'none\'">' : "");
     var seen = parseFloat(v.time) || 0;
     var sub = "P" + page + " / " + pages +
       (seen > 0 ? " · 看到 " + (typeof biliDur === "function" ? biliDur(Math.floor(seen)) : Math.floor(seen) + "s")
@@ -1700,26 +1748,38 @@ function drawTfUnderline() {
 
 function renderBank() {
   var catsEl = document.getElementById("cats");
-  if (catsEl) { catsEl.innerHTML = catsHtml(); syncCatsFold(); }
+  if (catsEl) {
+    catsEl.innerHTML = catsHtml();
+    syncCatsFold();
+    /* 空态只剩一行提示，没有可折叠的格子：那颗圆形箭头一起收掉 */
+    var orb = document.getElementById("catsToggle");
+    if (orb) orb.style.display = subjQs("all", "").length ? "" : "none";
+  }
 
   /* 错题本从导航栏搬进题库：一张入口卡，点开整页层 */
   var we = document.getElementById("wrongEntry");
   if (we) {
     var wl = wrongList();
-    we.innerHTML = '<button class="task" onclick="openWrongPage()">' +
-        '<span class="ck"><span class="box' + (wl.length ? "" : " ok") + '"></span></span>' +
-        '<span class="bd"><b>错题本</b><small>' +
+    /* v3.1：错题本入口改用原型 .wrong 卡（黑底勾 + 标题/说明 + 题数） */
+    we.innerHTML = '<button class="card wrong" onclick="openWrongPage()">' +
+        '<span class="bx"><svg class="ico" viewBox="0 0 24 24"><path d="M5 12.5l4.5 4.5L19 6.5"/></svg></span>' +
+        '<span class="tx"><b>错题本</b><em>' +
         (wl.length ? "答错过的题，答对不会自动移出；重做对后到「管理」里勾选移出" : "已经清空了") +
-        "</small></span>" +
-        '<span class="rt">' + wl.length + "<i>题</i></span></button>";
+        "</em></span>" +
+        '<span class="n num">' + wl.length + " 题</span></button>";
   }
 
-  var bar = '<div class="tbar scroll"><i class="tbar-u"></i>' + BANK_TAGS.map(function (t) {
-    return '<button class="' + (bankTf === t[0] ? "on" : "") + '" onclick="setBankTf(&quot;' + t[0] + '&quot;)">' +
+  /* v3.1：筛选从下划线 tbar 换成原型 chips 胶囊（setBankTf 逻辑不变；
+     drawTfUnderline 找不到 .tbar 会自行早退） */
+  var bar = '<div class="chips">' + BANK_TAGS.map(function (t) {
+    return '<button class="chip' + (bankTf === t[0] ? " on" : "") + '" onclick="setBankTf(&quot;' + t[0] + '&quot;)">' +
            t[1] + "</button>";
   }).join("") + "</div>";
   var total = subjQs("all", bankTf).length;
   document.getElementById("bankTotal").textContent = total + " 题";
+  /* v3.1：大标题副行「N 个题库 · M 题」 */
+  var bs = document.getElementById("bankSub");
+  if (bs) bs.textContent = BANK.subjects.length + " 个题库 · " + subjQs("all", "").length + " 题";
 
   var h = bar + '<div class="bdeck" id="bdeck">';
 
@@ -1744,11 +1804,11 @@ function renderBank() {
              '<div class="bc-detail">' +
                '<div class="pl-bar"><i style="width:' + t.done + '%"></i></div>' +
                '<div class="bk-acts" style="display:flex">' +
-                 '<button style="flex:1;padding:12px 0;border-radius:16px;background:var(--ink);color:var(--paper);font-size:.8125rem;font-weight:700" ' +
+                 '<button class="btn primary" ' +
                    'onclick="startSession(&quot;practice&quot;,&quot;' + s.id + '&quot;,&quot;' + bankTf + '&quot;,&quot;bank&quot;)">继续刷</button>' +
-                 '<button style="flex:1;margin-left:10px;padding:12px 0;border-radius:16px;background:var(--surface);box-shadow:var(--sh-sm);font-size:.8125rem;font-weight:600" ' +
+                 '<button class="btn tonal" ' +
                    'onclick="startSession(&quot;recite&quot;,&quot;' + s.id + '&quot;, &quot;' + bankTf + '&quot;)">背题</button>' +
-                 '<button style="flex:1;margin-left:10px;padding:12px 0;border-radius:16px;background:var(--surface);box-shadow:var(--sh-sm);font-size:.8125rem;font-weight:600" ' +
+                 '<button class="btn tonal" ' +
                    'onclick="openExam(&quot;' + s.id + '&quot;)">模拟</button>' +
                "</div>" +
                '<div class="bc-swipe-hint">左滑可改名 / 删除</div>' +
@@ -1761,18 +1821,24 @@ function renderBank() {
     h += '<button class="bcard-import" onclick="openImport()">＋ 从文件导入题库（PDF / Word / txt / md）</button>';
   }
   if (!shown) {
-    /* 题库为空是正常状态，不是错误：这里必须给出下一步能做什么 */
+    /* 题库为空是正常状态，不是错误：这里必须给出下一步能做什么。
+       第 42 轮：原来是大「0」+ 居中说明 + 通栏按钮的三段模板，首屏被底栏整块压住
+       （大 0 也被压掉一半）。改成一行横排：左边一句状态、右边一个导入按钮。 */
     h += !BANK.subjects.length
-      ? '<div class="card pad" style="text-align:center">' +
-          '<div class="bignum" style="font-size:3rem">0</div>' +
-          '<div class="cap">还没有任何题库</div>' +
-          '<button style="width:100%;padding:15px 0;border-radius:16px;background:var(--ink);color:var(--paper);font-size:.9375rem;font-weight:700" ' +
-            'onclick="openImport()">导入题库</button>' +
-          '<div class="sl-hint" style="margin:14px 0 0">题库全部由你导入，导入后随时可以删除</div>' +
+      ? '<div class="qb-empty">' +
+          '<span class="tx"><b>还没有任何题库</b><em>导入后随时可以删除</em></span>' +
+          '<button class="btn primary qb-imp" onclick="openImport()">导入题库</button>' +
         "</div>"
       : '<div class="card pad" style="text-align:center;color:var(--ink-3)">这个题型下暂时没题</div>';
   }
-  h += '<div class="sl-hint" style="margin:14px 0 0">点题库卡片展开操作，可继续刷 / 背题 / 模拟；导入的题库随时可以再导入</div>';
+  /* 空态下这块「点题库卡片展开操作…」的脚注没有任何可指的对象，直接不写；
+     页头那颗「+导入题库」也跟着收掉 —— 空态卡里已经有一个导入按钮，
+     两颗一模一样的黑按钮隔 80px 并排，是最典型的模板动作。 */
+  if (shown) {
+    h += '<div class="sl-hint" style="margin:14px 0 0">点题库卡片展开操作，可继续刷 / 背题 / 模拟；导入的题库随时可以再导入</div>';
+  }
+  var impBtn = document.querySelector("#tab-bank .imp-btn");
+  if (impBtn) impBtn.style.display = shown ? "" : "none";
   document.getElementById("bankList").innerHTML = h;
   drawTfUnderline();
   bindBankSwipe();
@@ -2021,45 +2087,154 @@ window.onRemindPerm = function () {
   if (curTab === "me") renderAll();
 };
 
+/* ===== 概览卡的数字动效 =====
+   三个数字都从"上一次看到的值"滚到新值：首次从 0 滚上来，刷完题再进这页能看见
+   0 → 5 的过程，比直接换一个静态数字更有"涨了"的反馈；值没变就跳过，不做无意义抖动。
+   Chromium 80 没有 @property，所以不用 CSS 计数，走 requestAnimationFrame。 */
+var meLastStat = null;      /* 上一次概览卡的数字，用作 count-up 的起点 */
+var ovIntroPending = true;  /* 切到「我的」时置 true，只在那一次播入场动画 */
+
+function statCountUp() {
+  var els = document.querySelectorAll("#meStat .stat-n");
+  for (var i = 0; i < els.length; i++) (function (el) {
+    var from = parseInt(el.getAttribute("data-from"), 10) || 0;
+    var to = parseInt(el.getAttribute("data-to"), 10) || 0;
+    el.textContent = String(from);
+    if (from === to) return;
+    var t0 = null;
+    function step(ts) {
+      if (t0 === null) t0 = ts;
+      var p = Math.min(1, (ts - t0) / 520);
+      var e = 1 - Math.pow(1 - p, 3);            /* easeOutCubic */
+      el.textContent = String(Math.round(from + (to - from) * e));
+      if (p < 1) requestAnimationFrame(step);
+      else el.textContent = String(to);
+    }
+    requestAnimationFrame(step);
+    el.classList.remove("bump");
+    void el.offsetWidth;     /* 强制回流，否则同一个类连续加两次不会重播 */
+    el.classList.add("bump");
+  })(els[i]);
+}
+
+/* 完成率条从 0 长到目标。必须先把宽落成 0、下一帧再给目标值：
+   同一帧写两次 width 会被合并成一次，transition 等于失效（直接跳到结果） */
+function statRateGrow(done) {
+  var bar = document.getElementById("ovBar");
+  if (!bar) return;
+  bar.style.width = "0%";
+  requestAnimationFrame(function () {
+    setTimeout(function () { bar.style.width = done + "%"; }, 60);
+  });
+}
+
+/* 入场：每次切到「我的」整卡淡入上浮一次。渲染会被点开关之类触发很多次，
+   所以用 ovIntroPending 标记，只在真的切页后第一次渲染时播 */
+function statIntro() {
+  var ov = document.getElementById("meStat");
+  if (!ov || !ovIntroPending) return;
+  ovIntroPending = false;
+  ov.classList.remove("ov-in");
+  void ov.offsetWidth;
+  ov.classList.add("ov-in");
+}
+
 function renderMe() {
   var a = stats("all");
   remindInfo = remindInfoGet();
-  /* 统计卡收敛成 3 个可点主指标 + 一条整体完成率：去掉重复的百分比、
-     静态的题库总量和含糊的「收藏 · 点击刷」（模板 m01112 ③）。 */
+  /* 第 38 轮：这张卡原来是最典型的"数据看板模板"——三个 30px 的 0 等分并排、
+     中间两条竖线、下面再拉一条独立一行的大数字完成率。三格等权没有主次，
+     竖线是表格感，全 0 时三个零并排尤其刺眼。
+     改成：累计刷题独占左侧大数字，错题/收藏降级成右侧两个小指标（不画竖线），
+     完成率收成「标签 · 进度条 · 百分比」一行。 */
+  var pv = meLastStat || { seen: 0, wrong: 0, mark: 0 };
   document.getElementById("meStat").innerHTML =
     '<div class="stat-head"><b>学习概览</b><span onclick="openFS(&quot;stat&quot;)">查看全部 ›</span></div>' +
-    '<div class="stat-grid">' +
-      '<button class="stat-cell"><b>' + a.seen + "</b><span>累计刷题</span></button>" +
-      '<button class="stat-cell" onclick="openWrongPage()"><b>' + a.wrong + "</b><span>待消灭错题</span></button>" +
-      '<button class="stat-cell" onclick="startSession(&quot;star&quot;,&quot;all&quot;,&quot;&quot;)"><b>' + a.mark + "</b><span>我的收藏</span></button>" +
+    '<div class="ov-row">' +
+      '<div class="ov-num"><b class="stat-n" data-from="' + pv.seen + '" data-to="' + a.seen + '">' + pv.seen + "</b><em>题</em>" +
+        "<span>累计刷题</span></div>" +
+      '<div class="ov-mini">' +
+        '<button class="ov-m" onclick="openWrongPage()"><b class="stat-n" data-from="' + pv.wrong +
+          '" data-to="' + a.wrong + '">' + pv.wrong + "</b><span>错题</span></button>" +
+        '<button class="ov-m" onclick="startSession(&quot;star&quot;,&quot;all&quot;,&quot;&quot;)"><b class="stat-n" data-from="' + pv.mark +
+          '" data-to="' + a.mark + '">' + pv.mark + "</b><span>收藏</span></button>" +
+      "</div>" +
     "</div>" +
-    '<div class="stat-prog"><div class="lab"><span>整体完成率</span><b>' + a.done + "%</b></div>" +
-    '<div class="pl-bar"><i style="width:' + a.done + '%"></i></div></div>';
+    '<div class="ov-rate"><span>整体完成率</span>' +
+      '<div class="pl-bar"><i id="ovBar"></i></div>' +
+      "<b>" + a.done + "%</b></div>";
+  meLastStat = { seen: a.seen, wrong: a.wrong, mark: a.mark };
+  statIntro();
+  statCountUp();
+  statRateGrow(a.done);
 
-  document.getElementById("meSet").innerHTML =
-    row("dark", set.theme === "dark" ? "深色模式" : "浅色模式", "从开关处圆形扩散换肤", true, set.theme === "dark") +
-    row("haptics", "震动反馈", "答对短震、答错长震", true, set.haptics) +
-    row("autoExp", "答完展开解析", "关闭后判分只给答案，解析自己点开", true, set.autoExp) +
-    row("import", "导入题库", "PDF / Word / txt / md，带解析一起导", false) +
-    row("agent", "大肥鱼", agentSub(), false) +
-    row("mcp", "MCP 连接", "127.0.0.1:8765 · 复制口令 / 重置", false) +
-    row("bili", "哔哩哔哩收藏", biliSub(), false) +
-    row("remind", "每日提醒", "8:30 / 21:00 · 每个方案单独开关", false) +
-    row("notify", "通知权限", remindInfo
-      ? (remindInfo.granted ? "已允许 · 提醒可以弹出" : "未允许 · 点这里开启")
-      : "当前环境不支持", false) +
-    row("battery", "省电豁免", remindInfo
-      ? (remindInfo.battery ? "已豁免 · 提醒更准时" : "未设置 · 系统可能压掉提醒")
-      : "当前环境不支持", false) +
-    row("font", "字号", "当前 " + set.fscale + "%，点击循环切换", false) +
-    row("memory", "记忆", "查看画像与摘要，可清除", false) +
-    row("trace", "导出诊断包", "最近 20 次 Agent 运行（脱敏）", false) +
-    row("update", "检查更新", "当前 v" + APP_VER + " 版本", false, false, upd.hasNew) +
-    row("clear", "清空进度", "做题记录、错题、收藏全部删除", false);
+  document.getElementById("meSet").innerHTML = (function () {
+    /* 15 行平铺在一张卡里，标题/说明/开关三种节奏完全一样，看着就是一堆堆在一起。
+       按用途切成 5 组，每组一张卡：组标题在外、行内一列图标 —— 分组本身就是信息。
+       第 36 轮：原来每行「灰底图标块 + 粗标题 + 解释性副标 + 控件」四行同构，是最典型的
+       模板感。改成 —— 图标收成裸线稿、副标压成右侧可扫读的值、开关行只留标题，
+       右列带着真实状态（110% / 1280 题 / DeepSeek / 已就绪），一眼能读。 */
+    var grp = [
+      ["外观与手感", row("dark", set.theme === "dark" ? "深色模式" : "浅色模式", "", true, set.theme === "dark") +
+                     row("haptics", "震动反馈", "", true, set.haptics) +
+                     row("autoExp", "答完展开解析", "", true, set.autoExp) +
+                     row("font", "字号", "", false, false, false, set.fscale + "%"),
+       (set.theme === "dark" ? 1 : 0) + (set.haptics ? 1 : 0) + (set.autoExp ? 1 : 0) + " 项已开"],
+      /* 哔哩哔哩收藏、记忆两项按用户要求从设置里撤掉：前者视频页本身就能进，
+         后者不再对外暴露入口（openMemory/biliOpen 函数保留，方便以后再加回来） */
+      ["内容与服务", row("import", "导入题库", "", false, false, false, importVal()) +
+                     row("agent", "大肥鱼", "", false, false, false, agentVal()) +
+                     row("asrmodel", "字幕设置", "", false, false, false, asrVal()),
+       ""],
+      ["提醒与权限", row("remind", "每日提醒", "", false, false, false, "8:30 · 21:00") +
+                     row("notify", "通知权限", "", false, false, false, remindInfo
+                       ? (remindInfo.granted ? "已允许" : "未允许")
+                       : "不支持") +
+                     row("battery", "省电豁免", "", false, false, false, remindInfo
+                       ? (remindInfo.battery ? "已豁免" : "未设置")
+                       : "不支持"),
+       "", 1],
+      ["数据与调试", row("mcp", "MCP 连接", "", false, false, false, "8765") +
+                     row("trace", "导出诊断包", "", false, false, false, "最近 20 次"),
+       "", 1],
+      /* 清空进度是唯一的危险行，保留一行说明（这里不能只给个值） */
+      ["关于与清理", row("update", "检查更新", "", false, false, upd.hasNew, "v" + APP_VER) +
+                     row("clear", "清空进度", "做题记录、错题、收藏全部删除", false),
+       ""]
+    ];
+    return grp.map(function (g) {
+      /* 第 42 轮：第 4 位为 1 的组走「无框分组」（见 .grp.bare）——
+         整页不再是一张模板卡复制五遍，卡留给有实体的内容块。 */
+      return '<div class="set-grp"><div class="set-lab"><b>' + g[0] + "</b>" +
+             (g[2] ? "<small>" + g[2] + "</small>" : "") + "</div>" +
+             '<div class="grp' + (g[3] ? " bare" : "") + '">' + g[1] + "</div></div>";
+    }).join("");
+  })();
 }
+/* 设置行图标：24 viewBox 线稿，跟 .ico 一样走 stroke:currentColor / fill:none */
+var ROW_ICO = {
+  sun: '<circle cx="12" cy="12" r="4.2"/><path d="M12 2.6v2.4M12 19v2.4M4.2 4.2l1.7 1.7M18.1 18.1l1.7 1.7M2.6 12h2.4M19 12h2.4M4.2 19.8l1.7-1.7M18.1 5.9l1.7-1.7"/>',
+  moon: '<path d="M20.4 14.2A8.6 8.6 0 1 1 9.9 3.6a6.7 6.7 0 0 0 10.5 10.6z"/>',
+  haptics: '<rect x="8.4" y="2.6" width="7.2" height="18.8" rx="2.4"/><path d="M4.4 9.2v5.6M19.6 9.2v5.6"/>',
+  autoExp: '<path d="M4 5.6h16M4 12h10M4 18.4h7"/><path d="M16.4 15.2l2.4 2.4 2.4-2.4"/>',
+  import: '<path d="M12 3.6v9.2"/><path d="M8.3 9.5L12 13.2l3.7-3.7"/><path d="M4.4 18.6h15.2"/>',
+  agent: '<path d="M4.6 5.6a2.6 2.6 0 0 1 2.6-2.6h9.6a2.6 2.6 0 0 1 2.6 2.6v7.4a2.6 2.6 0 0 1-2.6 2.6H9.6L4.6 19z"/>',
+  mcp: '<path d="M9 3.6v5.6M15 3.6v5.6"/><path d="M5.6 9.2h12.8v3.4a6.4 6.4 0 0 1-12.8 0z"/><path d="M12 19.4v1.8"/>',
+  bili: '<rect x="2.8" y="5" width="18.4" height="14" rx="4"/><path d="M10 9.6l5 2.4-5 2.4z"/>',
+  asrmodel: '<rect x="3" y="6.4" width="18" height="11.2" rx="2.6"/><path d="M6.6 13.4h5.6M14.4 13.4h3"/>',
+  remind: '<path d="M12 3.4a5.2 5.2 0 0 1 5.2 5.2v3.6l2 3.6H4.8l2-3.6V8.6A5.2 5.2 0 0 1 12 3.4z"/><path d="M9.9 19.8a2.2 2.2 0 0 0 4.2 0"/>',
+  notify: '<path d="M12 3.4l7 2.6v5.4c0 4.2-3 7.4-7 9.2-4-1.8-7-5-7-9.2V6z"/><path d="M9.1 11.8l2.2 2.2 4-4"/>',
+  battery: '<rect x="2.6" y="7.4" width="15.2" height="9.2" rx="2.8"/><path d="M20.4 10.4v3.4"/><path d="M9.4 9.7l-2.1 3.4h3.2l-1.4 3 3.4-3.9"/>',
+  font: '<path d="M4.6 19.4L10.8 4.4l6.2 15"/><path d="M7.2 14.2h7.2"/><path d="M17.6 19.4h2.8"/>',
+  memory: '<rect x="3.4" y="4.6" width="17.2" height="14.8" rx="3.2"/><path d="M7.8 9.4h5.4M7.8 13.6h8.4"/>',
+  trace: '<path d="M3.6 8.6l4-4h8.8l4 4v10.6a2.2 2.2 0 0 1-2.2 2.2H5.8a2.2 2.2 0 0 1-2.2-2.2z"/><path d="M3.6 8.6h16.8M12 4.6v14"/>',
+  update: '<path d="M4.2 12a7.8 7.8 0 0 1 13.2-5.6"/><path d="M17.6 3.6v3.6h-3.6"/><path d="M19.8 12a7.8 7.8 0 0 1-13.2 5.6"/><path d="M6.4 20.4v-3.6h3.6"/>',
+  clear: '<path d="M4.6 7h14.8"/><path d="M9.4 7V4.8h5.2V7"/><path d="M6.6 7l.9 12.4h9l.9-12.4"/>'
+};
 /* mark=true 时在标题后挂一个小红点。做成参数而不是直接改 DOM，
-   这样 renderMe 每次重画列表，标记都会跟着 upd 状态重新出现 */
-function row(k, title, sub, sw, on, mark) {
+   这样 renderMe 每次重画列表，标记都会跟着 upd 状态重新出现。
+   val = 右侧的可扫读状态（原来一长串解释性副标压成这个）。 */
+function row(k, title, sub, sw, on, mark, val) {
   var fn = k === "dark" ? "toggleSet('dark', event)"
          : k === "haptics" ? "toggleSet('haptics', event)"
          : k === "autoExp" ? "toggleSet('autoExp', event)"
@@ -2068,18 +2243,51 @@ function row(k, title, sub, sw, on, mark) {
          : k === "agent" ? "openAgentCfg()"
          : k === "mcp" ? "openMcpCfg()"
          : k === "bili" ? "biliOpen()"
+         : k === "asrmodel" ? "openAsrModels()"
          : k === "remind" ? "openPlans()"
          : k === "notify" ? "askRemindPerm()"
          : k === "battery" ? "askBatteryOpt()"
          : k === "memory" ? "openMemory()"
          : k === "trace" ? "exportTrace()"
          : k === "update" ? "checkUpdate(true)" : "askClear()";
-  return '<div class="row" data-k="' + k + '" onclick="' + fn + '"><span>' + title +
-         (mark ? '<i class="dot"></i>' : "") +
-         (sub ? "<em>" + sub + "</em>" : "") + "</span>" +
-         (sw ? '<span style="flex:0 0 52px;text-align:right"><span class="sw' + (on ? " on" : "") + '"></span></span>'
-             : '<span style="flex:0 0 20px;text-align:right;color:var(--ink-3)">›</span>') +
-         "</div>";
+  var ic = k === "dark"
+    ? (set.theme === "dark" ? ROW_ICO.moon : ROW_ICO.sun)
+    : (ROW_ICO[k] || ROW_ICO.memory);
+  return '<div class="row" data-k="' + k + '" onclick="' + fn + '">' +
+         '<i class="ri"><svg class="ico" viewBox="0 0 24 24">' + ic + "</svg></i>" +
+         '<div class="rc"><b>' + title + (mark ? '<i class="dot"></i>' : "") + "</b>" +
+         (sub ? "<em>" + sub + "</em>" : "") + "</div>" +
+         '<div class="re">' +
+           (val ? '<span class="rv">' + val + "</span>" : "") +
+           (sw ? '<span class="sw' + (on ? " on" : "") + '"></span>'
+               : '<span class="chev">›</span>') +
+         "</div></div>";
+}
+
+/* 设置页右侧那列值：把原来那段"解释功能原理"的副标压成一个能扫一眼的短状态 */
+function importVal() {
+  try {
+    var n = subjQs("all").length;
+    return n ? (n + " 题") : "未导入";
+  } catch (e) { return "未导入"; }
+}
+function agentVal() {
+  try {
+    if (agentMode() === "login") {
+      var st = dsStatus();
+      return st && st.loggedIn ? "已登录" : "未登录";
+    }
+    var a = set.agent || {};
+    return String(a.model || "").trim() || "未配置";
+  } catch (e) { return "未配置"; }
+}
+function asrVal() {
+  try {
+    var s = asrModelSub();
+    if (s.indexOf("官方") === 0) return "官方字幕";
+    if (s.indexOf("已就绪") >= 0) return "已就绪";
+    return "未下载";
+  } catch (e) { return "未下载"; }
 }
 function renderAll() {
   if (curTab === "home") renderHome();
@@ -2106,7 +2314,13 @@ function stackCards() {
     cards[i].style.opacity = String(1 - 0.22 * ov);
   }
 }
-window.addEventListener("scroll", function () { if (curTab === "bank") stackCards(); }, { passive: true });
+/* v3.1：大标题滚动收起（原型 .scrolled）。页面滚动发生在 document 上，
+   只对当前显示的 tab 页打标记；切页时由 swapPage 收尾再同步一次。 */
+function syncLtFold() {
+  var pg = document.querySelector(".page.on");
+  if (pg) pg.classList.toggle("scrolled", (window.scrollY || document.documentElement.scrollTop || 0) > 8);
+}
+window.addEventListener("scroll", function () { if (curTab === "bank") stackCards(); syncLtFold(); }, { passive: true });
 
 function pickMode(mode, sid) { startSession(mode, sid, ""); }
 function toggleSet(k, ev) {
@@ -2207,6 +2421,9 @@ function setTheme(next, x, y) {
     o.scrollTop = window.pageYOffset || document.documentElement.scrollTop || 0;
     var at = " at " + x + "px " + y + "px";
     var WAVE = 420, FADE = 150;
+    /* 调试用慢放：window.__waveScale = 20 时整段转场拉长 20 倍，方便逐帧查闪烁。
+       线上不设这个变量，取默认 1，行为与之前完全一致。 */
+    if (window.__waveScale > 0) { WAVE = Math.round(WAVE * window.__waveScale); FADE = Math.round(FADE * window.__waveScale); }
     if (o.animate) {
       o.animate([{ clipPath: "circle(0px" + at + ")" }, { clipPath: "circle(" + r + "px" + at + ")" }],
         { duration: WAVE, easing: "cubic-bezier(.4, 0, .2, 1)", fill: "forwards" });
@@ -2230,7 +2447,7 @@ function setTheme(next, x, y) {
       paint();
       if (o.parentNode) o.remove();
       if (reveal === o) reveal = null;
-    }, 1400);
+    }, Math.max(1400, WAVE + FADE + 240));
   }
 }
 function onThemeTap(ev) {
@@ -2302,3 +2519,156 @@ function askClear() {
     glass({ title: "清空全部进度？", desc: "做题记录、错题本、收藏都会被删除，无法恢复", ok: ["确认清空", __do] });
   }
 }
+
+/* ===== 字幕设置（本地字幕 / 官方字幕） ===== */
+function asrModelSub() {
+  if (typeof subsMode === "function" && subsMode() === "official") return "官方字幕 · 视频上游 AI 字幕，无需模型";
+  try {
+    if (!window.Android || !Android.asrModels) return "本地字幕 · 需下载模型";
+    var a = JSON.parse(Android.asrModels());
+    var ready = false, sel = "";
+    for (var i = 0; i < a.length; i++) {
+      if (a[i].installed) ready = true;
+      if (a[i].selected) sel = a[i].label;
+    }
+    return ready ? ("本地字幕 · 已就绪" + (sel ? " · " + sel : ""))
+                 : "本地字幕 · 未下载模型，点这里下载";
+  } catch (e) { return "本地字幕 · 需下载模型"; }
+}
+function asrMb(n) { return (n / 1048576).toFixed(0) + " MB"; }
+function openAsrModels() {
+  var sh = document.getElementById("sheet3");
+  if (!sh) return;
+  var m = (typeof subsMode === "function") ? subsMode() : "local";
+  /* 不要标题栏和关闭键：下滑面板或点面板外的遮罩即可关闭（openLayer 已带遮罩） */
+  sh.innerHTML = '<div class="handle"></div>'
+    + '<div class="subs-seg">'
+    + '<button class="subs-seg-i' + (m === "local" ? " on" : "") + '" onclick="subsPick(&#39;local&#39;)">本地字幕</button>'
+    + '<button class="subs-seg-i' + (m === "official" ? " on" : "") + '" onclick="subsPick(&#39;official&#39;)">官方字幕</button>'
+    + '</div>'
+    + '<div class="subs-note" id="subsNote">' + (m === "local"
+        ? '由自研的加速推理框架 + X-ASR（升级量化版）在本机离线生成字幕，需要先下载模型，才能提前生成字幕。'
+        : '直接取视频上游的官方 AI 字幕，不用模型；需要联网，部分视频没有官方字幕。') + '</div>'
+    + '<div id="asrModelList"></div>';
+  openLayer(sh);
+  if (m === "local") asrModelRender();
+}
+function subsPick(m) {
+  if (typeof subsModeSet === "function") subsModeSet(m);
+  try { renderMe(); } catch (e) {}
+  openAsrModels();
+}
+function closeAsrModels() {
+  var sh = document.getElementById("sheet3");
+  if (sh) closeLayer(sh);
+}
+var __dl = {};   /* id -> {state, pct, msg}：下载态只存在 JS 里，用来切按钮和文案 */
+
+function asrModelRender() {
+  var box = document.getElementById("asrModelList");
+  if (!box) return;
+  var a;
+  try { a = JSON.parse(Android.asrModels()); }
+  catch (e) { box.innerHTML = '<div class="subs-note">读取模型状态失败</div>'; return; }
+  if (!a.length) { box.innerHTML = '<div class="subs-note">没有可用的本地模型</div>'; return; }
+  var h = '';
+  for (var i = 0; i < a.length; i++) {
+    var m = a[i];
+    var d = __dl[m.id];
+    /* 原生侧正在后台下载（APP 重启后这次会话里没有 __dl 记录）：按 running 补一份，
+       否则按钮会变回「下载模型」，用户一停 APP 再进来就像从没下过。 */
+    if (m.running && !(d && (d.state === "downloading" || d.state === "unzipping"))) {
+      d = __dl[m.id] = { state: "downloading", pct: m.progress || 0, msg: "" };
+    }
+    var busy = !!(d && (d.state === "downloading" || d.state === "unzipping"));
+    var pct = m.installed ? 100
+            : busy ? (typeof d.pct === "number" ? d.pct : 0)
+            : (m.progress || 0);
+    var tagTx = m.installed ? '已就绪'
+             : busy ? (d.state === "unzipping" ? '校验中' : '下载中 ' + pct + '%')
+             : (pct > 0 ? '已下载 ' + pct + '%' : '未下载');
+    h += '<div class="mdl">'
+      + '<div class="mdl-top">'
+        + '<div class="mdl-name">' + m.label + '</div>'
+        + '<span class="mdl-tag' + (m.installed ? " ok" : "") + '" id="asrState-' + m.id + '">'
+        + tagTx + '</span>'
+      + '</div>'
+      + '<div class="mdl-sub">' + m.desc + '</div>'
+      + '<div class="mdl-spec">'
+        + '<div class="mdl-kv"><span>语言</span><b>中文 / 英文（带标点）</b></div>'
+        + '<div class="mdl-kv"><span>体积</span><b>' + asrMb(m.size) + '</b></div>'
+      + '</div>'
+      + '<div class="mdl-bar"><i id="asrBar-' + m.id + '" style="width:' + pct + '%"></i></div>'
+      + (d && d.state === "error" && d.msg ? '<div class="mdl-hint" id="asrHint-' + m.id + '">' + d.msg + '</div>' : '')
+      + '<div class="mdl-acts" id="asrActs-' + m.id + '">' + asrModelActs(m) + '</div>'
+      + '</div>';
+  }
+  box.innerHTML = h;
+}
+function asrModelActs(m) {
+  var d = __dl[m.id];
+  if (d && (d.state === "downloading" || d.state === "unzipping")) {
+    /* 下载/校验期间按钮锁住，连点也不会再开一个任务。 */
+    return '<button class="mdl-btn" disabled>'
+         + (d.state === "unzipping" ? '校验中…' : '下载中…') + '</button>';
+  }
+  var out = '';
+  if (m.installed) {
+    out += (m.selected ? '<span class="mdl-using">当前使用中</span>'
+                       : '<button class="mdl-btn" onclick="asrModelSelect(&#39;' + m.id + '&#39;)">启用</button>');
+    out += '<button class="mdl-btn ghost" onclick="asrModelDelete(&#39;' + m.id + '&#39;)">删除</button>';
+  } else {
+    /* 中断过就接着上次的进度续传，按钮文案仍是「下载模型」。 */
+    out += '<button class="mdl-btn" onclick="asrModelDownload(&#39;' + m.id + '&#39;)">下载模型</button>';
+  }
+  return out;
+}
+/* 只重画动作区与状态标签，不整卡重建，下载中刷新不闪。 */
+function asrActsPaint(id) {
+  var box = document.getElementById("asrActs-" + id);
+  if (!box) return;
+  var m = null;
+  try {
+    var a = JSON.parse(Android.asrModels());
+    for (var i = 0; i < a.length; i++) if (a[i].id === id) m = a[i];
+  } catch (e) { }
+  if (!m) return;
+  box.innerHTML = asrModelActs(m);
+  var st = document.getElementById("asrState-" + id);
+  var d = __dl[id];
+  if (st && d && (d.state === "downloading" || d.state === "unzipping")) {
+    st.textContent = d.state === "unzipping" ? '校验中' : ('下载中 ' + (d.pct || 0) + '%');
+  }
+}
+function asrModelDownload(id) {
+  var pct = 0;
+  try {
+    var a = JSON.parse(Android.asrModels());
+    for (var i = 0; i < a.length; i++) if (a[i].id === id) pct = a[i].progress || 0;
+  } catch (e) { }
+  /* 先本地置成下载中，按钮立刻变灰锁住，再交给原生。 */
+  __dl[id] = { state: "downloading", pct: pct, msg: "" };
+  asrActsPaint(id);
+  Android.asrModelDownload(id);
+}
+function asrModelSelect(id) { Android.asrModelSelect(id); }
+function asrModelDelete(id) { delete __dl[id]; Android.asrModelDelete(id); }
+window.giModelStatus = function (o) {
+  var bar = document.getElementById('asrBar-' + o.id);
+  var st = document.getElementById('asrState-' + o.id);
+  var pct = typeof o.pct === 'number' ? Math.max(0, Math.min(100, o.pct)) : 0;
+  __dl[o.id] = { state: o.state, pct: pct, msg: o.msg || "" };
+  if (bar) bar.style.width = pct + '%';
+  if (st) {
+    st.textContent = o.state === 'installed' ? '已就绪'
+                   : o.state === 'unzipping' ? '校验中'
+                   : o.state === 'downloading' ? ('下载中 ' + pct + '%')
+                   : o.state === 'error' ? (pct > 0 ? '已下载 ' + pct + '%' : '未下载')
+                   : o.msg || st.textContent;
+  }
+  asrActsPaint(o.id);
+  if (o.refresh || o.state === 'error' || o.state === 'installed') {
+    asrModelRender();
+    if (typeof renderMe === 'function') renderMe();
+  }
+};

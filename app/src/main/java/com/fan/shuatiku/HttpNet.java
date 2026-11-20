@@ -34,22 +34,34 @@ public final class HttpNet {
         public final byte[] body;
         public final int connectTimeoutMs;
         public final int readTimeoutMs;
+        /**
+         * 首包之后的闲置超时：播放代理用「首包 20s、之后 60s」的两段口径。
+         * 弱网下首包慢是常态，但一旦开始吐字节，卡 20s 才算真的断了。
+         * 0 表示与 {@link #readTimeoutMs} 相同。
+         */
+        public final int idleTimeoutMs;
         /** 上传进度（可为 null）：只有上传大文件（图片）才需要。 */
         public final Progress progress;
 
         public Request(String url, String method, Map<String, String> headers, byte[] body,
                        int connectTimeoutMs, int readTimeoutMs) {
-            this(url, method, headers, body, connectTimeoutMs, readTimeoutMs, null);
+            this(url, method, headers, body, connectTimeoutMs, readTimeoutMs, 0, null);
         }
 
         public Request(String url, String method, Map<String, String> headers, byte[] body,
                        int connectTimeoutMs, int readTimeoutMs, Progress progress) {
+            this(url, method, headers, body, connectTimeoutMs, readTimeoutMs, 0, progress);
+        }
+
+        public Request(String url, String method, Map<String, String> headers, byte[] body,
+                       int connectTimeoutMs, int readTimeoutMs, int idleTimeoutMs, Progress progress) {
             this.url = url;
             this.method = method == null ? "GET" : method;
             this.headers = headers == null ? new LinkedHashMap<String, String>() : headers;
             this.body = body;
             this.connectTimeoutMs = connectTimeoutMs;
             this.readTimeoutMs = readTimeoutMs;
+            this.idleTimeoutMs = idleTimeoutMs;
             this.progress = progress;
         }
     }

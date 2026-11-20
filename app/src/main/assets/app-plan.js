@@ -141,8 +141,10 @@ function planHeroHtml() {
   h += '<div class="pl-hero-top"><span class="pl-hero-k">今日</span>' +
        '<span class="pl-hero-d">' + planDayLabel() + "</span></div>";
   if (!rows.length) {
+    /* 空态只留一句人话：原来那句"把目标拆成每天能做完的几件事，和刷题放在同一张卡里"
+       是在给产品写说明书，用户看完还是不知道点哪个 */
     h += '<div class="pl-empty"><b>还没有进行中的方案</b>' +
-         "<span>把目标拆成每天能做完的几件事，和刷题放在同一张卡里。</span></div>" +
+         "<span>定好目标，今天该做什么一眼就明白。</span></div>" +
          '<div class="pl-cta"><button class="pl-go" onclick="planCreateSheet()">新建方案</button>' +
          '<button class="pl-alt" onclick="openPlans()">方案库</button></div>';
     return h + "</div>";

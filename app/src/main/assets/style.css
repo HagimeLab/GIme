@@ -32,6 +32,25 @@ html::-webkit-scrollbar, .chat-list::-webkit-scrollbar { display: none; }
   --r-card: 26px;
   --r-in: 20px;
   --ease: cubic-bezier(0.16, 1, 0.3, 1);
+  /* 底栏 / 答题页底部操作条 / 选中托底：这些都是「固定贴在页边缘的实底」，
+     换肤快照里必须按快照自身主题取色，所以一律走变量，不写 [data-theme="dark"] 后代选择器。
+     后代选择器会穿过快照的 data-theme 去匹配外层 html，深→浅时快照里就画出一条深色底栏。 */
+  /* 第 42 轮：底栏原来是 94% 半透明，滚动内容是实打实地透出来 ——
+     列表标题、设置行的字都在胶囊里显影，和白色内描边糊成一片。
+     换成实底（深色也是实底），底栏只做"浮起来"，不做"透过来"。 */
+  --bar-bg: #FBFCFD;
+  --bar-line: rgba(255,255,255,.7);
+  --pill-bg: rgba(20,22,26,.075);
+  --foot-bg: #FBFCFD;
+  --foot-line: rgba(255,255,255,.8);
+  --fab-line: rgba(255,255,255,.9);
+  --fab-sh: 0 2px 4px rgba(20,22,26,.08), 0 14px 28px -10px rgba(20,22,26,.35), inset 0 1px 0 #fff;
+  /* 设置页「清空进度」这类不可逆操作专用 */
+  --danger: #D14343;
+  --danger-t: rgba(209,67,67,.09);
+  /* 进度条的底轨。填充只占 1~2% 时纯靠填充会变成一颗孤零零的小点，
+     有底轨才读得出"这是一条进度条" */
+  --track: rgba(20,22,26,.12);
 }
 /* 系统栏高度是设备事实，不是主题色板的一部分，所以单独只挂在 :root 上。
    混进上面那条规则的话，带 data-theme="light" 的换肤快照会把 --sat/--sab 重置成 0，
@@ -59,9 +78,22 @@ html::-webkit-scrollbar, .chat-list::-webkit-scrollbar { display: none; }
      （间隙 19.1 vs 底色 24.0），收到 3/5/12@.24 只剩 2.1 级，悬浮感还在。 */
   --sh-soft: -2px -2px 12px rgba(255,255,255,.018), 3px 5px 12px rgba(0,0,0,.24);
   --sink: inset -4px -4px 9px rgba(255,255,255,.03), inset 5px 5px 11px rgba(0,0,0,.5);
+  /* 深色底栏同理改实底：浅色下透字只是"灰字显影"，深色下是"亮块透出来"，更脏。
+     但不能直接用页面底色（#14161A）—— 那样底栏和背景糊成一片，悬浮感全没了。
+     取比底色亮一档的 #1B1E23，靠"比背景亮"浮起来，而不是靠"透"。 */
+  --bar-bg: #1B1E23;
+  --bar-line: rgba(255,255,255,.08);
+  --pill-bg: rgba(255,255,255,.08);
+  --foot-bg: #262A31;
+  --foot-line: rgba(255,255,255,.08);
+  --fab-line: rgba(255,255,255,.1);
+  --fab-sh: 0 14px 30px -10px rgba(0,0,0,.9);
+  --danger: #E8797A;
+  --danger-t: rgba(232,121,122,.12);
+  --track: rgba(255,255,255,.14);
 }
 
-html { font-size: 16px; }
+html { font-size: 16px; overscroll-behavior-y: none; }
 body {
   font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", "Noto Sans CJK SC", "Microsoft YaHei", sans-serif;
   background: var(--paper);
@@ -140,6 +172,18 @@ svg { display: block; }
 .cat b { display: block; font-size: .75rem; font-weight: 600;
          white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .cat i { display: block; font-style: normal; font-size: .6875rem; color: var(--ink-2); margin-top: 2px; }
+/* 第 42 轮：0 题时分类区不铺六宫格，只留一行说明（跨满整行） */
+.cats-line { grid-column: 1 / -1; padding: 2px 2px 6px; font-size: .8125rem;
+             line-height: 1.55; color: var(--ink-2); }
+/* 题库空态：一行横排（左状态 / 右导入），不再是大 0 + 通栏按钮的三段模板。
+   首屏必须整块露在底栏上方 —— 这也是它从"居中三行"改成"一行"的原因。 */
+.qb-empty { display: flex; align-items: center; padding: 14px 16px;
+            border: 1px solid var(--line); border-radius: 16px; background: var(--card); }
+.qb-empty .tx { flex: 1 1 auto; min-width: 0; }
+.qb-empty .tx b { display: block; font-size: .9375rem; font-weight: 600; }
+.qb-empty .tx em { display: block; font-style: normal; font-size: .75rem; line-height: 1.45;
+                   color: var(--ink-2); margin-top: 3px; }
+.qb-empty .qb-imp { flex: 0 0 auto; margin-left: 14px; padding: 9px 16px; font-size: .8125rem; }
 
 /* 分类区整体折叠：外层容器定高 + overflow:hidden，高度由 JS 量一次再过渡。
    不用 grid-template-rows 0fr→1fr —— 那个写法要 Chrome 107+，
@@ -406,7 +450,8 @@ button.rec:active { opacity: .62; }
 .sheet.chat.full {
   top: 0; bottom: 0; left: 0; right: 0;
   height: 100%; max-height: none;
-  padding: calc(var(--st) + 4px) 18px calc(var(--sb) + 10px);
+  /* 留出 18px：全屏时把手不能贴着状态栏，否则从顶边下拉会被系统的下拉通知栏抢走手势 */
+  padding: calc(var(--st) + 18px) 18px calc(var(--sb) + 10px);
   border-radius: 0;
 }
 .chat-head { display: flex; align-items: center; gap: 10px; padding: 4px 0 10px; }
@@ -442,6 +487,23 @@ button.rec:active { opacity: .62; }
             color: var(--ink-2); }
 .conv-del .ico { width: 17px; height: 17px; stroke: currentColor; fill: none;
                  stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+/* 历史面板顶部的「新建对话」：整条作为主操作（和底部「发送」同一套黑底主按钮语言），
+   所以它不会跟下面的会话卡混淆。图标是纯描边加号，不再用一颗比字还重的实心圆。 */
+.conv-new { display: flex; align-items: center; gap: 0; width: 100%; height: 52px;
+            margin: 2px 0 14px; padding: 0 16px; border: 0; border-radius: 16px;
+            background: var(--ink); color: var(--paper); font-size: .9375rem; font-weight: 600;
+            text-align: left; box-shadow: var(--sh-sm);
+            -webkit-tap-highlight-color: transparent; transition: transform .16s, opacity .16s; }
+.conv-new .nplus { flex: 0 0 18px; width: 18px; height: 18px; margin-right: 10px;
+                   stroke: currentColor; fill: none;
+                   stroke-width: 2.2; stroke-linecap: round; }
+.conv-new span { flex: 1; min-width: 0; }
+.conv-new .nchev { flex: 0 0 16px; width: 16px; height: 16px; margin-left: 10px;
+                   stroke: currentColor; fill: none;
+                   stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; opacity: .45; }
+.conv-new:active { transform: scale(.985); opacity: .92; }
+/* 历史入口挪到头部最左：和头像之间留一口气，右半边按钮保持靠右 */
+.chat-head .chat-cfg.hist { margin: 0 2px 0 0; }
 .chat-list { flex: 1; overflow-y: auto; -webkit-overflow-scrolling: touch; padding: 4px 0 8px; }
 /* 空态只留一句说明：大号虚线框在整屏聊天里像没写完的占位卡 */
 .chat-empty { margin: 18px auto 0; max-width: 310px; padding: 0 8px; text-align: center;
@@ -603,7 +665,8 @@ button.rec:active { opacity: .62; }
 .chat-in { display: flex; align-items: flex-end; gap: 10px; padding-top: 6px; }
 .chat-in textarea { flex: 1; min-height: 44px; max-height: 96px; resize: none; padding: 12px 14px;
                     border-radius: 16px; border: 1.5px solid var(--line); background: var(--raise);
-                    font-family: inherit; font-size: .875rem; color: var(--ink); line-height: 1.4; }
+                    font-family: inherit; font-size: calc(.875rem * var(--chat-fs, 1));
+                    color: var(--ink); line-height: 1.4; }
 .chat-in textarea:focus { border-color: var(--ink-2); outline: none; }
 /* 长文本浮窗：字数超过阈值才露出「展开」，点它把同一颗输入框搬进来（不复制，值与光标都在）。
    浮窗压在对话（990）之上、附件拦截层（999）之下；搬进来的 textarea 由这条撑满，
@@ -650,11 +713,23 @@ button.rec:active { opacity: .62; }
            background: rgba(20,22,26,0); visibility: hidden;
            transition: background .2s ease, visibility .25s; }
 .overlay.on { background: rgba(20,22,26,.35); visibility: visible; }
+/* 面板右上角的统一关闭键（第 42 轮）：导入面板原本自带 ✕，其余面板没有，
+   用户第二次进来会先去找那个不存在的按钮。 */
+.sh-close { position: absolute; top: 12px; right: 14px; z-index: 2;
+            width: 34px; height: 34px; border-radius: 50%; border: 1px solid var(--line);
+            background: var(--raise); color: var(--ink-2);
+            display: flex; align-items: center; justify-content: center; }
+.sh-close:active { background: var(--line); }
 
 .sheet { position: fixed; bottom: 0; left: 0; right: 0; z-index: 1000;
          background: var(--paper); border-radius: var(--r-card) var(--r-card) 0 0;
          max-height: 85vh; overflow-y: auto; padding: 0 22px calc(var(--sb) + 22px);
-         transform: translateY(100%); transition: transform .25s var(--ease); }
+         transform: translateY(100%); transition: transform .25s var(--ease);
+         /* 面板内部滚动不许传给后面的页面（否则拉到底会整页跟着上下动）；
+            -webkit-overflow-scrolling:auto 是刻意的：这台 WebView 上 touch 模式
+            在面板里滚动会明显掉帧（合成层逐帧栅格化），改成主线程滚动更稳。 */
+         overscroll-behavior: contain;
+         -webkit-overflow-scrolling: auto; }
 .sheet.on { transform: translateY(0); }
 .handle { width: 36px; height: 4px; border-radius: 2px; background: var(--line); margin: 12px auto 6px; }
 .sheet h2 { font-size: 1.125rem; font-weight: 700; padding: 12px 0 16px; }
@@ -795,14 +870,317 @@ button.rec:active { opacity: .62; }
 .bili-off { opacity: .55; }
 .bili-more { padding: 16px 0; text-align: center; font-size: .8125rem; color: var(--ink-2); }
 .bili-player { margin: 6px 0 14px; position: relative; }
-.bili-player video { width: 100%; border-radius: 12px; background: #000; display: block; }
-.bili-meta b { font-size: .9375rem; font-weight: 600; display: block; line-height: 1.55; }
+/* 内嵌态：视频高度必须留在「视口 - 悬浮导航」之内，否则 16:9 按宽度算出来的高度会超出视口，
+   底部的控制条正好被 .tabs 盖住（实测 800x360 视口下视频高 425，超出 69px）。
+   --tabsH 在 JS 里按 .tabs 实际高度写入；拿不到时退回 105px 的经验值。
+   注意：全屏态必须把 max-height 还原成 none（见下方 #tab-video.bili-full 规则），
+   否则这条会把 100% 高的全屏画面压成 239px，底部留一条大黑边。 */
+.bili-player video { width: 100%; border-radius: 12px; background: #000; display: block;
+                     max-height: calc(100vh - var(--tabsH, 105px) - 24px);
+                     object-fit: contain; }
+.bili-meta b { font-size: .9375rem; font-weight: 600; display: -webkit-box;
+  -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden;
+  line-height: 1.5; }
 .bili-meta small { font-size: .75rem; color: var(--ink-2); display: block; margin-top: 4px; }
-.bili-pages { display: flex; flex-wrap: wrap; margin-top: 12px; }
-.bili-pg { border: 1px solid var(--line); background: transparent; color: var(--ink-2);
-           border-radius: 999px; padding: 6px 13px; font-size: .75rem; margin: 0 8px 8px 0; }
-.bili-pg.on { background: var(--ink); color: var(--paper); border-color: var(--ink); }
-/* 播放器内嵌控制条：上一集 / 播放暂停 / 时间 / 进度 / 下一集 / 静音 / 全屏 */
+/* 当前分P的题目单独一行，不跟元信息挤在胶囊里 */
+.bili-part { margin-top: 8px; font-size: .75rem; color: var(--ink-2); line-height: 1.5;
+  display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; }
+/* 长条选集：一行一集，显示题目；右侧字幕生成进度；底部一条观看进度 */
+.bili-pages { display: flex; flex-direction: column; margin: 14px 0 2px; }
+/* 第 44 轮：原来每集都套一个描边圆角小方块，29 集就是 29 个一模一样的框，
+   "正在播"只能靠把边框涂黑来说 —— 太轻了，而这个"每行长得一样"的格子阵
+   本身就是一眼能看出的模板结构。现在改成一条通栏列表：行与行之间只留一道
+   1px 细线，只有正在播的那一集"长成一张卡"（浅底 + 左侧 3px 竖条 + 集号反白
+   + 实色进度线），其余集退回纯文字。差别靠结构，不靠把边框描黑。 */
+.bili-ep { position: relative; display: flex; align-items: center; cursor: pointer;
+  width: 100%; padding: 12px 0 13px; border: 0; border-radius: 12px;
+  background: transparent; color: var(--ink-2);
+  font-size: .8125rem; text-align: left;
+  transition: background .2s var(--ease); }
+/* 行间细线画在行自身边界上（左右与卡片文字对齐），不靠 border 撑高整行 */
+.bili-ep + .bili-ep::before { content: ""; position: absolute; left: 0; right: 0;
+  top: 0; height: 1px; background: var(--line); }
+/* 当前集：底色带往外各扩 18px，padding 反向补回来，文字位置不动 ——
+   条带比文字宽一点才像"高亮的一行"，而不是给文字套了个紧身衣。
+   左侧竖条与反白集号之间留 6px（第 45 轮）：集号用负 margin 把底往外鼓了 6px，
+   条带只外扩 12px 时竖条正好压在标签左边缘上，两者贴成一块。
+   竖条用绝对定位的短条，不用 inset 阴影：inset 会顺着 12px 圆角画成一道亮弧，
+   看着像被括号夹住。 */
+.bili-ep.on { background: var(--pill-bg); margin: 0 -18px; padding: 12px 18px 13px; }
+.bili-ep.on::after { content: ""; position: absolute; left: 4px; top: 12px; bottom: 12px;
+  width: 2px; border-radius: 2px; background: var(--ink); }
+.bili-ep.on::before { opacity: 0; }
+/* 集号统一 11px 等宽数字，行高压到 line-height:1 —— 反白标签靠 padding 撑，
+   再用负 margin 抵掉，标签宽高变了但文字位置不动，标题跟别行仍然对齐 */
+.bili-ep .ep-n { flex: 0 0 auto; font-weight: 700; color: var(--ink-2);
+  font-size: .6875rem; line-height: 1; padding: 4px 0; letter-spacing: .02em;
+  font-variant-numeric: tabular-nums;
+  transition: background .2s var(--ease), color .2s var(--ease), padding .2s var(--ease),
+              margin .2s var(--ease); }
+/* 正在播：集号做成反白小标签。深色主题下自动反过来（浅底深字），
+   不写死黑底白字，换肤时不用再补一条覆盖规则 */
+.bili-ep.on .ep-n { color: var(--paper); background: var(--ink);
+  padding: 4px 6px; margin: 0 -6px; border-radius: 7px; }
+.bili-ep .ep-t { flex: 1 1 auto; min-width: 0; margin-left: 9px; overflow: hidden;
+  text-overflow: ellipsis; white-space: nowrap; color: var(--ink-2); line-height: 1.32; }
+.bili-ep.on .ep-t { color: var(--ink); }
+.bili-ep .ep-pct { flex: 0 0 auto; margin-left: 8px; font-size: .6875rem;
+  color: var(--ink-3); font-variant-numeric: tabular-nums; white-space: nowrap; }
+/* 观看进度百分比：跟字幕状态列（.ep-pct）分开，轮询重写那一列时不会把它清掉 */
+.bili-ep .ep-seen { flex: 0 0 auto; margin-left: 8px; font-size: .6875rem;
+  color: var(--ink-3); font-variant-numeric: tabular-nums; white-space: nowrap; }
+/* 正在播那一行，"2%" 不够说明它是"看过多少"，前面加个"看到"当量词 */
+.bili-ep.on .ep-seen { color: var(--ink-2); font-weight: 600; }
+.bili-ep .ep-act { flex: 0 0 auto; margin-left: 8px; padding: 6px 11px; border-radius: 999px;
+  border: 1px solid var(--line); font-size: .6875rem; color: var(--ink-2); white-space: nowrap; }
+.bili-ep.on .ep-act { border-color: var(--ink); color: var(--ink); }
+/* 观看进度线只给正在播那一行：159 集每行都拉一条，细线加数字就是满屏噪音，
+   "看到 9%" 说清楚了位置。当前行的条带内画一条实色实线，边看边走。 */
+.bili-ep .ep-bar { display: none; position: absolute; left: 18px; right: 18px; bottom: 5px;
+  height: 2px; border-radius: 2px; background: var(--track); overflow: hidden; }
+.bili-ep.on .ep-bar { display: block; }
+.bili-ep .ep-bar b { display: block; height: 100%; width: 0; background: var(--ink);
+  border-radius: 2px; transition: width .3s linear; }
+/* 第 42 轮：这条进度线原来贴着文字下沿，白底上像误画的下划线 —— 压到行底边。
+   第 44 轮：只留给正在播那一行。159 集每行都拉一条细线加数字是满屏噪音，
+   "看到 9%" 已经说清位置；当前行在色带内部走一条实色实线，边看边走。 */
+.bili-ep .ep-bar b { display: block; height: 100%; width: 0; background: var(--ink);
+  border-radius: 2px; transition: width .3s linear; }
+.bili-ep.pg-run .ep-pct { color: var(--ink); }
+.bili-ep.pg-que .ep-pct { color: var(--ink-3); }
+.bili-ep.pg-que { opacity: .78; }
+/* 收藏页顶部：正在加载字幕的视频（最多两个），方形卡片 + 上方百分比 + 下方进度条 */
+.bili-jobs { display: none; margin: 2px 0 10px; }
+.bili-jobs.on { display: block; }
+/* 「字幕识别」只有一个总入口：一行说明现在的状态（在识别谁 / 还有几集排队），
+   整块可点，点开就是识别队列。不再铺 4 张重复信息的小卡。 */
+.bili-jobs .jobs-entry { position: relative; display: flex; flex-direction: column;
+  padding: 12px 14px 13px; border: 1px solid var(--line); border-radius: 14px;
+  background: var(--raise); cursor: pointer; overflow: hidden; }
+/* 入口卡也带一道顶部扫描，和识别页里那张卡是同一个「正在算」的语言 */
+.bili-jobs .jobs-entry::after { content: ""; position: absolute; top: 0; left: 0;
+  height: 1px; width: 38%; pointer-events: none;
+  background: linear-gradient(90deg, rgba(255,255,255,0), rgba(255,255,255,.4), rgba(255,255,255,0));
+  animation: scanLine 4.8s cubic-bezier(0.4, 0, 0.2, 1) infinite; }
+.bili-jobs .jobs-e-top { display: flex; align-items: center; }
+.bili-jobs .jobs-e-dot { flex: 0 0 auto; width: 7px; height: 7px; border-radius: 50%;
+  background: var(--ink-3); margin-right: 9px; }
+.bili-jobs .jobs-e-dot.run { background: var(--ink); animation: jobsRing 1.9s ease-out infinite; }
+/* 识别中：中心点不动，外面一圈往外扩，像在「取一口气」，比单纯闪烁稳 */
+@keyframes jobsRing {
+  0% { box-shadow: 0 0 0 0 rgba(127,127,127,.5); }
+  70% { box-shadow: 0 0 0 7px rgba(127,127,127,0); }
+  100% { box-shadow: 0 0 0 7px rgba(127,127,127,0); }
+}
+.bili-jobs .jobs-e-t { flex: 1 1 auto; min-width: 0; font-size: .8125rem; font-weight: 600;
+  color: var(--ink); }
+.bili-jobs .jobs-e-p { flex: 0 0 auto; margin-right: 8px; font-size: .75rem; color: var(--ink);
+  font-variant-numeric: tabular-nums; }
+.bili-jobs .jobs-e-arw { flex: 0 0 auto; font-style: normal; font-size: 15px;
+  color: var(--ink-3); line-height: 1; }
+.bili-jobs .jobs-e-sub { margin: 5px 0 0 14px; font-size: .6875rem; color: var(--ink-3);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.bili-jobs .jobs-e-bar { display: block; margin: 10px 0 0 14px; height: 3px;
+  border-radius: 3px; background: var(--line); overflow: hidden; }
+.bili-jobs .jobs-e-bar b { position: relative; display: block; height: 100%; border-radius: 3px;
+  background: var(--ink); overflow: hidden; transition: width .6s cubic-bezier(0.16, 1, 0.3, 1); }
+/* 进度条上一道很窄的流光循环扫过：只是让「还在跑」这件事有惯性 */
+.bili-jobs .jobs-e-bar b::after { content: ""; position: absolute; top: 0; left: -45%;
+  width: 45%; height: 100%; background: linear-gradient(90deg,
+    rgba(255,255,255,0), rgba(255,255,255,.6), rgba(255,255,255,0));
+  animation: barSheen 2.1s linear infinite; }
+@keyframes barSheen { 0% { left: -45%; } 100% { left: 100%; } }
+/* ---------------- 字幕识别页 ----------------
+   点顶部那几张缓存卡进这一页：上面「识别中」（带进度），下面「排队中」（带序号）。
+   整页固定全屏、自己带滚动，头部不跟着滚。
+   注意 Chromium 80 的 flex gap 不生效，间距一律用 margin。 */
+.sp-page { position: fixed; left: 0; right: 0; top: 0; bottom: 0; z-index: 1130;
+  display: none; flex-direction: column; background: var(--paper); }
+.sp-page.on { display: flex; }
+.sp-hd { flex: 0 0 auto; display: flex; align-items: center;
+  padding: calc(env(safe-area-inset-top) + 12px) 14px 12px 8px;
+  border-bottom: 1px solid var(--line); }
+.sp-back { flex: 0 0 auto; width: 34px; height: 34px; text-align: center; line-height: 32px;
+  font-size: 22px; color: var(--ink); font-style: normal; cursor: pointer; }
+.sp-tt { flex: 1 1 auto; min-width: 0; margin-left: 2px; font-size: 1rem;
+  font-weight: 600; color: var(--ink); }
+.sp-sum { flex: 0 0 auto; margin-left: 8px; font-size: .6875rem; color: var(--ink-3);
+  font-variant-numeric: tabular-nums; }
+.sp-body { flex: 1 1 auto; min-height: 0; overflow-y: auto; -webkit-overflow-scrolling: touch;
+  padding: 16px 14px calc(34px + env(safe-area-inset-bottom)); }
+.sp-sec { margin-bottom: 20px; }
+.sp-sec:last-child { margin-bottom: 0; }
+.sp-sec-t { display: flex; align-items: baseline; margin-bottom: 10px; }
+.sp-sec-t span { font-size: .75rem; color: var(--ink-3); letter-spacing: .02em; }
+.sp-sec-t small { margin-left: 6px; font-size: .6875rem; color: var(--ink-3);
+  font-variant-numeric: tabular-nums; }
+.sp-empty { padding: 18px 14px; border: 1px dashed var(--line); border-radius: 14px;
+  text-align: center; font-size: .75rem; color: var(--ink-3); line-height: 1.7; }
+/* 识别中卡：左边一条细光、边框轻微呼吸，顶部一列声波在动。
+   这些循环动画只在结构不变时一直播（渲染侧做了增量，不会每 2 秒重启）。 */
+.sp-run { position: relative; border: 1px solid var(--line); border-radius: 14px;
+  background: var(--raise); padding: 13px 14px 14px; margin-bottom: 10px;
+  animation: runBreath 3.4s ease-in-out infinite; overflow: hidden; }
+.sp-run:last-child { margin-bottom: 0; }
+@keyframes runBreath {
+  0%, 100% { border-color: var(--line); box-shadow: 0 0 0 0 rgba(127,127,127,0); }
+  50% { border-color: rgba(127,127,127,.42); box-shadow: 0 0 0 1px rgba(127,127,127,.06); }
+}
+/* 科技感的底子：一层几乎看不见的点阵（14px 网格、4% 不透明度），暗示「在算」。
+   不做漂移——背景位移每帧重绘，纯静态更省电。 */
+.sp-run::before { content: ""; position: absolute; left: 0; right: 0; top: 0; bottom: 0;
+  pointer-events: none; opacity: .028;
+  background-image: radial-gradient(rgba(127,127,127,.9) 1px, rgba(0,0,0,0) 1px);
+  background-size: 18px 18px; }
+/* 顶部一道 1px 的扫描光，周期地从左扫到右再停一会儿，像采样 */
+.sp-run::after { content: ""; position: absolute; top: 0; left: 0; height: 1px; width: 38%;
+  pointer-events: none;
+  background: linear-gradient(90deg, rgba(255,255,255,0), rgba(255,255,255,.42), rgba(255,255,255,0));
+  animation: scanLine 4.8s cubic-bezier(0.4, 0, 0.2, 1) infinite; }
+@keyframes scanLine {
+  0% { transform: translateX(-100%); opacity: .0; }
+  12% { opacity: .85; }
+  58% { transform: translateX(270%); opacity: .85; }
+  70% { transform: translateX(270%); opacity: 0; }
+  100% { transform: translateX(270%); opacity: 0; }
+}
+/* 声波：5 根细条，相位错开（不是等间隔，等间隔看着像机器） */
+.sp-run-top { display: flex; align-items: center; }
+.sp-wave { flex: 0 0 auto; display: flex; align-items: flex-end; height: 13px;
+  margin-right: 8px; }
+.sp-wave i { display: block; width: 2px; height: 100%; margin-right: 2px;
+  border-radius: 1px; background: var(--ink); transform-origin: 50% 100%;
+  animation: waveUp 1.15s ease-in-out infinite; }
+.sp-wave i:nth-child(1) { animation-delay: 0s; }
+.sp-wave i:nth-child(2) { animation-delay: .18s; }
+.sp-wave i:nth-child(3) { animation-delay: .36s; }
+.sp-wave i:nth-child(4) { animation-delay: .12s; }
+.sp-wave i:nth-child(5) { animation-delay: .27s; }
+@keyframes waveUp { 0%, 100% { transform: scaleY(.28); } 50% { transform: scaleY(1); } }
+.sp-run-lbl { flex: 1 1 auto; min-width: 0; font-size: .6875rem; color: var(--ink-3);
+  letter-spacing: .02em; }
+.sp-run-p { flex: 0 0 auto; margin-left: 8px; font-size: .8125rem; color: var(--ink);
+  font-variant-numeric: tabular-nums; }
+/* 进度一变就让数字轻轻亮一下（0.5s 回落），是「数据在刷新」的最小提示 */
+.sp-run-p.flash { animation: numFlash .5s cubic-bezier(0.16, 1, 0.3, 1); }
+@keyframes numFlash {
+  0% { opacity: .3; transform: translateY(-1.5px); }
+  100% { opacity: 1; transform: translateY(0); }
+}
+.sp-run-t { margin-top: 9px; font-size: .875rem; font-weight: 600; color: var(--ink);
+  line-height: 1.4; overflow: hidden; display: -webkit-box;
+  -webkit-box-orient: vertical; -webkit-line-clamp: 2; word-break: break-word; }
+.sp-run-sub { margin-top: 5px; margin-left: 0; font-size: .6875rem; color: var(--ink-3);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sp-run-bar { flex: 1 1 auto; min-width: 0; display: block; height: 4px; border-radius: 4px;
+  background: var(--line); overflow: hidden; }
+.sp-run-bar b { position: relative; display: block; height: 100%; border-radius: 4px;
+  background: var(--ink); overflow: hidden; box-shadow: 0 0 7px rgba(255,255,255,.22);
+  transition: width .6s cubic-bezier(0.16, 1, 0.3, 1); }
+.sp-run-bar b::after { content: ""; position: absolute; top: 0; left: -45%;
+  width: 45%; height: 100%; background: linear-gradient(90deg,
+    rgba(255,255,255,0), rgba(255,255,255,.55), rgba(255,255,255,0));
+  animation: barSheen 2.1s linear infinite; }
+.sp-run-foot { display: flex; align-items: center; margin-top: 14px; }
+/* 取消做成胶囊：原来是一行光秃秃的文字，点了也不知道点到了没有 */
+.sp-run-x { flex: 0 0 auto; margin-left: 12px; padding: 5px 11px; border-radius: 999px;
+  background: rgba(127,127,127,.12); font-size: .6875rem; color: var(--ink-2);
+  font-style: normal; cursor: pointer; transition: background .15s ease-out; }
+.sp-run-x:active { background: rgba(127,127,127,.22); }
+.sp-q { border: 1px solid var(--line); border-radius: 14px; background: var(--raise);
+  overflow: hidden; }
+.sp-q-i { display: flex; align-items: flex-start; padding: 11px 12px;
+  transition: background .15s ease-out; }
+.sp-q-i:active { background: rgba(127,127,127,.07); }
+.sp-q-i + .sp-q-i { border-top: 1px solid var(--line); }
+/* 序号与第一行标题对齐：两行的行（首行带视频名）如果不贴齐，数字看着会往下掉 */
+.sp-q-n { flex: 0 0 auto; width: 22px; margin: 1px 4px 0 0; text-align: right;
+  font-size: .6875rem; color: var(--ink-3); font-weight: 400;
+  font-variant-numeric: tabular-nums; }
+.sp-q-l { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; }
+.sp-q-l span { font-size: .8125rem; color: var(--ink); overflow: hidden;
+  text-overflow: ellipsis; white-space: nowrap; }
+.sp-q-l small { margin-top: 2px; font-size: .625rem; color: var(--ink-3);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sp-q-x { flex: 0 0 auto; align-self: center; margin: 0 0 0 8px; width: 22px; height: 22px; border-radius: 50%;
+  background: rgba(127,127,127,.1); color: var(--ink-3); font-style: normal;
+  text-align: center; line-height: 22px; font-size: 13px; cursor: pointer;
+  transition: background .15s ease-out, color .15s ease-out; }
+.sp-q-x:active { background: rgba(127,127,127,.24); color: var(--ink); }
+.sp-all { display: block; padding: 12px; text-align: center; font-size: .75rem;
+  color: var(--ink-3); border-top: 1px solid var(--line); cursor: pointer; }
+.sp-note { padding: 0 2px; font-size: .6875rem; color: var(--ink-3); line-height: 1.7; }/* 播放器内的字幕状态提示：中央上方、跟着画面旋转，1 秒后淡出 */
+.bili-fshint { position: absolute; left: 50%; top: 18%; transform: translateX(-50%);
+  max-width: 70%; padding: 8px 16px; border-radius: 999px; background: rgba(0,0,0,.72);
+  color: #fff; font-size: .8125rem; line-height: 1.4; text-align: center;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  opacity: 0; pointer-events: none; transition: opacity .18s ease-out; z-index: 1206; }
+.bili-fshint.on { opacity: 1; }
+/* 全屏右侧的选集抽屉（跟播放器一起旋转，观看方向的右侧） */
+.bili-epdrawer { position: absolute; top: 0; right: 0; bottom: 0; width: 300px; display: none;
+  flex-direction: column; background: rgba(14,14,16,.95); z-index: 1215; }
+.bili-epdrawer.on { display: flex; }
+.bili-epdrawer .epd-head { flex: 0 0 auto; height: 46px; display: flex; align-items: center;
+  padding: 0 12px; color: #fff; border-bottom: 1px solid rgba(255,255,255,.1); }
+.bili-epdrawer .epd-head b { flex: 1; font-size: .875rem; }
+.bili-epdrawer .epd-head button { border: 0; background: transparent; color: #fff;
+  font-size: 1.15rem; line-height: 1; padding: 4px 6px; }
+/* 抽屉头部的「缓存全集」：暗底上的实心小胶囊（原来只有 35% 白描边，基本看不见） */
+.bili-epdrawer .epd-head .epd-all { flex: 0 0 auto; margin-right: 8px; display: inline-flex;
+  align-items: center; gap: 6px; height: 33px; padding: 0 14px; border: 0;
+  border-radius: 999px; background: rgba(255,255,255,.2); color: #fff;
+  font-size: .75rem; font-weight: 650; letter-spacing: .01em; line-height: 1;
+  white-space: nowrap; cursor: pointer;
+  box-shadow: inset 0 0 0 1px rgba(255,255,255,.26);
+  transition: transform .16s var(--ease), background .16s var(--ease), opacity .16s linear; }
+.bili-epdrawer .epd-head .epd-all:active { transform: scale(.95); background: rgba(255,255,255,.3); }
+.bili-epdrawer .epd-head .epd-all.done { background: transparent; opacity: .45; pointer-events: none; }
+.bili-epdrawer .epd-head .epd-all.busy { pointer-events: none; background: rgba(255,255,255,.24); }
+.bili-epdrawer .epd-list { flex: 1 1 auto; overflow-y: auto; padding: 8px; }
+.bili-epdrawer .epd-item { position: relative; display: flex; align-items: center;
+  width: 100%; padding: 9px 58px 9px 10px; margin-bottom: 6px;
+  border: 1px solid rgba(255,255,255,.12); border-radius: 10px;
+  background: transparent; color: #fff; text-align: left; cursor: pointer; }
+.bili-epdrawer .epd-item b { flex: 0 0 auto; margin-right: 8px; font-size: .75rem; opacity: .8; }
+.bili-epdrawer .epd-item span { flex: 1 1 auto; min-width: 0; overflow: hidden;
+  text-overflow: ellipsis; white-space: nowrap; font-size: .8125rem; }
+.bili-epdrawer .epd-item.on { border-color: #fff; background: rgba(255,255,255,.14); }
+.bili-epdrawer .epd-pct { position: absolute; right: 10px; top: 50%;
+  transform: translateY(-50%); font-size: .6875rem; font-style: normal; opacity: .8;
+  font-variant-numeric: tabular-nums; }
+/* 选集整块的展开/收起 */
+.bili-eptog { display: flex; align-items: center; width: calc(100% + 44px);
+  margin: 16px -22px 0; padding: 12px 24px 10px; border: 0; background: transparent;
+  border-top: 1px solid var(--line); color: var(--ink-2); font-size: .8125rem;
+  text-align: left; }
+.bili-eptog span { font-weight: 700; color: var(--ink); }
+.bili-eptog b { font-weight: 400; margin-left: 6px; }
+.bili-eptog .chev { margin-left: 10px; width: 8px; height: 8px;
+  border-right: 2px solid currentColor; border-bottom: 2px solid currentColor;
+  transform: rotate(45deg); transition: transform .18s ease; }
+.bili-eptog .chev.up { transform: rotate(-135deg); }
+/* 「缓存全集」：选集折叠头右侧的实心小胶囊。
+   原来 1px 淡描边 + 11px 字，几乎和旁边的说明文字混在一起，
+   点下去也没有任何反馈；现在给足 28px 高度、实底、箭头图标和按压回弹。 */
+.bili-eptog .ep-all { margin-left: auto; flex: 0 0 auto; display: inline-flex;
+  align-items: center; gap: 6px; height: 33px; padding: 0 14px; border: 0;
+  border-radius: 999px; background: var(--pill-bg); color: var(--ink);
+  font-size: .75rem; font-weight: 650; letter-spacing: .01em; line-height: 1;
+  white-space: nowrap; font-style: normal;
+  box-shadow: inset 0 0 0 1px var(--line);
+  transition: transform .16s var(--ease), background .16s var(--ease), opacity .16s linear; }
+.bili-eptog .ep-all:active { transform: scale(.95); background: rgba(20,22,26,.15); }
+.bili-eptog .ep-all.done { background: transparent; color: var(--ink-3); pointer-events: none; }
+.bili-eptog .ep-all.busy { pointer-events: none; }
+/* 常态不再挂小箭头：选集行右侧本来就有一个折叠箭头，两个箭头并排会读出「下拉」的歧义。
+   这里只在入队瞬间长出一枚呼吸点，表示「这一下已经收到，正在排队」。 */
+.bili-eptog .ep-all.busy::before,
+.bili-epdrawer .epd-head .epd-all.busy::before { content: ""; flex: 0 0 auto;
+  width: 6px; height: 6px; border-radius: 50%; background: currentColor;
+  animation: epAllPulse .9s ease-in-out infinite; }
+@keyframes epAllPulse { 0%, 100% { opacity: .3; } 50% { opacity: 1; } }
+.bili-pages.off { display: none; }
+/* 字幕设置：本地 / 官方二选一 */
 .bili-ctl { position: absolute; left: 0; right: 0; bottom: 0; display: flex; align-items: center;
             height: 46px; padding: 0 8px; border-radius: 0 0 12px 12px; color: #fff;
             background: linear-gradient(rgba(0,0,0,0), rgba(0,0,0,.78));
@@ -819,7 +1197,6 @@ button.rec:active { opacity: .62; }
 .bili-seek::-webkit-slider-runnable-track { height: 3px; border-radius: 2px; background: rgba(255,255,255,.4); }
 .bili-seek::-webkit-slider-thumb { -webkit-appearance: none; width: 12px; height: 12px; margin-top: -4.5px;
                                    border-radius: 50%; background: #fff; }
-.bili-fs-exit { display: none; }
 /* 视频页（原错题本 tab）：页内头部 + 内容容器，样式跟整页层的 fs-head 一致 */
 .bili-head { display: flex; align-items: center; margin: -4px 0 10px; }
 .bili-head .bili-back { flex: 0 0 46px; height: 46px; border: 0; background: transparent;
@@ -839,17 +1216,14 @@ button.rec:active { opacity: .62; }
 /* 全屏时画面铺满整个手机屏幕：cover 裁掉多出来的边，不留黑边（contain 会留左右黑边） */
 #tab-video.bili-full .bili-player video { position: absolute; top: 0; left: 0;
                                          width: 100%; height: 100%; border-radius: 0;
-                                         background: #000; object-fit: cover; }
+                                         background: #000; object-fit: cover;
+                                         max-height: none; }
 /* 控制条浮在画面底部（渐变半透明），不再单独占一条，保证画面真·满屏 */
 #tab-video.bili-full .bili-ctl { position: absolute; left: 0; right: 0; bottom: 0;
                                 border-radius: 0; height: auto;
                                 padding: 6px 14px calc(6px + var(--sb, 0px));
                                 background: linear-gradient(180deg, rgba(0,0,0,0), rgba(0,0,0,.85) 42%);
                                 border-top: 0; }
-#tab-video.bili-full .bili-fs-exit { display: block; position: absolute; right: 14px; top: 14px;
-                                    z-index: 1202; border: 0; border-radius: 999px;
-                                    padding: 8px 14px; font-size: .75rem;
-                                    background: rgba(0,0,0,.55); color: #fff; }
 
 /* 收藏夹升级：卡片化（用户卡 / 收藏夹 / 视频条目），全部复用既有令牌 */
 .bili-user { display: flex; align-items: center; background: var(--raise); border: 0;
@@ -906,7 +1280,8 @@ button.rec:active { opacity: .62; }
                     overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .bili-chips { display: flex; flex-wrap: wrap; margin-top: 8px; }
 .bili-chip { font-size: .6875rem; color: var(--ink-2); background: var(--surface);
-             border-radius: 999px; padding: 3px 10px; margin: 0 8px 6px 0; }
+             border-radius: 999px; padding: 3px 10px; margin: 0 6px 4px 0;
+             line-height: 1.5; font-variant-numeric: tabular-nums; }
 .bili-more { display: block; width: max-content; margin: 16px auto 4px;
              border: 1px solid var(--line); border-radius: 999px;
              padding: 9px 20px; font-size: .8125rem; color: var(--ink-2); }
@@ -1053,6 +1428,7 @@ html.swap, html.swap * { transition: none !important; }
 .ag-fs-demo { margin: 12px 0 0; padding: 10px 13px; border-radius: 14px; background: var(--raise);
               box-shadow: var(--sh-sm); line-height: 1.65; color: var(--ink);
               font-size: calc(.875rem * var(--chat-fs, 1)); }
+.ag-fs-hint { margin: 8px 0 0; font-size: .6875rem; line-height: 1.5; color: var(--ink-2); }
 /* 格式举例正文：要能整段选中复制，所以不能靠默认的非可选中 */
 .sample-box { margin-top: 14px; padding: 18px; border-radius: var(--r-in); background: var(--surface);
               box-shadow: var(--sink); font-family: monospace; font-size: .8125rem; line-height: 1.8;
@@ -2061,21 +2437,92 @@ textarea.pl-field { resize: none; line-height: 1.6; }
   font-size: .6875rem; color: rgba(255,255,255,.55);
   font-variant-numeric: tabular-nums; white-space: nowrap; }
 
+/* --- 第 42 轮：小窗控制条瘦身 ---
+   66px 高铺在 180px 画面上是 37%，连视频自带的硬字幕都被它整块压住。
+   收到 52px + 渐变从 .78 降到 .62；倍速/CC/静音三颗收进「⋯」，只在点开时浮出来。
+   第 45 轮：.62 是照着深色画面调的，小窗里的画面常常一半是亮的（白墙、人物衬衫），
+   白字白图标直接糊进画面，"看不见"。改成三段渐变（贴边不压字幕、底部压到 .70），
+   再给图标/读数加一层投影 —— 对比度靠"阴影"补，不靠把整条压黑。 */
+#tab-video:not(.bili-full) .bili-ctl.progress-v2 { height: 56px; padding: 2px 12px 4px;
+  background: linear-gradient(180deg, rgba(0,0,0,0) 0%, rgba(0,0,0,.26) 40%, rgba(0,0,0,.70) 100%); }
+#tab-video:not(.bili-full) .bili-ctl.progress-v2 .bili-time { font-weight: 600;
+  text-shadow: 0 1px 3px rgba(0,0,0,.55); }
+#tab-video:not(.bili-full) .bili-ctl .bili-cb .ico { filter: drop-shadow(0 1px 2px rgba(0,0,0,.5)); }
+#tab-video:not(.bili-full) .bili-ctl.progress-v2 .bili-track { background: rgba(255,255,255,.46);
+  box-shadow: 0 0 4px rgba(0,0,0,.32); }
+/* 时间码原来压在进度线上（22px 的块里塞 21px 的文字，轨道贴着底边，
+   数字正好被那条线划开）。小窗里把块抬到 20px、时间行高压到 1.2，线落在块底 */
+#tab-video:not(.bili-full) .bili-ctl.progress-v2 .bili-time { line-height: 1.2; font-size: .75rem; }
+#tab-video:not(.bili-full) .bili-ctl.progress-v2 .bili-progress { flex: 0 0 20px; height: 20px; }
+#tab-video:not(.bili-full) .bili-ctl.progress-v2 .bili-cb-row { flex: 0 0 30px; height: 30px; gap: 6px; }
+#tab-video:not(.bili-full) .bili-ctl.progress-v2 .bili-cb { width: 30px; height: 30px; }
+#tab-video:not(.bili-full) .bili-cb-note { display: none; }
+#tab-video:not(.bili-full) .bili-cb-extra { display: none; }
+/* 上一集/下一集不再画圆底：三颗 30px 半透明圆挨在一起，看起来像两颗叠住。
+   只留播放一颗实心圆，切换键是裸图标。 */
+#tab-video:not(.bili-full) .bili-cb-ep-prev,
+#tab-video:not(.bili-full) .bili-cb-ep-next { width: 26px; background: transparent; }
+#tab-video:not(.bili-full) .bili-cb-ep-prev:active,
+#tab-video:not(.bili-full) .bili-cb-ep-next:active { background: rgba(255,255,255,.2); }
+/* 浮出来的三颗：原来 72% 磨砂压在亮画面上等于没底，加实底 + 一圈内描边才浮得住 */
+#tab-video:not(.bili-full) #biliCtl.more .bili-cb-extra { display: flex; position: absolute;
+  right: 10px; bottom: 40px; padding: 4px 6px; border-radius: 999px;
+  background: rgba(16,18,22,.88);
+  box-shadow: 0 6px 18px rgba(0,0,0,.45), inset 0 0 0 1px rgba(255,255,255,.14); }
+/* 「⋯」复用 .bili-more 的坑：那个类本来是列表底部的"加载更多"胶囊
+   （margin:16px auto 4px + width:max-content），挂到按钮上就把它顶得比同排
+   按钮低 6px、宽度还被内容撑成 42px —— 于是它既不居中也不在同一水平线上。
+   换独立类，三颗点用伪元素画，别靠「···」文本（15px 的中圆点在深色底上几乎看不见）。 */
+.bili-cb-more { margin-right: 0; margin-left: auto; }
+.bili-cb-more .cb-dots { display: flex; align-items: center; gap: 4px; }
+.bili-cb-more .cb-dots i { display: block; width: 4px; height: 4px; border-radius: 50%;
+  background: #fff; box-shadow: 0 1px 2px rgba(0,0,0,.45); }
+#tab-video.bili-full .bili-cb-more { display: none; }
+
+/* --- 第 45 轮（改二）：进场藏内容 / 退场不做黑框缩放 ---
+   .fs-morph 只留给进场：全屏是 position:fixed，黑底铺满，页面内容藏着不会露。
+   退场原来沿用了它 + "黑框缩小"，但那个框是被 100vh×100vw 的黑底包着的，
+   缩回来的路上黑底占了半屏 —— 用户看到的就是"大范围黑屏"。
+   现在退场结构直接回位，只给播放器一个很短的落定回弹、页面 160ms 淡入。 */
+#tab-video.fs-morph .bili-head,
+#tab-video.fs-morph .bili-body > .bili-srcbar,
+#tab-video.fs-morph .bili-body > .bili-user,
+#tab-video.fs-morph .bili-body > .bili-jobs,
+#tab-video.fs-morph #biliList > *:not(.bili-player) { opacity: 0; transition: opacity .16s linear; }
+#tab-video.fs-in .bili-head,
+#tab-video.fs-in .bili-body > .bili-srcbar,
+#tab-video.fs-in .bili-body > .bili-user,
+#tab-video.fs-in .bili-body > .bili-jobs,
+#tab-video.fs-in #biliList > *:not(.bili-player) { animation: fsIn .16s linear both; }
+@keyframes fsIn { from { opacity: 0 } to { opacity: 1 } }
+/* 落定回弹：只缩 3.5%、只淡到 45%，260ms。比"黑框缩小"轻，也不会盖住邻行 */
+@keyframes fsLandPlayer { from { transform: scale(.965); opacity: .45 } to { transform: scale(1); opacity: 1 } }
+.bili-player.fs-land-player { animation: fsLandPlayer .26s cubic-bezier(.22,1,.36,1) both;
+  transform-origin: 50% 50%; will-change: transform, opacity; }
+
 /* --- A3. 真机全屏态：画面在上方，控制条紧接画面下方且铺满全宽 --- */
 .bili-topbar, .bili-pause-layer { display: none; }
 #tab-video.bili-full { position: fixed; inset: 0; z-index: 1200; background: #000; padding: 0;
   display: flex; flex-direction: column; justify-content: center; }
 #tab-video.bili-full .bili-head,
 #tab-video.bili-full .bili-meta,
-#tab-video.bili-full .bili-pages,
-#tab-video.bili-full .bili-fs-exit { display: none; }
+#tab-video.bili-full .bili-pages { display: none; }
 #tab-video.bili-full .bili-body { padding: 0; width: 100%; height: 100%; }
 #tab-video.bili-full .bili-player { position: absolute; inset: 0; width: 100%; height: 100%;
   margin: 0; background: #000; z-index: 1201; border-radius: 0; overflow: visible;
   user-select: none; -webkit-user-select: none; }
+/* 页面本身锁竖屏，横屏画面靠把整层播放器旋转 ±90°（宽高对调）得到；
+   控件、字幕都是它的子节点，跟着一起转，命中区域不受影响。 */
+#tab-video.bili-full.fs-rot-90 .bili-player,
+#tab-video.bili-full.fs-rot--90 .bili-player {
+  position: fixed; inset: auto; left: 50%; top: 50%;
+  width: 100vh; height: 100vw;
+}
+#tab-video.bili-full.fs-rot-90 .bili-player { transform: translate(-50%, -50%) rotate(90deg); }
+#tab-video.bili-full.fs-rot--90 .bili-player { transform: translate(-50%, -50%) rotate(-90deg); }
 #tab-video.bili-full .bili-player video { position: absolute; left: 0; right: 0; top: 0;
   width: 100%; height: calc(100% - 66px); border-radius: 0; background: #000;
-  object-fit: contain; display: block; }
+  object-fit: contain; display: block; max-height: none; }
 #tab-video.bili-full .bili-ctl { position: absolute; left: 0; right: 0; bottom: 0; width: auto;
   height: 66px; padding: 6px 18px 8px; border-radius: 0; border-top: 0; box-shadow: none;
   display: flex; flex-direction: column; justify-content: flex-end; gap: 2px;
@@ -2087,9 +2534,12 @@ textarea.pl-field { resize: none; line-height: 1.6; }
   pointer-events: none; transition: opacity .25s var(--ease), transform .25s var(--ease); }
 #tab-video.bili-full .bili-topbar b { flex: 1; min-width: 0; font-size: .875rem; font-weight: 600;
   letter-spacing: .2px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* 顶部条整体不接点击（让视频手势穿透），但集数药丸要能点：单独放开 */
+#tab-video.bili-full .bili-topbar .ep { pointer-events: auto; }
 #tab-video.bili-full .bili-topbar .ep { flex: 0 0 auto; font-size: .75rem;
-  color: rgba(255,255,255,.78); border: 1px solid rgba(255,255,255,.28);
-  border-radius: 999px; padding: 4px 12px; font-variant-numeric: tabular-nums; }
+  color: rgba(255,255,255,.92); border: 1px solid rgba(255,255,255,.45);
+  border-radius: 999px; padding: 7px 14px; font-variant-numeric: tabular-nums;
+  background: rgba(0,0,0,.35); cursor: pointer; }
 #tab-video.bili-full.chrome-hidden .bili-topbar { opacity: 0; transform: translateY(-10px); }
 #tab-video.bili-full.chrome-hidden .bili-ctl { opacity: 0; transform: translateY(10px);
   pointer-events: none; }
@@ -2100,6 +2550,10 @@ textarea.pl-field { resize: none; line-height: 1.6; }
 #tab-video.bili-full .bili-pause-layer .ico { width: 52px; height: 52px; stroke-width: 1.3; }
 #tab-video.bili-full .ph-tip { font-size: .6875rem; letter-spacing: 1px;
   color: rgba(255,255,255,.42); }
+/* 全屏退场落定后的落地淡入：只靠 JS 在撤掉 .bili-full 后挂 280ms，
+   让卡片/标题/选集跟着画面一起回到了页面上，而不是硬切出现 */
+@keyframes fsLand { from { opacity: .001; transform: translateY(7px); } to { opacity: 1; transform: none; } }
+.fs-land { animation: fsLand .26s var(--ease) both; }
 
 /* --- B. 收藏来源（m02175：只显示已接入功能的来源，当前仅哔哩哔哩） --- */
 .bili-srcbar { display: flex; gap: 8px; margin: 0 -2px 14px; overflow-x: auto;
@@ -2181,7 +2635,7 @@ button.stat-cell:active { background: var(--surface); }
    真机横屏屏幕更宽、手指更粗，28px 圆钮与 6px 间距过密；只在 .bili-full 态放大，
    内嵌播放页保持 28px/6px 不变。m03116 ① 画面改 object-fit:cover 铺满整屏（不再 contain 留左右大黑边，也不再为控制条扣掉一条高度）；控制条本是半透明浮层，压在画面底部即可透出视频。② 圆钮 36→40px、行/组间距 12→20px、右侧信息留白 16→24px。 */
 #tab-video.bili-full .bili-ctl { height: 80px; padding: 6px 28px 10px; }
-#tab-video.bili-full .bili-player video { width: 100%; height: 100%; object-fit: cover; }
+#tab-video.bili-full .bili-player video { width: 100%; height: 100%; object-fit: cover; max-height: none; }
 #tab-video.bili-full .bili-pause-layer { bottom: 0; }
 #tab-video.bili-full .bili-ctl.progress-v2 .bili-cb-row { flex: 0 0 40px; height: 40px; gap: 20px; }
 #tab-video.bili-full .bili-ctl.progress-v2 .bili-cb-group { gap: 20px; }
@@ -2239,6 +2693,39 @@ button.stat-cell:active { background: var(--surface); }
 .bili-fast.show { display: block; }
 #tab-video.bili-full .bili-rate-menu { bottom: 96px; }
 
+/* ===== 字幕设置小弹窗（CC 按钮，JS 贴着按钮定位） ===== */
+.bili-submenu { --bsm-bg: rgba(0,0,0,.9); position: absolute; right: 16px; bottom: 70px;
+  width: 212px; padding: 11px 12px 12px; display: none; background: var(--bsm-bg);
+  border-radius: 16px; color: #fff; z-index: 1255; box-shadow: 0 12px 32px rgba(0,0,0,.45); }
+.bili-submenu.show { display: block; }
+/* 指向 CC 的小尖角：位置由 JS 按按钮中心写入 --arrow */
+.bili-submenu::after { content: ""; position: absolute; left: var(--arrow, 50%); bottom: -5px;
+  width: 10px; height: 10px; border-radius: 2px; background: var(--bsm-bg);
+  transform: translateX(-50%) rotate(45deg); pointer-events: none; }
+.bsm-head { display: flex; align-items: center; justify-content: space-between; padding: 0 2px 10px; }
+.bsm-head b { font-size: .875rem; font-weight: 700; letter-spacing: .01em; }
+.bsm-switch { position: relative; width: 46px; height: 26px; padding: 2px; border: 0;
+  border-radius: 999px; background: rgba(255,255,255,.26); transition: background .18s var(--ease); }
+.bsm-switch i { display: block; width: 22px; height: 22px; border-radius: 50%; background: #fff;
+  transition: transform .18s var(--ease), background .18s var(--ease); }
+.bsm-switch.on { background: #fff; }
+.bsm-switch.on i { background: #111; transform: translateX(20px); }
+.bsm-seg { display: flex; gap: 8px; }
+.bsm-src { flex: 1 1 0; padding: 9px 0; border: 0; border-radius: 10px;
+  background: rgba(255,255,255,.12); color: #fff; font-size: .8125rem; font-weight: 600; }
+.bsm-src.on { background: #fff; color: #111; }
+.bsm-tip { margin: 10px 2px 0; font-size: .75rem; line-height: 1.45; color: rgba(255,255,255,.68); }
+.bili-submenu.short .bsm-tip { display: none; }
+#tab-video.bili-full .bili-submenu { width: 248px; padding: 14px 16px 16px; border-radius: 18px; }
+#tab-video.bili-full .bsm-head { padding: 0 2px 12px; }
+#tab-video.bili-full .bsm-head b { font-size: .9375rem; }
+#tab-video.bili-full .bsm-switch { width: 50px; height: 28px; }
+#tab-video.bili-full .bsm-switch i { width: 24px; height: 24px; }
+#tab-video.bili-full .bsm-switch.on i { transform: translateX(22px); }
+#tab-video.bili-full .bsm-seg { gap: 10px; }
+#tab-video.bili-full .bsm-src { padding: 12px 0; border-radius: 11px; font-size: .875rem; }
+#tab-video.bili-full .bsm-tip { margin-top: 11px; font-size: .8125rem; }
+
 /* 亮度 HUD：全屏左侧 1/4 上下滑时显示（竖向，贴左），3s 自动隐藏 */
 .bili-bright { position: absolute; left: 22px; top: 50%; transform: translateY(-50%) translateX(-8px);
   display: flex; flex-direction: column; align-items: center; gap: 6px; padding: 8px 7px; border-radius: 14px;
@@ -2290,20 +2777,26 @@ button.stat-cell:active { background: var(--surface); }
 .fd.on { opacity: 1; transform: translate(-50%,-50%) scale(1); }
 .fd h2 { font-size: 1.0625rem; font-weight: 800; }
 .fd p { font-size: .75rem; color: var(--ink-2); margin: 4px 0 14px; }
-.fd-dial { position: relative; width: 190px; height: 190px; margin: 0 auto; touch-action: none; }
+/* 读数行：跟着「字号」标题走，字号放大也不会压到刻度盘 */
+.fd-read { display: flex; align-items: baseline; justify-content: center; gap: 2px;
+  margin: 6px 0 -2px; font-variant-numeric: tabular-nums; }
+.fd-read b { font-size: 1.75rem; font-weight: 800; letter-spacing: -.5px; line-height: 1.1; }
+.fd-read span { font-size: .8125rem; color: var(--ink-2); }
+.fd-dial { position: relative; width: 182px; height: 182px; margin: 0 auto; touch-action: none; }
 .fd-ring { position: absolute; inset: 14px; border-radius: 50%; background: var(--surface); box-shadow: var(--sink); }
 .fd-tick { position: absolute; left: 50%; top: 8px; width: 2px; height: 9px; margin-left: -1px; border-radius: 2px;
-  background: var(--ink-3); transform-origin: 50% 87px; }
-.fd-pointer { position: absolute; left: 50%; top: 50%; width: 3px; height: 74px; margin-left: -1.5px; margin-top: -74px;
-  border-radius: 3px; background: var(--ink); transform-origin: 50% 100%; }
+  background: var(--ink-3); transform-origin: 50% 83px; }
+.fd-pointer { position: absolute; left: 50%; top: 50%; width: 3px; height: 70px; margin-left: -1.5px; margin-top: -70px;
+  border-radius: 3px; background: var(--ink); transform-origin: 50% 100%;
+  transition: transform .18s var(--ease); }
 .fd-pointer:after { content: ""; position: absolute; top: -6px; left: 50%; width: 13px; height: 13px; margin-left: -6.5px;
   border-radius: 50%; background: var(--ink); }
-.fd-val { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
-  font-variant-numeric: tabular-nums; pointer-events: none; padding-top: 6px; }
-.fd-val b { font-size: 2rem; font-weight: 800; }
-.fd-val span { font-size: .8125rem; color: var(--ink-2); margin-left: 2px; align-self: flex-end; margin-bottom: 12px; }
+/* 盘心的轴：数字搬走后中间不能空着，留一个针脚圆心才像旋钮 */
+.fd-hub { position: absolute; left: 50%; top: 50%; width: 11px; height: 11px; margin: -5.5px 0 0 -5.5px;
+  border-radius: 50%; background: var(--ink-3); box-shadow: 0 0 0 3px var(--surface); }
 .fd-dial.drag .fd-pointer { transition: none; }
 .fd-done { margin-top: 8px; padding: 12px 28px; border-radius: 999px; background: var(--ink); color: var(--paper); font-size: .9375rem; font-weight: 700; }
+.fd-hint { margin-top: 12px; font-size: .6875rem; line-height: 1.5; color: var(--ink-2); max-width: 240px; }
 
 /* #8 气泡避边 */
 .gi-tip { position: fixed; z-index: 1050; max-width: 160px; padding: 8px 10px; border-radius: 10px;
@@ -2330,9 +2823,12 @@ button.stat-cell:active { background: var(--surface); }
 .imp-close { width: 34px; height: 34px; border-radius: 50%; background: var(--surface); box-shadow: var(--sink);
   display: flex; align-items: center; justify-content: center; color: var(--ink-2); padding: 0; }
 .imp-close .ico { stroke: currentColor; fill: none; stroke-width: 2; }
-.imp-formats { display: flex; gap: 8px; flex-wrap: wrap; margin: 0 0 16px; }
-.imp-chip { font-size: .75rem; font-weight: 600; padding: 6px 12px; border-radius: 999px;
-  background: var(--surface); color: var(--ink-2); box-shadow: var(--sink); }
+.imp-formats { display: flex; align-items: center; flex-wrap: wrap; margin: 0 0 14px;
+  font-size: .6875rem; letter-spacing: .06em; color: var(--ink-2); }
+/* 第 42 轮：这四个原来是扁胶囊 —— 有底 = 强可点感，实际不能点，是伪交互。
+   改成一行小字标签，用「·」分隔，读起来是"支持的格式"，不再像筛选器。 */
+.imp-chip { font-weight: 500; }
+.imp-formats .imp-chip + .imp-chip::before { content: "·"; margin: 0 7px; color: var(--ink-3); }
 .imp-primary { display: flex; align-items: center; gap: 14px; width: 100%; padding: 16px 18px; border: 0;
   border-radius: 18px; background: var(--ink); color: var(--paper); text-align: left; }
 .imp-primary .ico { width: 22px; height: 22px; flex: 0 0 auto; stroke: var(--paper); fill: none; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
@@ -2348,6 +2844,41 @@ button.stat-cell:active { background: var(--surface); }
 .imp-tips .k { color: var(--ink); font-weight: 700; }
 .imp-progress { margin: 18px 0 0; padding: 14px 16px; border-radius: 14px; background: var(--surface); box-shadow: var(--sink); }
 .imp-progress .track { margin: 0 0 8px; }
+
+/* --- 设置页：字幕设置（分段选择器 + 模型规格表） --- */
+.subs-seg { display: flex; padding: 4px; margin: 4px 0 10px; border-radius: 14px;
+  background: var(--surface); box-shadow: var(--sink); }
+.subs-seg-i { flex: 1 1 0; padding: 11px 8px; border: 0; border-radius: 11px; background: transparent;
+  color: var(--ink-2); font-size: .8125rem; font-weight: 600; }
+.subs-seg-i.on { background: var(--raise); color: var(--ink); box-shadow: var(--sh-sm); }
+.subs-note { margin: 0 0 14px; padding: 11px 13px; border-radius: 12px; background: var(--surface);
+  box-shadow: var(--sink); font-size: .75rem; color: var(--ink-2); line-height: 1.6; }
+/* 模型卡：标题行 + 一行说明 + 规格表 + 进度 + 操作 */
+.mdl { padding: 15px 15px 13px; margin: 0 0 12px; border-radius: 16px;
+  background: var(--surface); box-shadow: var(--sink); }
+.mdl-top { display: flex; align-items: center; }
+.mdl-name { flex: 1 1 auto; min-width: 0; font-size: .9375rem; font-weight: 700; color: var(--ink); }
+.mdl-tag { flex: 0 0 auto; margin-left: 8px; padding: 3px 9px; border-radius: 999px;
+  font-size: .625rem; font-weight: 700; color: var(--ink-3); background: var(--raise); }
+.mdl-tag.ok { color: var(--paper); background: var(--ink); }
+.mdl-sub { margin-top: 5px; font-size: .75rem; color: var(--ink-2); line-height: 1.55; }
+.mdl-spec { margin-top: 11px; border-radius: 11px; background: var(--raise); padding: 3px 11px; }
+.mdl-kv { display: flex; align-items: baseline; padding: 7px 0; }
+.mdl-kv + .mdl-kv { border-top: 1px solid var(--line); }
+.mdl-kv span { flex: 0 0 72px; font-size: .6875rem; color: var(--ink-3); }
+.mdl-kv b { flex: 1 1 auto; min-width: 0; font-size: .75rem; font-weight: 600; color: var(--ink);
+  text-align: right; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mdl-bar { height: 3px; margin: 12px 0 0; border-radius: 3px; background: var(--line); overflow: hidden; }
+.mdl-bar i { display: block; height: 100%; width: 0; background: var(--ink); border-radius: 3px;
+  transition: width .25s ease; }
+.mdl-acts { display: flex; align-items: center; margin-top: 12px; }
+.mdl-using { flex: 1 1 auto; font-size: .75rem; font-weight: 700; color: var(--ink-3); }
+.mdl-btn { flex: 0 0 auto; margin-left: 8px; padding: 9px 16px; border: 0; border-radius: 999px;
+  background: var(--ink); color: var(--paper); font-size: .78rem; font-weight: 600; }
+.mdl-btn.ghost { background: var(--raise); color: var(--ink-2); }
+.mdl-btn[disabled] { opacity: .52; }
+.mdl-hint { margin: 8px 0 0; font-size: .72rem; line-height: 1.5; color: var(--ink-3); }
+.mdl-acts .mdl-btn:first-child { margin-left: auto; }
 
 /* --- 题库：导入按钮 pill + 整叠卡片 deck（默认收起，点按展开） --- */
 #tab-bank .imp-btn{ display:inline-flex; align-items:center; gap:5px; height:30px; padding:0 12px;
@@ -2494,3 +3025,947 @@ button.stat-cell:active { background: var(--surface); }
 .oui-callout.warn .oui-callout-i{background:#d99b2b}
 .oui-callout.warn .oui-callout-i:before{content:"!"}
 .oui-callout.danger{border-color:rgba(217,84,77,.5)}
+/* --- 视频实时字幕 --- */
+/* fixed：横屏非全屏时播放器容器比视口高，absolute 的 bottom 会把字幕推出屏幕 */
+.bili-cap { position:fixed; left:50%; bottom:66px; transform:translateX(-50%);
+  width:max-content;
+  max-width:94%; padding:6px 12px; border-radius:12px; background:rgba(0,0,0,.66);
+  color:#fff; line-height:1.5; text-align:center; z-index:6;
+  text-shadow:0 1px 2px rgba(0,0,0,.6); pointer-events:none; }
+/* 单行：只显示当前这一句，断句后整行清空，下一句重开 */
+.bcap-cur { font-size:.98rem; font-weight:600; line-height:1.5; letter-spacing:.01em;
+  white-space:nowrap; overflow:hidden; text-overflow:clip; word-break:keep-all; }
+/* 整句轨（一句一条）：最多两行；更长的句子由脚本按「两行一页」翻页，不遮视频。
+   用 max-height 封顶而不是 -webkit-line-clamp：clamp 的 flex 换行和测量用块布局不一致，
+   放得下时也会补省略号。 */
+.bili-cap.cue .bcap-cur { white-space:normal; word-break:break-word; overflow:hidden;
+  max-height:calc(3em + 2px); }
+/* 新吐出的字淡入、末尾光标闪烁：让「逐字往外流」看得出来 */
+.bcap-new { animation:bcapIn .22s ease-out both; }
+@keyframes bcapIn { from { opacity:.2 } to { opacity:1 } }
+.bcap-caret { display:inline-block; width:2px; height:.95em; margin-left:2px;
+  border-radius:1px; background:currentColor; vertical-align:-.12em;
+  animation:bcapBlink .9s steps(1) infinite; }
+@keyframes bcapBlink { 0%,49% { opacity:.8 } 50%,100% { opacity:0 } }
+.bili-cap:not(.partial) .bcap-caret { display:none; }
+.bili-cc-btn span { font-size:.72rem; font-weight:800; letter-spacing:.5px; }
+.bili-cc-btn.on { background:var(--ink); color:var(--paper); }
+/* 播放器内的字幕生成进度条：不占通知栏也能看进度、随时取消 */
+
+/* ============================================================================
+   UI v3 视觉层（追加覆盖）
+   黑白灰不变；层次从「双向拟物投影」收成「细线 + 单层浅影 + 内凹只留给选中」，
+   圆角 22/16，字号阶梯与行高按 Apple + Material 3 收敛。
+   兼容性：不使用 flex gap / inset / color-mix（目标机 WebView 80）。
+   ============================================================================ */
+:root, [data-theme="light"] {
+  --raise: #F7F8FA;
+  --line: rgba(20, 22, 26, .075);
+  --sh: inset 0 1px 0 rgba(255,255,255,.75), 0 1px 2px rgba(20,22,26,.04), 0 14px 28px -22px rgba(20,22,26,.55);
+  --sh-sm: 0 1px 2px rgba(20,22,26,.04), 0 8px 18px -16px rgba(20,22,26,.45);
+  --sh-soft: 0 1px 2px rgba(20,22,26,.04), 0 14px 28px -22px rgba(20,22,26,.5);
+  --sink: inset 2px 2px 5px rgba(20,22,26,.07), inset -2px -2px 5px rgba(255,255,255,.8);
+  --r-card: 22px;
+  --r-in: 16px;
+}
+[data-theme="dark"] {
+  --raise: #202329;
+  --line: rgba(255,255,255,.07);
+  --sh: inset 0 1px 0 rgba(255,255,255,.045), 0 1px 2px rgba(0,0,0,.25), 0 16px 30px -24px rgba(0,0,0,.9);
+  --sh-sm: 0 1px 2px rgba(0,0,0,.3), 0 8px 18px -16px rgba(0,0,0,.8);
+  --sh-soft: 0 1px 2px rgba(0,0,0,.3), 0 14px 28px -22px rgba(0,0,0,.85);
+  --sink: inset 2px 2px 5px rgba(0,0,0,.5), inset -2px -2px 5px rgba(255,255,255,.03);
+}
+
+/* ---- 通用 ---- */
+.card { border: 1px solid var(--line); border-radius: var(--r-card); background: var(--raise); box-shadow: var(--sh); }
+.icon-btn { width: 40px; height: 40px; border-radius: 50%; background: var(--raise);
+            border: 1px solid var(--line); box-shadow: var(--sh); }
+.hello .txt h1 { font-size: 1.625rem; line-height: 1.2; letter-spacing: -.6px; font-weight: 700; }
+.hello { margin-bottom: 18px; }
+.sec-title b { font-size: 1.0625rem; letter-spacing: -.2px; }
+.sec-title span { font-size: .8125rem; }
+
+/* ---- 底栏：悬浮胶囊 + 滑动托底 ---- */
+.tabs { left: 16px; right: 16px; bottom: calc(var(--sb) + 10px);
+        height: 70px; padding: 0; align-items: center;
+        border-radius: 35px; background: var(--raise);
+        border: 1px solid rgba(255,255,255,.7);
+        box-shadow: var(--sh), 0 20px 44px -22px rgba(20,22,26,.35); }
+[data-theme="dark"] .tabs { border-color: rgba(255,255,255,.08); }
+.tab { height: 70px; padding: 0; display: flex; flex-direction: column;
+       align-items: center; justify-content: center; }
+.tab .ico { width: 22px; height: 22px; margin: 0 auto 3px;
+            transition: transform .22s cubic-bezier(.34,1.4,.64,1); }
+.tab span { font-size: .65625rem; letter-spacing: .2px; }
+.tab.on .ico { transform: translateY(-1px) scale(1.05); }
+.tab:active .ico { transform: scale(.92); }
+/* v3.1：指示器收成 58×30 的小托底，几何由 moveTabPill 行内写入（不再用 !important 锁死） */
+.tab-pill { border-radius: 15px;
+            background: var(--pill-bg); box-shadow: none; }
+.tab.ask-tab .ask-fish { width: 40px; height: 40px; }
+.tab.ask-tab { flex: 0 0 52px; }
+
+/* ---- 答题 ---- */
+.stem-card { border: 1px solid var(--line); box-shadow: var(--sh); }
+.stem { font-size: 1.125rem; line-height: 1.8; letter-spacing: -.1px; }
+.tag { border: 1px solid var(--line); background: var(--surface); box-shadow: none; }
+.tag.solid { background: var(--ink); border-color: var(--ink); color: var(--paper); }
+.opt { border: 1px solid var(--line); border-radius: 16px; background: var(--raise);
+       box-shadow: var(--sh); padding: 12px 16px 12px 14px; margin-bottom: 10px;
+       min-height: 58px; transition: transform .12s var(--ease), box-shadow .18s, opacity .18s; }
+.opt .k { flex: 0 0 30px; width: 30px; height: 30px; line-height: 30px; text-align: center;
+          border-radius: 10px; background: var(--surface); color: var(--ink-2);
+          font-size: .875rem; font-weight: 700; margin-right: 12px; }
+.opt .v { padding: 0 2px; }
+.opt:active { transform: scale(.985); box-shadow: var(--sink); }
+.opt.sel { background: var(--raise); border-color: transparent; box-shadow: var(--sink); }
+.opt.sel .k { background: var(--raise); color: var(--ink); }
+.opt.right { background: var(--ink); border-color: var(--ink); color: var(--paper);
+             box-shadow: 0 16px 32px -18px rgba(20,22,26,.65);
+             transform: scale(1.018); min-height: 62px; position: relative; z-index: 2; }
+.opt.right .k { background: rgba(255,255,255,.18); color: var(--paper); }
+.opt.right .m { color: var(--paper); }
+.opt.wrong { background: transparent; border: 1.5px dashed rgba(20,22,26,.18); box-shadow: none; }
+[data-theme="dark"] .opt.wrong { border-color: rgba(255,255,255,.2); }
+.opt.wrong .k { background: transparent; }
+.opt.miss { background: transparent; border: 1px solid var(--line); box-shadow: none; }
+.opt.miss .k { background: transparent; }
+.opt.dim { opacity: .45; }
+.verdict { border-radius: 18px; box-shadow: 0 14px 30px -16px rgba(20,22,26,.7); }
+.q-input, .rn-box { border-radius: 14px; border: 1px solid var(--line); background: var(--raise); }
+.tools button { border: 1px solid var(--line); border-radius: 14px; }
+.q-foot { border: 1px solid var(--foot-line); background: var(--foot-bg);
+          box-shadow: var(--sh), 0 18px 36px -24px rgba(20,22,26,.4); }
+.navrow .main { border: 0; background: var(--ink); color: var(--paper); }
+
+/* ---- 弹层 ---- */
+.sheet { background: var(--raise); border-radius: 30px 30px 0 0;
+         box-shadow: 0 -2px 0 rgba(255,255,255,.5), 0 -24px 60px -20px rgba(20,22,26,.4); }
+.handle { width: 38px; height: 5px; background: rgba(20,22,26,.18); }
+[data-theme="dark"] .handle { background: rgba(255,255,255,.22); }
+.glass { background: var(--raise); border-radius: 24px; }
+
+/* ---- 大肥鱼 ---- */
+.sheet.chat { background: var(--raise); border-radius: 30px 30px 0 0; }
+.sheet.chat.full { border-radius: 0; }
+.chat-head b { font-size: 1rem; font-weight: 700; min-width: 0;
+               white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.msg.me .bubble { border-radius: 18px 18px 6px 18px;
+                  box-shadow: 0 10px 22px -14px rgba(20,22,26,.7); }
+.msg.ai .blk { background: var(--raise); border: 1px solid var(--line);
+               border-radius: 18px; box-shadow: var(--sh-sm); }
+.msg.ai .bubble { border-top-left-radius: 6px; }
+.chat-in textarea { border-radius: 14px; border: 1px solid var(--line); background: var(--raise); }
+.chat-head .chat-cfg { border-radius: 999px; }
+
+/* ---- 组件收口 ---- */
+.grid button > b { border-radius: 12px; }
+.legend i { border-radius: 5px; }
+
+/* 执行过程放在回答上方：分隔线改到下方 */
+.msg.ai .blk-tools { margin-top: 0; margin-bottom: 8px; border-top: 0; padding-top: 0;
+                     border-bottom: 1px solid var(--line); padding-bottom: 6px; }
+
+/* v3：筛选胶囊不再画下划线（旧实现是一条「毛毛虫」），选中态只靠反色胶囊 */
+.tbar-u { display: none; }
+
+/* v3：播放器圆角跟卡片统一 */
+.bili-player video { border-radius: 20px; }
+#tab-video.bili-full .bili-player video { border-radius: 0; }
+
+/* ---- 首页 / 题库 / 统计：与设计稿对齐 ---- */
+.hello .txt h1 { font-size: 1.75rem; line-height: 1.18; letter-spacing: -.7px; }
+.hello .txt i { font-size: .8125rem; }
+.pl-hero { padding: 18px; border-radius: var(--r-card); border: 1px solid var(--line);
+           box-shadow: var(--sh); }
+.pl-hero-k { font-size: .8125rem; font-weight: 700; letter-spacing: .4px; color: var(--ink-2); }
+.pl-hero-num { font-size: 2.875rem; letter-spacing: -1.6px; }
+.pl-hero-unit { font-size: .875rem; }
+.rec { padding: 14px 0; }
+.rec .n { font-size: .9375rem; font-weight: 600; letter-spacing: -.1px; }
+.rec .n i { font-size: .78125rem; margin-top: 3px; }
+.rec .p b { font-size: 1.25rem; letter-spacing: -.4px; }
+.rec .p small { font-size: .65625rem; }
+
+.cat { height: 92px; display: grid; grid-template-columns: 1fr auto; grid-template-rows: auto 1fr auto;
+       align-items: start; padding: 12px; text-align: left;
+       border-radius: 18px; background: var(--raise); border: 1px solid var(--line); box-shadow: var(--sh); }
+.cat .ico { grid-column: 1; grid-row: 1; margin: 0; width: 22px; height: 22px; }
+.cat b { grid-column: 1; grid-row: 3; align-self: baseline; font-size: .84375rem; font-weight: 600;
+         letter-spacing: -.1px; margin: 0; }
+.cat i { grid-column: 2; grid-row: 3; align-self: baseline; justify-self: end; margin: 0;
+         font-size: .6875rem; color: var(--ink-3); }
+.cat:active { background: var(--raise); transform: scale(.975); }
+
+.bignum { font-size: 4rem; letter-spacing: -2px; }
+.res { padding: 15px 16px; }
+
+/* ============================================================================
+   UI v3.1 结构层（对照 design/ui-v3/prototype 落地）
+   大标题滚动收起 / Hero 对齐 / chips 筛选 / 错题卡 / 我的 ov+grp /
+   底栏 nav-ind + 悬浮 FAB / 答题 orb 头 + 浮动操作条 / 聊天浮动输入卡。
+   兼容约束：不用 color-mix / inset 简写 / flex gap / grid-rows 过渡（老 WebView）。
+   ============================================================================ */
+:root, [data-theme="light"] {
+  --card: #F7F8FA;
+  --card-2: #FBFCFD;
+  --line-2: rgba(20,22,26,.12);
+  --tint: rgba(20,22,26,.045);
+  --tint-2: rgba(20,22,26,.075);
+  --dot: #E5484D;
+  --spring: cubic-bezier(.34,1.4,.64,1);
+  --sh-float: inset 0 1px 0 rgba(255,255,255,.8), 0 1px 2px rgba(20,22,26,.05), 0 22px 44px -18px rgba(20,22,26,.30);
+}
+[data-theme="dark"] {
+  --card: #202329;
+  --card-2: #262A31;
+  --line-2: rgba(255,255,255,.12);
+  --tint: rgba(255,255,255,.055);
+  --tint-2: rgba(255,255,255,.08);
+  --sh-float: inset 0 1px 0 rgba(255,255,255,.06), 0 1px 2px rgba(0,0,0,.35), 0 24px 46px -18px rgba(0,0,0,.8);
+}
+.num { font-variant-numeric: tabular-nums; font-feature-settings: "tnum"; }
+
+/* ---- 页面骨架：左右 20，小节标题对齐原型 .sec ---- */
+.page { padding-left: 20px; padding-right: 20px; }
+.sec-title { margin: 26px 2px 10px; }
+.sec-title .link { color: var(--ink); font-weight: 500; }
+
+/* ---- 大标题区 .lt：32px，滚动后收成 22px、副标题隐去 ---- */
+.lt { display: flex; align-items: flex-end; justify-content: space-between; padding: 6px 2px 2px; }
+.lt .lt-tx { flex: 1; min-width: 0; }
+.lt .sub { font-size: .8125rem; color: var(--ink-2); letter-spacing: .1px; margin-bottom: 4px;
+           transition: opacity .18s, margin .18s; }
+.lt h1 { font-size: 2rem; line-height: 1.19; font-weight: 700; letter-spacing: -.7px;
+         transition: font-size .2s var(--ease), line-height .2s var(--ease); }
+.lt .bl { flex: 0 0 auto; display: flex; align-items: center; padding-bottom: 4px; }
+.lt .bl .orb + .orb { margin-left: 10px; }
+.page.scrolled .lt .sub { opacity: 0; height: 0; margin: 0; overflow: hidden; }
+.page.scrolled .lt h1 { font-size: 1.375rem; line-height: 1.27; }
+.orb { width: 40px; height: 40px; border-radius: 50%; flex: 0 0 auto; background: var(--card);
+       border: 1px solid var(--line); box-shadow: var(--sh); color: var(--ink);
+       display: inline-flex; align-items: center; justify-content: center;
+       transition: transform .12s var(--ease), background .15s; }
+.orb:active { transform: scale(.94); }
+.orb .ico { width: 20px; height: 20px; stroke-width: 1.75; }
+
+/* ---- 首页 Hero：与原型 .hero 对齐 ---- */
+.pl-hero { margin-top: 14px; }
+.pl-hero-num { font-size: 2.875rem; line-height: 1.05; }
+.pl-bar { height: 6px; border-radius: 3px; background: var(--tint-2); }
+.pl-bar i { border-radius: 3px; }
+.pl-chips { flex-wrap: nowrap; overflow-x: auto; overflow-y: hidden; margin: 14px 0 0;
+            scrollbar-width: none; }
+.pl-chips::-webkit-scrollbar { display: none; }
+.pl-chip { flex: 0 0 auto; height: 26px; display: inline-flex; align-items: center;
+           margin: 0 6px 0 0; padding: 0 10px; border-radius: 999px; max-width: 158px;
+           background: var(--surface); border: 1px solid var(--line);
+           font-size: .71875rem; color: var(--ink-2); }
+.pl-chip b { font-weight: 600; color: var(--ink); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.pl-chip span { margin-left: 6px; opacity: .8; font-variant-numeric: tabular-nums; }
+.pl-cta { margin: 16px -5px 0; }
+.pl-cta button { height: 46px; padding: 0; border-radius: 999px; font-size: .9375rem; font-weight: 600; }
+.pl-go { box-shadow: 0 8px 18px -10px rgba(20,22,26,.6); }
+.pl-alt { background: var(--tint); border: 1px solid var(--line); }
+
+/* ---- 列表卡（近期刷题 / 最近观看）：原型 .list 内边距 ---- */
+.card.list { padding: 2px 14px; }
+#tab-home .card.list { padding: 2px 14px; }
+.vh-thumb { flex: 0 0 92px; width: 92px; height: 52px; border-radius: 12px; }
+
+/* ---- 题库：chips 筛选（替代 tbar） ---- */
+.chips { display: flex; overflow-x: auto; overflow-y: hidden; scrollbar-width: none;
+         margin: 0 0 14px; }
+.chips::-webkit-scrollbar { display: none; }
+.chips .chip { flex: 0 0 auto; height: 40px; padding: 0 16px; margin-right: 8px;
+               border-radius: 999px; display: inline-flex; align-items: center;
+               font-size: .84375rem; font-weight: 500; color: var(--ink-2);
+               border: 1px solid var(--line-2); background: transparent;
+               transition: background .2s var(--ease), color .2s, border-color .2s, transform .12s var(--ease); }
+.chips .chip:active { transform: scale(.96); }
+.chips .chip.on { background: var(--ink); border-color: var(--ink); color: var(--paper); font-weight: 600; }
+
+/* ---- 题库：错题本入口卡（原型 .wrong） ---- */
+.card.wrong { display: flex; align-items: center; width: 100%; padding: 16px 18px; text-align: left;
+              transition: transform .12s var(--ease); }
+.card.wrong:active { transform: scale(.985); }
+.card.wrong .bx { width: 24px; height: 24px; border-radius: 8px; background: var(--ink);
+                  display: flex; align-items: center; justify-content: center; flex: 0 0 auto; }
+.card.wrong .bx .ico { width: 14px; height: 14px; stroke: var(--paper); stroke-width: 2.4; }
+.card.wrong .tx { flex: 1; min-width: 0; margin: 0 14px; }
+.card.wrong .tx b { display: block; font-size: .9375rem; font-weight: 600; }
+.card.wrong .tx em { display: block; font-style: normal; font-size: .75rem; line-height: 1.42;
+                     color: var(--ink-2); margin-top: 3px; }
+.card.wrong .n { font-size: .9375rem; font-weight: 700; font-variant-numeric: tabular-nums; flex: 0 0 auto; }
+
+/* ---- 题库：展开卡操作按钮对齐原型 .ops .btn ---- */
+.btn { height: 46px; border-radius: 999px; padding: 0 20px; display: inline-flex;
+       align-items: center; justify-content: center; font-size: .9375rem; font-weight: 600;
+       transition: transform .12s var(--ease), background .15s, opacity .15s; }
+.btn:active { transform: scale(.97); }
+.btn.primary { background: var(--ink); color: var(--paper); box-shadow: 0 8px 18px -10px rgba(20,22,26,.6); }
+.btn.tonal { background: var(--tint); color: var(--ink); border: 1px solid var(--line); }
+#bankList .bk-acts .btn { flex: 1; height: 40px; font-size: .84375rem; padding: 0; }
+#bankList .bk-acts .btn + .btn { margin-left: 8px; }
+#bankList .bc-swipe-hint { font-size: .71875rem; color: var(--ink-3); margin-top: 10px; text-align: center; }
+
+/* ---- 我的：概览卡 ov（内部仍是 stat-* 结构） ---- */
+.card.ov { padding: 18px; }
+.ov .stat-head { margin-bottom: 0; }
+.ov .stat-head b { font-size: .9375rem; font-weight: 700; }
+.ov .stat-head span { font-size: .78125rem; color: var(--ink-2); }
+.ov .stat-grid { margin-top: 16px; }
+.ov .stat-cell { text-align: left; padding: 2px 0 2px 14px; border-left: 1px solid var(--line); border-radius: 0; }
+.ov .stat-cell:first-child { padding-left: 0; border-left: 0; }
+.ov .stat-cell b { font-size: 1.625rem; line-height: 1.23; font-weight: 700; letter-spacing: -.8px;
+                   font-variant-numeric: tabular-nums; }
+.ov .stat-cell span { font-size: .71875rem; color: var(--ink-2); margin-top: 4px; }
+.ov button.stat-cell:active { background: none; opacity: .7; }
+.ov .stat-prog { margin-top: 18px; padding-top: 14px; }
+.ov .stat-prog .lab { align-items: baseline; }
+.ov .stat-prog .lab span { font-size: .78125rem; }
+.ov .stat-prog .lab b { font-size: 1.0625rem; font-weight: 700; font-variant-numeric: tabular-nums; }
+.ov .stat-prog .pl-bar { margin-top: 10px; }
+
+/* ---- 我的：设置分组（set-list > set-grp > grp > row） ----
+   15 行塞一张卡里，标题/说明/开关节奏完全一致，视觉上就是「堆在一起」。
+   分组后每组自带一个小组标题 + 右侧延伸细线，行前加 30px 图标底，行间细线从图标右边起，
+   留出左侧一条连续的白，纵向节奏立刻分级。 */
+.set-list { display: block; }
+.set-grp { margin-top: 26px; }
+.set-grp:first-child { margin-top: 4px; }
+/* 组标题：不再拉一条延伸线凑装饰，小字宽字距 + 右侧一句真实摘要 */
+.set-lab { display: flex; align-items: baseline; margin: 0 3px 10px;
+           font-size: .6875rem; font-weight: 500; letter-spacing: .16em; color: var(--ink-2); }
+.set-lab b { font-weight: 500; }
+.set-lab small { margin-left: auto; font-size: .6875rem; letter-spacing: .02em; color: var(--ink-2); }
+.set-lab > i { display: none; }
+.grp { background: var(--card); border: 1px solid var(--line); border-radius: 20px;
+       box-shadow: var(--sh-sm); overflow: hidden; position: relative; }
+/* Chromium 80 的 flex gap 不生效，间距一律用 margin。
+   行统一 60px、两侧 16 内边距；行间细线两侧内缩，不做成表格线 */
+.grp .row { position: relative; display: flex; align-items: center;
+            padding: 0 16px; min-height: 60px; border-bottom: 0;
+            transition: background .15s; -webkit-tap-highlight-color: transparent; }
+.grp .row + .row::before { content: ""; position: absolute; left: 16px; right: 16px; top: 0;
+            height: 1px; background: var(--line); }
+.grp .row:active { background: var(--tint); transform: none; }
+/* 图标：删掉 30px 灰底方块（最像模板的元素），20px 线稿直接立在行首。
+   颜色取 --ink-2 而不是 --ink-3：去掉底块后 --ink-3 在深色卡上几乎看不见；
+   线条收到 1.35 保它比标题轻一档，不会抢。 */
+.ri { flex: 0 0 20px; width: 20px; height: 20px; border-radius: 0; background: transparent;
+      margin-right: 15px; color: var(--ink-2);
+      display: flex; align-items: center; justify-content: center; }
+.ri .ico { width: 20px; height: 20px; margin: 0; stroke-width: 1.55; }
+/* 文字列：标题 15px/600，说明降为 --ink-3 */
+.rc { flex: 1; min-width: 0; }
+.rc b { display: block; font-size: .9375rem; font-weight: 600; letter-spacing: -.1px;
+        line-height: 1.25; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.rc em { display: block; font-style: normal; font-size: .6875rem; color: var(--ink-3);
+         margin-top: 3px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.re { flex: 0 0 auto; display: flex; align-items: center; }
+/* 右侧值：一行能扫眼读完的状态，替代原来那段解释腔副标 */
+.re .rv { flex: 0 0 auto; max-width: 116px; margin-right: 6px;
+          font-size: .75rem; color: var(--ink-2); font-variant-numeric: tabular-nums;
+          white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.re .chev { font-size: .9375rem; line-height: 1; color: var(--ink-3); padding-right: 2px; }
+/* 危险行（清空进度）单独用警示色，和上面 14 行区分开 */
+.grp .row[data-k="clear"] .rc b { color: var(--danger); }
+.grp .row[data-k="clear"] .ri { background: transparent; color: var(--danger); }
+.grp .row[data-k="clear"] .ri .ico { stroke: var(--danger); }
+/* 第 42 轮：无框分组 —— 只留组首一条线和行间细线，不要卡壳。
+   设置页因此有两种容器节奏（有框的内容组 / 无框的元信息组），不再是一张模子复制五遍。 */
+.grp.bare { background: transparent; border: 0; border-top: 1px solid var(--line);
+            border-radius: 0; box-shadow: none; }
+.grp.bare .row { padding: 0 16px; }
+.grp.bare .row + .row::before { left: 0; right: 0; }
+.grp.bare .row:active { background: transparent; }
+/* 开关：42×25、圆点 19，跟 60px 行高配比；打开时用 --ink 实底（跟全局黑白语言一致） */
+.sw { flex: 0 0 42px; width: 42px; height: 25px; border-radius: 13px; background: var(--line-2);
+      box-shadow: inset 0 1px 3px rgba(20,22,26,.14); transition: background .18s var(--ease); }
+.sw:after { top: 3px; left: 3px; width: 19px; height: 19px; }
+.sw.on { background: var(--ink); box-shadow: none; }
+/* 圆点跟着卡片色走：深色下 --ink 本身接近白，圆点若还是 #fff 就和轨道糊成一片 */
+.sw.on:after { transform: translateX(17px); background: var(--card-2); }
+
+/* ---- 底栏：悬浮胶囊 + 中央 FAB ---- */
+/* 这里刻意不要 backdrop-filter：带滤镜的元素会被单独合成一层，Chrome 80 的 WebView 里
+   这层会盖在换肤快照（.reveal，z-index 1200）之上，波扫不到它就换色。原来的模糊在 94%
+   不透明度下几乎看不出来，去掉后用不透明度补齐一样的观感。 */
+.tabs { background: var(--bar-bg); border: 1px solid var(--bar-line);
+        box-shadow: var(--sh-float); }
+.tab span { font-size: .65625rem; font-weight: 500; }
+.tab.on span { font-weight: 700; }
+.fabwrap { flex: 0 0 74px; height: 70px; display: flex; align-items: center; justify-content: center; position: relative; }
+.ask-fab { position: relative; width: 54px; height: 54px; border-radius: 50%;
+           background: var(--card-2); border: 1px solid var(--fab-line);
+           box-shadow: var(--fab-sh);
+           display: flex; align-items: center; justify-content: center;
+           transform: translateY(-10px); transition: transform .12s var(--ease); }
+.ask-fab:active { transform: translateY(-10px) scale(.94); }
+.ask-fab img { position: absolute; top: 8px; left: 8px; width: 36px; height: 36px;
+               object-fit: contain; display: block; opacity: 0; }
+.ask-fab .ag-l { opacity: 1; }
+[data-theme="dark"] .ask-fab .ag-l { opacity: 0; }
+[data-theme="dark"] .ask-fab .ag-d { opacity: 1; }
+.ask-fab .ring { position: absolute; top: -4px; left: -4px; right: -4px; bottom: -4px;
+                 border-radius: 50%; border: 1px solid var(--line); pointer-events: none; }
+.ask-fab .ask-dot { display: none; position: absolute; top: 0; right: 0; width: 10px; height: 10px;
+                   border-radius: 50%; background: var(--dot); border: 2px solid var(--card-2); }
+.ask-fab.unread .ask-dot { display: block; }
+/* 回退换肤快照里的鱼图跟随快照自身主题 */
+.reveal[data-theme="light"] .ask-fab .ag-l { opacity: 1; }
+.reveal[data-theme="light"] .ask-fab .ag-d { opacity: 0; }
+
+/* ---- 答题页：orb 头 + 浮动操作条（原型 .foot） ---- */
+.q-head .orb { flex: 0 0 40px; width: 40px; height: 40px; }
+.q-head .orb + .orb { margin-left: 10px; }
+.q-head .ti { margin: 0 10px; }
+.q-head .ti b { font-size: 1rem; letter-spacing: -.2px; }
+.q-head .ti small { font-size: .71875rem; font-variant-numeric: tabular-nums; }
+/* 答题页底部操作条：同样不要 backdrop-filter（原因见底栏那条注释），并且必须是实底——
+   它压在滚动区上面，半透明会把滚过来的解析文字透出来（旧版靠模糊糊住，去掉模糊后变成
+   能看清的鬼影）。这里直接用不透明的卡片色。 */
+.q-foot { background: var(--foot-bg); border: 1px solid var(--foot-line);
+          box-shadow: var(--sh-float); padding: 12px; }
+.navrow .side { flex: 0 0 auto; height: 48px; padding: 0 18px; border-radius: 16px;
+                background: var(--tint); border: 0; font-size: .875rem; font-weight: 600; color: var(--ink-2); }
+.navrow .side:active { background: var(--tint-2); }
+.navrow .main { flex: 1; height: 48px; padding: 0; border-radius: 16px; font-size: .9375rem; font-weight: 700;
+                box-shadow: 0 10px 22px -12px rgba(20,22,26,.75); }
+.navrow .ask { flex: 0 0 44px; width: 44px; height: 44px; border-radius: 50%; }
+.navrow .ask img { width: 38px; height: 38px; margin: 3px auto 0; }
+.ask-hint { font-size: .6875rem; color: var(--ink-3); }
+.pill { margin: 8px auto 0; height: 24px; width: max-content; padding: 0 12px; border-radius: 999px;
+        background: var(--tint); display: flex; align-items: center; font-size: .6875rem;
+        color: var(--ink-2); font-variant-numeric: tabular-nums; letter-spacing: 0; }
+
+/* ---- 大肥鱼：头部圆钮 + 浮动输入卡（原型 chead/cfoot） ---- */
+.chat-head .ava { width: 36px; height: 36px; flex-basis: 36px; }
+.chat-head .chat-cfg.chat-ico { width: 38px; height: 38px; padding: 0; border-radius: 50%;
+                                background: none; border: 0; color: var(--ink-2);
+                                display: inline-flex; align-items: center; justify-content: center; }
+.chat-head .chat-cfg.chat-ico .ico { width: 19px; height: 19px; stroke-width: 1.8; }
+.chat-head .chat-cfg.chat-ico.on { background: var(--tint); color: var(--ink); }
+.chat-head .chat-cfg:not(.chat-ico) { height: 30px; padding: 0 11px; border-radius: 999px;
+                                      background: none; border: 1px solid var(--line-2);
+                                      font-size: .78125rem; font-weight: 600; color: var(--ink-2);
+                                      display: inline-flex; align-items: center; }
+.chat-in { background: var(--card-2); border: 1px solid rgba(255,255,255,.85); border-radius: 26px;
+           box-shadow: var(--sh-float); padding: 8px 8px 8px 10px; }
+[data-theme="dark"] .chat-in { border-color: rgba(255,255,255,.08); }
+.chat-in textarea { min-height: 42px; border: 0; background: transparent; padding: 10px 2px;
+                    border-radius: 0; box-shadow: none; }
+.chat-in textarea:focus { border: 0; }
+.chat-att { width: 40px; height: 40px; border-radius: 50%; }
+.chat-send { height: 42px; padding: 0 18px; border-radius: 21px; font-size: .875rem; font-weight: 700; }
+
+/* ---- 视频页：头部对齐原型 navh，卡片对齐 v3 ---- */
+.bili-head { display: flex; align-items: center; padding: 6px 0 10px; }
+.bili-head h2 { flex: 1; text-align: center; font-size: 1rem; font-weight: 700; }
+.bili-back { width: 40px; height: 40px; border-radius: 50%; background: var(--card);
+             border: 1px solid var(--line); box-shadow: var(--sh); color: var(--ink);
+             font-size: 1.25rem; line-height: 1; display: inline-flex; align-items: center; justify-content: center; }
+.bili-head i { flex: 0 0 40px; }
+.bili-card { background: var(--card); border: 1px solid var(--line); border-radius: 20px; box-shadow: var(--sh); }
+
+/* ---- 统计整页：大数字对齐原型 72px ---- */
+#fs .bignum { font-size: 4.5rem; line-height: 1.06; letter-spacing: -3px; text-align: center;
+             font-variant-numeric: tabular-nums; }
+#fs .bignum + .cap { text-align: center; }
+
+/* ---- v3.1 收尾细节 ---- */
+/* 题库分类折叠钮：收起时箭头翻转（syncCatsFold 只写 aria-expanded） */
+#catsToggle .ar { transition: transform .3s var(--ease); }
+#catsToggle[aria-expanded="false"] .ar { transform: rotate(-180deg); }
+/* 答题操作条与页面左右留白对齐（原型 .foot 左右 16） */
+.q-foot { left: 16px; right: 16px; }
+/* 答题页鱼钮去掉通用按钮描边，只留鱼图 */
+.navrow .ask { border: 0; }
+
+/* ---- Chrome 80 兼容：flex gap 不可用，聊天头/输入条改用 margin  spacing ---- */
+.chat-head { gap: 0; }
+.chat-head .chat-cfg { margin-left: 6px; }
+.chat-in { gap: 0; }
+.chat-in > * + * { margin-left: 8px; }
+/* ---- v3.1-fix：底栏托底 / 输入条发送钮 / 聊天三档停位 ---- */
+/* 附件钮保持 40 的 flex 基准（Chrome 80 无 gap，靠 margin 间距） */
+.chat-att { flex: 0 0 40px; }
+/* 托底改成盖住图标+文字后高度变了，圆角跟着放大 */
+.tab-pill { border-radius: 18px; }
+/* 发送钮：定宽 64 + 左右 18px 内边距只剩 28px 内容宽，「发送」被挤成竖排两行溢出胶囊。
+   改为按文字宽度自适应、禁止换行 */
+.chat-send { flex: 0 0 auto; width: auto; min-width: 64px; padding: 0 16px; white-space: nowrap; }
+/* 空会话时输入卡保留上内边距，文字不贴圆角边 */
+.chat-hero .chat-in { padding-top: 8px; }
+/* 键盘弹起时 hero 会被压扁，裁掉溢出避免大头像盖住头部 */
+.chat-hero { overflow: hidden; }
+/* 拖动把手：热区放大到 44×18，视觉仍是细杆 */
+.chat .handle { position: relative; width: 44px; height: 18px; margin: 6px auto 0; background: transparent; }
+.chat .handle::after { content: ""; position: absolute; left: 50%; top: 6px; width: 38px; height: 5px;
+                       margin-left: -19px; border-radius: 3px; background: rgba(20, 22, 26, .18); }
+[data-theme="dark"] .chat .handle::after { background: rgba(255, 255, 255, .22); }
+/* 拖动跟手时不要过渡；松手由这条把面板吸到目标停位（1/2 · 2/3 · 全屏） */
+.sheet.chat { transition: transform .22s var(--ease), height .2s var(--ease), max-height .2s var(--ease); }
+.sheet.chat.dragging { transition: none; }
+/* 三档拖动：整块面板不参与浏览器滚动手势，只有消息列表保留纵向滚动。
+   原来只对把手和头部写 touch-action:none，从主体区往上拖时会被 WebView 判成
+   「页面滚动」直接 pointercancel，表现就是往下能拉、往上拉不动。 */
+.sheet.chat { touch-action: none; }
+.sheet.chat .chat-list { touch-action: pan-y; }
+/* 拖到档位时的可视反馈：把手横杆弹一下并加深，配合原生短震 */
+@keyframes detent-tick {
+  0%   { transform: scaleX(1);   opacity: .55; }
+  38%  { transform: scaleX(1.45); opacity: 1; }
+  100% { transform: scaleX(1);   opacity: .55; }
+}
+.sheet.chat.tick .handle::after { animation: detent-tick .36s var(--ease); }
+@media (prefers-reduced-motion: reduce) {
+  .sheet.chat.tick .handle::after { animation: none; }
+}
+
+/* ============================================================================
+   v3.2：底栏收口 + 题型卡重排
+   ============================================================================ */
+
+/* 1. 底栏。原来托底（.tab-pill）是绝对定位的独立元素，58×55 的方块在两端的
+   35px 圆角里必然露出去一截，视觉上就是「选中色块长出胶囊」。整条按胶囊裁切后，
+   托底只会顺着圆角被切，不再有方块角露在外面的情况。
+   同时把中间那颗大肥鱼也收进胶囊：原来 translateY(-10px) + ring 外扩 4px，
+   圆脑袋顶出 6px，看着像被底栏的白边削掉一口。 */
+.tabs { padding: 0 6px; overflow: hidden; }
+.tab, #tabs .tab { flex: 1 1 0; min-width: 0; height: auto; align-self: stretch; }
+.fabwrap { flex: 0 0 66px; height: auto; align-self: stretch; }
+.ask-fab { transform: none; }
+.ask-fab:active { transform: scale(.94); }
+.ask-fab .ring { top: 0; left: 0; right: 0; bottom: 0; }
+.tab-pill, #tabPill { border-radius: 22px; }
+
+/* 2. 题型卡。原来是 height:92px 定高 + grid 三行，110% 字号下「N 题」被挤到
+   圆角边框上、还被裁掉半截；数量用的 --ink-3（#A2A7AF）在白底上几乎看不见。
+   改成「图标 / 名称 / 题数」一条左对齐的竖列，定高换最小高度，题数换 --ink-2。 */
+.cat, #tab-bank .cat {
+  height: auto; min-height: 100px;
+  display: flex; flex-direction: column; align-items: flex-start;
+  padding: 14px 12px 13px; text-align: left;
+}
+.cat .ico, #tab-bank .cat .ico { margin: 0 0 10px; width: 22px; height: 22px; }
+.cat b, #tab-bank .cat b {
+  font-size: .8125rem; font-weight: 600; line-height: 1.35; letter-spacing: -.1px;
+  width: 100%; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.cat i, #tab-bank .cat i {
+  margin: 4px 0 0; font-size: .75rem; font-weight: 500; line-height: 1.3;
+  color: var(--ink-2); font-variant-numeric: tabular-nums;
+}
+
+/* ==========================================================================
+   交互 / 动效升级（第二十七轮）
+   1) 视频页：列表错峰入场、骨架加载、按下反馈、播放中标记、播放页与抽屉入场
+   2) 全局：tab 切换的页面淡入、选中的 tab 图标轻弹、圆形按钮按下缩放
+   缓动统一走 --ease（cubic-bezier(0.16,1,0.3,1)），时长 150-300ms，克制不晃。
+   ========================================================================== */
+@keyframes riseIn {
+  from { opacity: 0; transform: translateY(10px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+@keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+@keyframes tabPop { 0% { transform: scale(1); } 55% { transform: scale(1.09); } 100% { transform: scale(1); } }
+@keyframes skShake { 0% { background-position: 100% 50%; } 100% { background-position: 0 50%; } }
+@keyframes drawerIn { from { opacity: 0; transform: translateX(18px); } to { opacity: 1; transform: none; } }
+@keyframes ttIn { from { opacity: .25; transform: translateY(-5px); } to { opacity: 1; transform: none; } }
+
+/* ---- 列表入场：只在前 9 条错峰，90ms 内全部起完，长列表不至于一直等着 ----
+   动画只在首屏挂 .animv 时生效；加载更多 / 轮询重画不再重播，否则整列表会每 2 秒跳一次 */
+.bili-list.animv .bili-folder, .bili-list.animv .bili-v {
+  animation: riseIn .28s var(--ease) backwards;
+  animation-delay: calc(var(--i, 0) * 34ms);
+}
+
+/* ---- 骨架加载：比「加载中…」四个字更像在干活 ---- */
+.bili-sk { display: flex; flex-direction: column; }
+.bili-sk-i { display: block; height: 88px; margin-bottom: 10px; border-radius: var(--r-in);
+  background: linear-gradient(90deg, var(--raise) 25%, var(--surface) 37%, var(--raise) 63%);
+  background-size: 400% 100%; animation: skShake 1.4s ease-in-out infinite; }
+.bili-sk .bili-sk-i:last-child { margin-bottom: 0; }
+.bili-loadtxt { padding: 12px 0 2px; text-align: center; font-size: .75rem; color: var(--ink-3); }
+
+/* ---- 按下反馈：原来的 .995 几乎看不出来，改成 .982 + 阴影收进去 ---- */
+.bili-folder, .bili-v { transition: transform .16s var(--ease), box-shadow .16s var(--ease); }
+.bili-folder:active, .bili-v:active { transform: scale(.982); box-shadow: none; }
+.bili-folder:active .bili-fbadge { transform: scale(1.05); }
+.bili-fbadge { transition: transform .16s var(--ease); }
+.bili-v:active .bili-vthumb img { transform: scale(1.05); }
+.bili-vthumb img { transition: transform .3s var(--ease); }
+.bili-rt { transition: transform .16s var(--ease); }
+.bili-folder:active .bili-rt { transform: translateX(3px); }
+.bili-more:active, .bili-eptog .ep-all:active { transform: scale(.96); }
+.bili-more { transition: transform .16s var(--ease); }
+
+/* ---- 正在播放的那一条：左侧竖条 + 标题下一枚小胶囊 ---- */
+.bili-v.on { box-shadow: var(--sh-soft), inset 3px 0 0 var(--ink); }
+.bili-now { display: inline-block; margin-left: 8px; padding: 1px 7px; border-radius: 999px;
+  background: var(--pill-bg); color: var(--ink); font-size: .625rem; font-style: normal;
+  line-height: 1.5; vertical-align: 1px; }
+
+/* ---- 选集行：按下用底色回应，不再整行缩 1% ——行是通栏的，缩起来会连隔壁行一起抖 ---- */
+.bili-ep:active { background: var(--pill-bg); }
+.bili-ep.on .ep-n { animation: tabPop .3s var(--ease); }
+.bili-eptog:active { opacity: .7; }
+
+/* ---- 播放页：视频层淡入、信息卡与选集升起，别让整页「啪」地出现 ---- */
+.bili-player { animation: fadeIn .26s var(--ease); }
+.bili-player + .card { animation: riseIn .3s var(--ease) backwards; animation-delay: 60ms; }
+/* 控制条显隐带上位移，不只是透明度 */
+.bili-ctl { transition: opacity .22s var(--ease), transform .22s var(--ease); }
+#tab-video.bili-full.chrome-hidden .bili-topbar { opacity: 0; transform: translateY(-8px); }
+#tab-video.bili-full .bili-topbar { transition: opacity .22s var(--ease), transform .22s var(--ease); }
+/* 选集抽屉从右滑进来（它是 absolute 覆盖层，不给 display 加过渡，只能靠入场动画） */
+.bili-epdrawer.on { animation: drawerIn .26s var(--ease); }
+.bili-epdrawer .epd-item { transition: background .16s var(--ease), border-color .16s var(--ease); }
+.bili-epdrawer .epd-item:active { background: rgba(255,255,255,.1); }
+
+/* ---- 标题换文案时淡一下 ---- */
+#biliTitle.tt-flash { animation: ttIn .3s var(--ease); }
+
+/* ---- 全局：tab 切页淡入 + 选中图标轻弹 + 圆形按钮按下 ---- */
+.page.on { animation: fadeIn .26s var(--ease); }
+.tab .ico { transition: transform .2s var(--ease); }
+.tab.on .ico { animation: tabPop .32s var(--ease); }
+.orb:active, .tab:active .ico { transform: scale(.94); }
+.toast { animation: fadeIn .2s ease-out; }
+.bili-empty { animation: fadeIn .24s var(--ease); }
+
+/* 选集抽屉：原来是一块贴边的纯黑，补一点浮层感（左侧圆角 + 外投影 + 头部同圆角） */
+.bili-epdrawer { border-radius: 14px 0 0 14px; box-shadow: -10px 0 28px rgba(0,0,0,.38); overflow: hidden; }
+.bili-epdrawer .epd-head { border-radius: 14px 0 0 0; }
+.bili-epdrawer .epd-item.on { box-shadow: 0 0 0 1px rgba(255,255,255,.9) inset; }
+
+/* 抽屉底部原来是被播放器底边硬切断的，四角补齐后当作一张完整浮层；列表底边渐隐提示还能继续滚 */
+.bili-epdrawer { border-radius: 14px 0 0 14px; }
+.bili-epdrawer .epd-list { -webkit-mask-image: linear-gradient(#000 calc(100% - 26px), rgba(0,0,0,0) 100%); }
+
+/* ============================ 字幕识别「暂停 / 继续」 ============================
+   暂停不是取消：队列项退回排队、断点与已下好的音频都留着，点继续从断点接着跑。 */
+/* 识别页份区标题右侧的胶囊按钮（暂停 / 继续识别） */
+.sp-pb { margin-left: auto; flex: 0 0 auto; padding: 5px 12px; border-radius: 999px;
+  border: 1px solid var(--line); color: var(--ink-2); font-size: .6875rem;
+  font-style: normal; line-height: 1; white-space: nowrap; }
+.sp-pb:active { transform: scale(.96); }
+.sp-pb { transition: transform .16s var(--ease), border-color .2s var(--ease), color .2s var(--ease); }
+.sp-pb.on { border-color: var(--ink); color: var(--ink); }
+
+/* 暂停态卡片：一颗静止的暂停点 + 两行说明，不做呼吸（静止才像「停住了」） */
+.sp-pause { display: flex; align-items: center; margin-top: 2px; padding: 14px 16px;
+  border-radius: 16px; background: var(--raise); border: 1px solid var(--line); }
+.sp-pause-ic { flex: 0 0 auto; width: 30px; height: 30px; margin-right: 12px;
+  border-radius: 50%; background: var(--pill-bg); position: relative; }
+.sp-pause-ic::before, .sp-pause-ic::after { content: ""; position: absolute; top: 9px;
+  width: 3px; height: 12px; border-radius: 2px; background: var(--ink-3); }
+.sp-pause-ic::before { left: 10px; }
+.sp-pause-ic::after  { left: 17px; }
+.sp-pause-l b { display: block; font-size: .8125rem; font-weight: 600; line-height: 1.5; }
+.sp-pause-l small { display: block; margin-top: 3px; font-size: .6875rem;
+  color: var(--ink-2); line-height: 1.5; }
+
+/* 收藏页入口卡的暂停态：点右侧那枚「继续」直接恢复，不必进识别页 */
+.jobs-entry.paused { }
+.jobs-e-play { margin-left: 8px; flex: 0 0 auto; padding: 4px 11px; border-radius: 999px;
+  border: 1px solid var(--ink); color: var(--ink); font-size: .6875rem; font-style: normal;
+  line-height: 1; white-space: nowrap; }
+.jobs-e-play:active { transform: scale(.95); }
+.jobs-entry.paused .jobs-e-dot { background: var(--ink-3); }
+
+/* 暂停交接中的那张「运行卡」：这一段还在收尾，把整套科技感动画全部按停，
+   只留静态进度——用户一眼就能看出「已经停了，只是在收尾」。 */
+.sp-run.hold { animation: none; border-color: var(--line); box-shadow: none; }
+.sp-run.hold::after { animation: none; opacity: 0; }
+.sp-run.hold .sp-wave i { animation: none; transform: scaleY(.32); }
+.sp-run.hold .sp-run-p { color: var(--ink-2); }
+
+/* ======================= 暂停面板（重排：提高辨识度） =======================
+   原来暂停只是一行灰字 + 一条平卡，看不出「停住了」。现在：左侧 ink 竖条压阵、
+   44px 徽章、17px 大标题、下一集预告知、底部一整条实心主按钮。 */
+.sp-pz { position: relative; margin-top: 2px; padding: 16px 16px 14px;
+  border-radius: 18px; background: var(--card); border: 1px solid var(--line);
+  box-shadow: var(--sh-soft); overflow: hidden;
+  animation: pzIn .26s var(--ease) both; }
+/* 暂停面板顶部一道极淡的 ink 分隔，只在卡片上沿露一点，不做整条竖边（深色下竖边会消失） */
+@keyframes pzIn {
+  from { opacity: 0; transform: translateY(8px) scale(.995); }
+  to   { opacity: 1; transform: none; }
+}
+.sp-pz-hd { display: flex; align-items: center; }
+.sp-pz-ic { flex: 0 0 auto; width: 44px; height: 44px; margin-right: 13px;
+  border-radius: 50%; background: var(--pill-bg); position: relative;
+  box-shadow: inset 0 0 0 1px rgba(127,127,127,.22); }
+.sp-pz-ic::before, .sp-pz-ic::after { content: ""; position: absolute; top: 14px;
+  width: 4px; height: 16px; border-radius: 2px; background: var(--ink); }
+.sp-pz-ic::before { left: 14px; }
+.sp-pz-ic::after  { left: 26px; }
+.sp-pz-l b { display: block; font-size: 1.0625rem; font-weight: 700; line-height: 1.3;
+  letter-spacing: .01em; }
+.sp-pz-l small { display: block; margin-top: 4px; font-size: .75rem; color: var(--ink-2);
+  font-variant-numeric: tabular-nums; line-height: 1.4; }
+.sp-pz-nx { margin-top: 13px; font-size: .75rem; color: var(--ink-2); line-height: 1.5;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.sp-pz-nx em { font-style: normal; font-weight: 600; color: var(--ink); }
+.sp-pz-tip { margin-top: 5px; font-size: .6875rem; color: var(--ink-3); line-height: 1.5; }
+.sp-pz-btn { display: flex; align-items: center; justify-content: center; height: 42px;
+  margin-top: 14px; border-radius: 12px; background: var(--ink); color: var(--paper);
+  font-size: .875rem; font-weight: 600; letter-spacing: .02em;
+  transition: transform .16s var(--ease), opacity .16s var(--ease); }
+.sp-pz-btn:active { transform: scale(.985); opacity: .92; }
+.sp-pz-play { width: 0; height: 0; margin-right: 8px; border-left: 9px solid currentColor;
+  border-top: 5.5px solid transparent; border-bottom: 5.5px solid transparent; }
+
+/* 收藏页入口卡的「继续」也从细描边升级成实心小按钮，跟识别页保持同一套语言 */
+.jobs-e-play { margin-left: 8px; flex: 0 0 auto; padding: 6px 13px; border-radius: 999px;
+  border: 0; background: var(--ink); color: var(--paper);
+  font-size: .6875rem; font-weight: 600; font-style: normal; line-height: 1.15;
+  white-space: nowrap; }
+
+/* ============ 运行卡里的「暂停识别」：从标题行小胶囊升级成卡内主按钮 ============
+   进度条独占一行（原来被按钮挤掉一半），按钮行左「暂停识别」实心、右「取消」弱化。 */
+.sp-run-bar { flex: 0 0 auto; display: block; width: 100%; height: 4px; margin-top: 12px;
+  border-radius: 4px; background: var(--line); overflow: hidden; }
+.sp-run-foot { display: flex; align-items: center; margin-top: 10px; }
+.sp-run-pz { flex: 1 1 auto; min-width: 0; display: flex; align-items: center;
+  justify-content: center; height: 34px; border-radius: 10px;
+  background: var(--ink); color: var(--paper); font-size: .8125rem; font-weight: 600;
+  font-style: normal; letter-spacing: .02em;
+  transition: transform .16s var(--ease), opacity .16s var(--ease); }
+.sp-run-pz:active { transform: scale(.985); opacity: .92; }
+/* 暂停图标：两根竖条；继续时换成播放三角 */
+.sp-run-pz-ic { position: relative; width: 13px; height: 13px; margin-right: 8px;
+  flex: 0 0 auto; color: currentColor; }
+.sp-run-pz-ic::before, .sp-run-pz-ic::after { content: ""; position: absolute; top: 0;
+  width: 3.5px; height: 13px; border-radius: 2px; background: currentColor; }
+.sp-run-pz-ic::before { left: 1px; }
+.sp-run-pz-ic::after  { left: 8.5px; }
+.sp-run-pz-ic.play::before, .sp-run-pz-ic.play::after { display: none; }
+.sp-run-pz-ic.play { width: 0; height: 0; top: 0; border-left: 10px solid currentColor;
+  border-top: 6.5px solid transparent; border-bottom: 6.5px solid transparent; }
+.sp-run-x { flex: 0 0 auto; margin-left: 10px; height: 34px; padding: 0 14px;
+  display: flex; align-items: center; border-radius: 10px;
+  background: rgba(127,127,127,.12); font-size: .75rem; color: var(--ink-2);
+  font-style: normal; cursor: pointer; transition: background .15s ease-out; }
+.sp-run-x:active { background: rgba(127,127,127,.22); }
+
+/* ============== 第 31 轮：按钮平分 + 排队项左滑 + 总进度 + 全部完成空态 ============== */
+/* 运行卡两个按钮各占一半；「取消」改叫「取消识别」，和「暂停识别」对称 */
+.sp-run-pz { flex: 1 1 0; }
+.sp-run-x { flex: 1 1 0; margin-left: 10px; padding: 0; justify-content: center;
+  height: 34px; font-size: .8125rem; font-weight: 600; border-radius: 10px;
+  background: rgba(127,127,127,.12); color: var(--ink-2); }
+
+/* 整体进度：已完成 / 全部 */
+.sp-prog { margin-bottom: 18px; padding: 12px 14px; border-radius: 14px;
+  background: var(--raise); border: 1px solid var(--line); }
+.sp-prog-top { display: flex; align-items: baseline; justify-content: space-between;
+  font-size: .75rem; color: var(--ink-2); }
+.sp-prog-top b { font-size: .8125rem; color: var(--ink); font-variant-numeric: tabular-nums; }
+.sp-prog-bar { display: block; height: 6px; margin-top: 9px; border-radius: 6px;
+  background: var(--line); overflow: hidden; }
+.sp-prog-bar b { display: block; height: 100%; border-radius: 6px; background: var(--ink);
+  transition: width .6s var(--ease); }
+
+/* 排队清单：每项一张独立卡，卡面左滑露出右侧动作层 */
+.sp-q-list { display: block; }
+.sp-q-card { position: relative; margin-bottom: 8px; border-radius: 14px;
+  overflow: hidden; background: var(--line); }
+.sp-q-acts { position: absolute; top: 0; right: 0; bottom: 0; width: 152px;
+  display: flex; }
+.sp-q-act { flex: 1 1 0; display: flex; align-items: center; justify-content: center;
+  text-align: center; font-size: .75rem; font-weight: 600; font-style: normal;
+  line-height: 1.35; }
+.sp-q-act.jump { background: var(--ink); color: var(--paper); }
+.sp-q-act.del  { background: rgba(127,127,127,.3); color: var(--ink); }
+.sp-q-act:active { opacity: .88; }
+.sp-q-face { position: relative; display: flex; align-items: flex-start;
+  padding: 12px 13px; border-radius: 14px; background: var(--raise);
+  border: 1px solid var(--line);
+  transition: transform .22s var(--ease); will-change: transform; }
+.sp-q-card.open .sp-q-face { transform: translateX(-152px); }
+.sp-q-face:active { background: rgba(127,127,127,.06); }
+.sp-q-pct { flex: 0 0 auto; margin-left: 8px; font-size: .6875rem; font-style: normal;
+  color: var(--ink-3); font-variant-numeric: tabular-nums; align-self: center; }
+.sp-q-l span { display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+/* 队列跑空：整页一句「目前没有视频需要识别哦」 */
+.sp-done-all { margin-top: 6px; padding: 46px 22px 44px; text-align: center;
+  border: 1px dashed var(--line); border-radius: 18px;
+  animation: pzIn .26s var(--ease) both; }
+.sp-da-ic { display: block; width: 56px; height: 56px; margin: 0 auto 16px; line-height: 56px;
+  border-radius: 50%; background: var(--pill-bg); color: var(--ink);
+  font-size: 26px; font-style: normal; font-weight: 700; }
+.sp-done-all b { display: block; font-size: 1rem; font-weight: 600; }
+.sp-done-all small { display: block; margin-top: 8px; font-size: .75rem; color: var(--ink-2);
+  line-height: 1.6; }
+
+/* 左滑展开后：左边缘柔和淡出，别让标题被硬切一半 */
+.sp-q-card.open .sp-q-face { border-radius: 0 14px 14px 0; }
+.sp-q-card.open::after { content: ""; position: absolute; left: 0; top: 0; bottom: 0; width: 34px;
+  z-index: 2; pointer-events: none;
+  background: linear-gradient(90deg, var(--paper), rgba(0,0,0,0)); }
+
+/* 横向手势归 JS、纵向仍交给列表滚动：不加这句 Chromium 会在 touchmove
+   之前就把手势锁成滚动，导致 preventDefault 失效、左滑划不动 */
+.sp-q-card, .sp-q-face { touch-action: pan-y; }
+
+/* ========== 第 32 轮：左滑动作区重做（两个独立功能键，不再是两块色块硬拼） ========== */
+/* 掀开后露出的底色用页面底，两个键像悬浮在卡后，而不是一块白板填满 */
+.sp-q-card { background: var(--paper); }
+.sp-q-acts { align-items: center; padding: 6px; box-sizing: border-box; background: var(--paper); }
+.sp-q-act { flex: 1 1 0; min-width: 0; height: 100%; padding: 0 2px;
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  border-radius: 11px; font-size: .8125rem; font-weight: 600; font-style: normal;
+  line-height: 1.15; letter-spacing: .01em; text-align: center;
+  /* 入场：贴在最右侧，卡面掀开时往左推 10px 淡入 */
+  opacity: 0; transform: translateX(10px) scale(.96);
+  transition: opacity .2s var(--ease), transform .2s var(--ease), box-shadow .2s var(--ease); }
+.sp-q-card.open .sp-q-act { opacity: 1; transform: none; }
+.sp-q-act + .sp-q-act { margin-left: 6px; }
+.sp-q-act b { display: block; font-size: 16px; font-weight: 700; line-height: 1;
+  margin-bottom: 5px; }
+/* 主操作：实心墨底 + 一点落影，一眼是「能点的那个」 */
+.sp-q-act.jump { background: var(--ink); color: var(--paper);
+  box-shadow: 0 3px 10px rgba(0, 0, 0, .22); }
+/* 破坏性操作：弱底 + 细内描边，不抢主操作，也不至于看不见 */
+.sp-q-act.del { background: rgba(127, 127, 127, .14); color: var(--ink-2);
+  box-shadow: inset 0 0 0 1px var(--line); }
+.sp-q-act.jump:active { transform: scale(.96); box-shadow: 0 1px 4px rgba(0, 0, 0, .2); }
+.sp-q-act.del:active  { transform: scale(.96); background: rgba(127, 127, 127, .22); }
+/* 未展开时按钮不该能点到（虽然被卡面盖住，动画期间注册的点击也要挡掉） */
+.sp-q-act { pointer-events: none; }
+.sp-q-card.open .sp-q-act { pointer-events: auto; }
+
+/* 收一轮留白：按钮不再顶满整卡高度，四周留出空隙，像「掀开后浮着的两个键」 */
+.sp-q-acts { padding: 9px 8px; }
+.sp-q-act { border-radius: 12px; }
+.sp-q-act b { font-size: 15px; margin-bottom: 4px; }
+.sp-q-act.jump { font-weight: 700; }
+
+/* 动作区加宽 6px：4 字标题不再贴边（位移量必须同步 BILI_QW = 158） */
+.sp-q-acts { width: 158px; }
+.sp-q-card.open .sp-q-face { transform: translateX(-158px); }
+
+/* ========== 第 33 轮：排队卡整体放宽，卡内降拥挤 ========== */
+/* 卡片向两侧各扩 6px（正文左右 14px → 8px），标题可用宽度多出 12px */
+.sp-q-list { margin-left: -6px; margin-right: -6px; }
+/* 卡内左右内距 13 → 14，序号列加宽并拉开与标题的距离 */
+.sp-q-face { padding: 12px 14px; }
+.sp-q-n { width: 24px; margin-right: 6px; }
+/* 进度百分比与标题之间留口气 */
+.sp-q-pct { margin-left: 10px; }
+/* 视频名那行原来 10px 太小，抬到 11px */
+.sp-q-l small { font-size: .6875rem; }
+
+/* 只往右扩：左侧与「排队中」标题对齐，右边多借 8px，整块看着更长但不歪 */
+.sp-q-list { margin-left: 0; margin-right: -8px; }
+
+/* 标题独占整行：百分比挪到副标题行最右，别再把标题挤成省略号 */
+.sp-q-sub { display: flex; align-items: baseline; margin-top: 2px; }
+.sp-q-sub small { flex: 1 1 auto; min-width: 0; margin-top: 0; overflow: hidden;
+  text-overflow: ellipsis; white-space: nowrap; }
+.sp-q-sub .sp-q-pct { flex: 0 0 auto; margin-left: auto; padding-left: 10px;
+  align-self: baseline; }
+
+/* ========== 第 34 轮：排队卡统一成大卡 + 动作键文字竖排两行 ========== */
+/* 所有排队卡同高（84px），有没有视频名都一样高，整列不再参差 */
+.sp-q-face { min-height: 84px; align-items: center; padding: 14px 15px; }
+.sp-q-n { width: 26px; margin-right: 8px; align-self: center; font-size: .8125rem; }
+.sp-q-l span { font-size: .875rem; }
+.sp-q-l small, .sp-q-sub small { font-size: .75rem; }
+.sp-q-sub { margin-top: 4px; }
+/* 动作键：2 字一行竖排，13px 字在 68px 宽里富余，不会顶到边 */
+.sp-q-act { padding: 0; letter-spacing: 0; }
+.sp-q-act em { display: block; font-style: normal; line-height: 1.28; }
+.sp-q-act b { font-size: 15px; margin-bottom: 4px; }
+
+/* 序号回到标题同一行（避免垂直居中时被推到标题下面），整块垂直居中 */
+.sp-q-face { flex-direction: column; align-items: stretch; justify-content: center; }
+.sp-q-row { display: flex; align-items: baseline; }
+.sp-q-n { flex: 0 0 auto; width: 26px; margin: 0 8px 0 0; align-self: baseline;
+  text-align: right; }
+/* 副标题缩进到与标题文字左对齐 */
+.sp-q-sub { padding-left: 34px; }
+
+/* ========== 第 37 轮：无数据空态重做 ========== */
+/* 首页「近期刷题 / 最近观看」空态：原来是一行灰字塞在灰卡里，看着像灰胶囊 / 输入框，
+   也只是一个占位符。改成 图标 + 一句结论 + 一句"这里会出现什么" + 右侧下一步，
+   和上面的列表行共用一套骨架 —— 空的时候也像内容，不像报错。 */
+.empty-row { display: flex; align-items: center; width: 100%; padding: 15px 2px;
+             background: none; border: 0; color: inherit; text-align: left; }
+.empty-row:active { opacity: .62; }
+.empty-row .er-ic { flex: 0 0 20px; width: 20px; height: 20px; margin-right: 15px;
+                    display: flex; align-items: center; justify-content: center; color: var(--ink-2); }
+.empty-row .er-ic .ico { width: 20px; height: 20px; margin: 0; stroke-width: 1.55; }
+.empty-row .er-tx { flex: 1; min-width: 0; }
+.empty-row .er-tx b { display: block; font-size: .9375rem; font-weight: 600; line-height: 1.3;
+                      white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.empty-row .er-tx em { display: block; font-style: normal; font-size: .75rem;
+                       color: var(--ink-2); margin-top: 3px;
+                       white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.empty-row .er-go { flex: 0 0 auto; margin-left: 12px; font-size: .8125rem;
+                    font-weight: 600; color: var(--ink); }
+
+/* 视频收藏未绑定：居中构图。上方留 20vh 让整块落在视口垂直中线附近
+   （顶栏已占掉 ~110px，13vh 时整块重心偏上，看着像没加载完，下面空掉一大半）。
+   图标用 --ink-2 不套灰底块：46px 裸线稿已经够撑住画面，加底块就回到模板感。 */
+.bili-blank { padding: 20vh 24px 0; text-align: center; }
+.bili-blank .bb-ic { display: block; width: 46px; height: 46px; margin: 0 auto 20px; color: var(--ink-2); }
+.bili-blank .bb-ic .ico { width: 46px; height: 46px; margin: 0; stroke-width: 1.4; }
+.bili-blank b { display: block; font-size: 1.0625rem; font-weight: 700; letter-spacing: -.2px; }
+.bili-blank em { display: block; font-style: normal; font-size: .8125rem; color: var(--ink-2);
+                 line-height: 1.65; margin: 10px auto 0; max-width: 300px; }
+.bili-blank .bili-btn { margin-top: 22px; height: 46px; padding: 0 30px;
+                        font-size: .9375rem; font-weight: 600; border-radius: 999px; }
+
+/* ========== 第 38 轮：「我的」页学习概览去模板化 + 数字动效 ========== */
+/* 原来这里是三个 30px 的 0 等权并排、中间两条竖线、下面再拉一条独立一行的完成率：
+   三格等权没有主次，竖线是表格感，全 0 的时候三个零并排尤其刺眼。
+   现在主指标独占左侧大数字，错题 / 收藏降级成右侧两个小指标（不画竖线），
+   完成率收成「标签 · 进度条 · 百分比」一行。 */
+.ov .ov-row { display: flex; align-items: flex-end; margin-top: 16px; }
+.ov .ov-num { flex: 1; min-width: 0; }
+/* inline-block 才吃得到 transform（bump 缩放动画要靠它） */
+.ov .ov-num b { display: inline-block; font-size: 1.875rem; font-weight: 800;
+                letter-spacing: -1.2px; line-height: 1.08; font-variant-numeric: tabular-nums; }
+.ov .ov-num em { font-style: normal; font-size: .75rem; font-weight: 600;
+                 color: var(--ink-2); margin-left: 5px; }
+.ov .ov-num span { display: block; font-size: .71875rem; color: var(--ink-2); margin-top: 4px; }
+.ov .ov-mini { display: flex; flex: 0 0 auto; align-items: flex-end; }
+/* 两个小指标仍是按钮，热区给到 44 高（文字贴底，视觉位置不变），
+   否则只有一行 17px 的字能点，手指很难压准 */
+.ov .ov-m { appearance: none; -webkit-appearance: none; border: 0; background: none;
+            color: inherit; font: inherit; text-align: right;
+            min-height: 44px; padding: 0 0 0 22px;
+            display: flex; flex-direction: column; justify-content: flex-end; }
+.ov .ov-m b { display: block; font-size: 1.0625rem; font-weight: 700; letter-spacing: -.4px;
+              line-height: 1.2; font-variant-numeric: tabular-nums; }
+.ov .ov-m span { display: block; font-size: .71875rem; color: var(--ink-2); margin-top: 3px; }
+.ov .ov-m:active { opacity: .6; }
+/* 完成率一行：标签固定、条撑满中间、百分比右对齐 */
+.ov .ov-rate { display: flex; align-items: center; margin-top: 18px; }
+.ov .ov-rate > span { flex: 0 0 auto; font-size: .71875rem; color: var(--ink-2); margin-right: 12px; }
+.ov .ov-rate .pl-bar { flex: 1; height: 5px; border-radius: 3px; background: var(--tint-2); }
+.ov .ov-rate .pl-bar i { width: 0; border-radius: 3px;
+                         transition: width .72s cubic-bezier(.16, 1, .3, 1); }
+.ov .ov-rate b { flex: 0 0 auto; margin-left: 12px; font-size: .8125rem; font-weight: 700;
+                 font-variant-numeric: tabular-nums; }
+
+/* 入场：每次切到「我的」，整卡淡入上浮一次（goTab 里把 ovIntroPending 置 true） */
+.card.ov.ov-in { animation: ovIn .36s var(--ease); }
+@keyframes ovIn {
+  from { opacity: 0; transform: translateY(10px); }
+  to   { opacity: 1; transform: none; }
+}
+/* 数字变化时跳一下：刷完题回来，0 → 新值能看见"涨了" */
+#meStat .stat-n.bump { animation: numBump .34s var(--ease); }
+@keyframes numBump {
+  0%   { transform: scale(1); }
+  40%  { transform: scale(1.14); }
+  100% { transform: scale(1); }
+}
