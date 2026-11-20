@@ -34,7 +34,7 @@ if (!token) {
 const HEADERS = { "User-Agent": "GIme-make-release", Authorization: `token ${token}`,
   Accept: "application/vnd.github+json", "Content-Type": "application/json" };
 
-async function api(method, url, body) {
+async function apiOnce(method, url, body) {
   const res = await fetch(url.startsWith("http") ? url : API + url, {
     method, headers: HEADERS, body: body ? JSON.stringify(body) : undefined,
   });
@@ -43,6 +43,19 @@ async function api(method, url, body) {
   try { json = JSON.parse(text); } catch { /* 非 JSON */ }
   if (!res.ok) throw new Error(`${method} ${url} -> ${res.status} ${(json && JSON.stringify(json).slice(0, 300)) || text.slice(0, 200)}`);
   return json;
+}
+
+/* 到 api.github.com 的握手时不时超时（undici 默认 10s），单发失败不代表接口有问题 */
+async function api(method, url, body) {
+  for (let i = 0; i < 4; i++) {
+    try { return await apiOnce(method, url, body); }
+    catch (e) {
+      const transient = /fetch failed|ConnectTimeout|UND_ERR|socket hang up|ECONNRESET|EAI_AGAIN/i.test(String(e.message));
+      if (!transient || i === 3) throw e;
+      console.log(`  ~ 重试 ${i + 1}/4（${String(e.cause?.code || e.message).slice(0, 60)}）`);
+      await new Promise((r) => setTimeout(r, 2000 + i * 1500));
+    }
+  }
 }
 
 const bullets = fs.readFileSync(bodyFile, "utf8").split(/\r?\n/).filter((l) => l.trim())
@@ -69,20 +82,34 @@ for (const p of [apkPath, srcPath, ...extraAssets]) {
   const name = path.basename(abs);
   const bytes = fs.readFileSync(abs);
   const same = (rel.assets || []).filter((a) => a.name === name);
+  let exists = false;
   for (const a of same) {
-    if (a.size === bytes.length) { console.log(`  资产已存在且字节相同，跳过：${name}`); continue; }
+    if (a.size === bytes.length) { console.log(`  资产已存在且字节相同，跳过：${name}`); exists = true; break; }
     await api("DELETE", `${API}/repos/${REPO}/releases/assets/${a.id}`);
     console.log(`  旧资产字节不同，已删：${name}`);
   }
-  const up = await fetch(`${uploadBase}?name=${encodeURIComponent(name)}`, {
-    method: "POST",
-    headers: { "User-Agent": "GIme-make-release", Authorization: `token ${token}`,
-      "Content-Type": "application/octet-stream", Accept: "application/vnd.github+json" },
-    body: bytes,
-  });
-  const j = await up.json().catch(() => null);
-  if (!up.ok) throw new Error(`上传 ${name} -> ${up.status} ${JSON.stringify(j).slice(0, 300)}`);
-  console.log(`  已上传 ${name}  ${bytes.length}B  下载数配额=${j.download_count}`);
+  if (exists) continue;
+  /* uploads.github.com 在国内容易握手超时，大包单发失败率更高，这里必须重试 */
+  let j = null;
+  for (let i = 0; i < 6; i++) {
+    try {
+      const up = await fetch(`${uploadBase}?name=${encodeURIComponent(name)}`, {
+        method: "POST",
+        headers: { "User-Agent": "GIme-make-release", Authorization: `token ${token}`,
+          "Content-Type": "application/octet-stream", Accept: "application/vnd.github+json" },
+        body: bytes,
+      });
+      j = await up.json().catch(() => null);
+      if (up.ok) break;
+      throw new Error(`上传 ${name} -> ${up.status} ${JSON.stringify(j).slice(0, 300)}`);
+    } catch (e) {
+      const transient = /fetch failed|timeout|UND_ERR|socket hang up|ECONNRESET/i.test(String(e.message) + String(e.cause?.code || ""));
+      if (!transient || i === 5) throw e;
+      console.log(`  ~ 上传重试 ${i + 1}/6（${String(e.cause?.code || e.message).slice(0, 50)}）`);
+      await new Promise((r) => setTimeout(r, 3000 + i * 3000));
+    }
+  }
+  console.log(`  已上传 ${name}  ${bytes.length}B  下载数配额=${j && j.download_count}`);
 }
 
 const after = await api("GET", `${API}/repos/${REPO}/releases/tags/${tag}`);

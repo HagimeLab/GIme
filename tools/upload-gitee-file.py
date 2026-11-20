@@ -59,6 +59,8 @@ def main():
     ap.add_argument("--name", default=None)
     ap.add_argument("--body", default="")
     ap.add_argument("--file", required=True)
+    ap.add_argument("--drop", default="",
+                   help="先删掉的附件名，逗号分隔；用于同名同尺寸无法识别的旧包换新包")
     a = ap.parse_args()
 
     token = os.environ.get("GITEE_TOKEN", "").strip()
@@ -82,6 +84,12 @@ def main():
 
     existing = api("GET", "/repos/%s/%s/releases/%s/attach_files" % (a.owner, a.repo, rid), token,
                    params={"per_page": 100}) or []
+    drops = [x.strip() for x in a.drop.split(",") if x.strip()]
+    for x in existing:
+        if x.get("name") in drops:
+            print("! 按名字删旧附件：%s（%s 字节）" % (x.get("name"), x.get("size")))
+            api("DELETE", "/repos/%s/%s/releases/%s/attach_files/%s" % (a.owner, a.repo, rid, x.get("id")), token)
+            existing = [y for y in existing if y.get("id") != x.get("id")]
     for x in existing:
         if x.get("name") == name:
             if int(x.get("size", -1)) == size:
