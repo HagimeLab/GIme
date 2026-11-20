@@ -31,10 +31,12 @@ foreach ($f in @($apkPath, $srcPath)) {
 }
 
 Write-Host "== querying release $Tag =="
+# 匿名调用会吃 60 次/小时限额（核验一次就要十几次），有令牌就带上
+$ghHeaders = @{ "User-Agent" = "GIme-release-verify"; "Accept" = "application/vnd.github+json" }
+if ($env:GITHUB_TOKEN) { $ghHeaders["Authorization"] = "token $env:GITHUB_TOKEN" }
 try {
     $rel = Invoke-RestMethod -Uri "https://api.github.com/repos/$Repo/releases/tags/$Tag" `
-        -Headers @{ "User-Agent" = "GIme-release-verify"; "Accept" = "application/vnd.github+json" } `
-        -TimeoutSec 30
+        -Headers $ghHeaders -TimeoutSec 30
 }
 catch {
     Write-Host "cannot read release: $($_.Exception.Message)" -ForegroundColor Red
@@ -73,6 +75,11 @@ foreach ($name in $expect.Keys) {
     }
 }
 foreach ($a in $rel.assets) {
+    # 模型包也挂在同一个 Release 上，不在本地 -Apk/-Source 比对范围内，按名字放行即可
+    if ($a.name -match '^gime-asr-.*\.zip$') {
+        Write-Host "    model asset: $($a.name) ($($a.size) bytes)"
+        continue
+    }
     if (-not $expect.ContainsKey($a.name)) { Write-Host "    note: unexpected asset '$($a.name)'" -ForegroundColor Yellow }
 }
 
@@ -100,7 +107,7 @@ Write-Host "== update notes length (release/manifest) =="
 # otherwise the dialog fills the whole phone screen.
 try {
     $mf = Invoke-RestMethod -Uri "https://api.github.com/repos/$Repo/contents/release/latest.json?ref=main" `
-        -Headers @{ "User-Agent" = "GIme-release-verify"; "Accept" = "application/vnd.github+json" } -TimeoutSec 30
+        -Headers $ghHeaders -TimeoutSec 30
     $mjson = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String(($mf.content -replace '\s', '')))
     $manifest = $mjson | ConvertFrom-Json
     $mnotes = @($manifest.notes | Where-Object { ("$_").Trim() -ne "" })
