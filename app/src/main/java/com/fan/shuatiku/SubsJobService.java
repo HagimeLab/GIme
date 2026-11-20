@@ -166,6 +166,8 @@ public class SubsJobService extends Service {
 
     @Override public void onDestroy() {
         sAlive = false;
+        if (pubH != null) pubH.removeCallbacks(pubTick);
+        if (pubHT != null) { pubHT.quitSafely(); pubHT = null; pubH = null; }
         releaseLocks();
         super.onDestroy();
     }
@@ -400,6 +402,144 @@ public class SubsJobService extends Service {
         }
     }
 
+    /* ---------- 对外进度：唯一的平滑与播报出口 ----------
+       同一个任务原来有三路各走各的：系统通知读中枢的瞬时值（0.35 秒一档）、
+       收藏页状态卡读队列里上一次落盘的值（最多差 2 秒）、识别页运行卡自己还套了
+       一层从 0 往上追的缓动。三处摆在一起就是「一个追一个」，能差出十来个点。
+       现在真值只进这里，抹成一条坡之后队列和通知都只写这一个显示值，
+       三处读同一个数，最差也只差一次轮询（≤1 秒）里的 0.2 个点。 */
+    private static final class PctSmooth {
+        private double v = -1, t = 0, tmax = 0;
+        private long tt = 0;
+        synchronized void reset(double p) {
+            v = t = tmax = p;
+            tt = System.currentTimeMillis();
+        }
+        synchronized void truth(double p) {
+            long now = System.currentTimeMillis();
+            if (v < 0) { v = t = tmax = p; tt = now; return; }
+            /* 真值往下掉超过 0.3 点：续跑重算过断点，显示值直接落地，别让条子往回爬 */
+            if (p < t - 0.3) { v = t = tmax = p; tt = now; return; }
+            if (p > tmax) tmax = p;
+            /* 只有真值真的往上走才算「上游还在动」。识别一段的时候上游会把同一个数
+               每 0.4 秒反复喂进来，连持平都刷新 tt 的话蹭进永远起不来，
+               真值一停就是几十秒的死值（真机拍到 54.88 一动不动 25 秒）。 */
+            if (p > t) { t = p; tt = now; }
+        }
+        /* 0.25 秒推一次：真值在上头就追（单档最多 0.5 点），追平之后不管真值动没动
+           都按 0.15%/秒 匀速往前，领先真值最多 3.2 点、封顶 95。
+           三个参数都是真机逼出来的：① 单档 0.5 点上限——识别一段 2 分钟音频常常一秒多
+           就跑完，段内 70% 的权重全砸在这一秒里，不限速就是一跳五六个点（拍到 71.65→76.99）；
+           ② 追平后仍要自己走——识别一段 9 分钟的音频，真值折算下来每秒才 0.02 个点，
+           两位小数四舍五入后条子字面冻结（拍到 47.93 一动不动 15 秒）；
+           ③ 领先窗口要给 3.2 点——刚蹭 2 点就撞上限等于又冻住。 */
+        synchronized double step() {
+            if (v < 0) return -1;
+            if (v < t) {
+                v += Math.min(Math.max(0.04, (t - v) * 0.22), 0.50);
+                if (v > t) v = t;
+            } else {
+                /* 只封 95、不再压「领先真值多少」：真值在一段识别里能连续几十秒纹丝不动
+                   （模型在跑但回调一个数都不给），压窗口就等于给条子判死刑 */
+                if (v < 95.0) v = Math.min(95.0, v + 0.0375);
+            }
+            return v;
+        }
+    }
+
+    private final PctSmooth sm = new PctSmooth();
+    private String pubB = "", pubName = "", pubHead = "";
+    private int pubP = 0;
+    private double pubShown = -1;
+    private long pubLastMs = 0;             /* 上一次真正发通知的时刻（下载回调是按块来的） */
+    private boolean pubDet = true;          /* 总长未知时会话挂起数字，三处一起挂 */
+    private android.os.HandlerThread pubHT;
+    private android.os.Handler pubH;
+    /* 进度台放在自己的后台线程：它每 0.5 秒要写一次队列文件 + 重建通知，
+       压在主线程上会和正在滑动的界面抢帧（大肥鱼那块刚修的就是这件事） */
+    private android.os.Handler pubHandler() {
+        if (pubH == null) {
+            pubHT = new android.os.HandlerThread("subs-prog");
+            pubHT.start();
+            pubH = new android.os.Handler(pubHT.getLooper());
+        }
+        return pubH;
+    }
+    private volatile boolean pubAlive = false;   /* 进度台该不该继续投递：只有 pubBegin/pubEnd 能动它 */
+    private final Runnable pubTick = new Runnable() {
+        @Override public void run() {
+            try {
+                if (!pubAlive) return;
+                /* 暂停/让位只是这一拍不上屏，绝不能让 tick 自己死掉：
+                   原来这一支直接 return 会让 again=false，之后只要真值不涨，
+                   条子就彻底停在原地（真机拍到 54.88 冻 25 秒、86.26 冻 6 秒）。 */
+                if (!paused && !yielding && pubDet) {
+                    double v = sm.step();
+                    /* 上屏步长 0.03 点：0.15%/秒 的匀速爬升，档位粗一点条子就走成一格一格 */
+                    if (v >= 0 && v > pubShown + 0.03) {
+                        pubShown = v;
+                        pubLastMs = System.currentTimeMillis();
+                        SubsStore.setProgress(SubsJobService.this, pubB, pubP, (int) Math.round(v * 100), 10000);
+                        notifyProgress(pubHead + " · " + fmtPct(v), v, 100, pubB, pubP);
+                    }
+                }
+            } catch (Throwable ignored) {
+            } finally {
+                if (pubAlive && pubH != null) pubH.postDelayed(this, 250);
+            }
+        }
+    };
+
+    private void pubBegin(String bvid, int page, String name) {
+        pubB = bvid;
+        pubP = page;
+        pubName = name;
+        pubHead = "字幕君正在生成 " + name;
+        pubShown = -1;
+        pubDet = true;
+        pubLastMs = 0;
+        sm.reset(0);
+        pubAlive = true;
+        pubHandler().removeCallbacks(pubTick);
+        pubHandler().postDelayed(pubTick, 250);
+    }
+    private void pubEnd() {
+        pubAlive = false;
+        if (pubH != null) pubH.removeCallbacks(pubTick);
+    }
+    /* 有真值：抹平后同时写队列和通知——这就是三处唯一的数据源。
+       下载回调是按 64KB 一块来的，不在这儿限速的话通知会按块重刷（每块一次系统 IPC）。 */
+    private void pubPct(String head, double truth) {
+        pubHead = head;
+        pubDet = true;
+        sm.truth(truth);
+        long now = System.currentTimeMillis();
+        if (now - pubLastMs < 220 && truth < 99.9) return;
+        pubFlush(false);
+    }
+    /* 只有阶段、没有可算的百分比（上游不给总长）：三处一起转「处理中」，别一人一个数 */
+    private void pubUnknown(String head) {
+        pubHead = head;
+        pubDet = false;
+        pubShown = -1;
+        sm.reset(0);
+        SubsStore.setProgress(this, pubB, pubP, 0, 0);
+        notifyProgress(head, 0, 0, pubB, pubP);
+    }
+    /* 只换阶段文案，不动数值：解码/识别切换时没必要把百分比清成 0 再爬回来 */
+    private void pubStage(String stage) {
+        pubHead = "字幕君正在生成 " + pubName + " · " + stage;
+    }
+    private void pubFlush(boolean force) {
+        double v = sm.step();
+        if (v < 0) return;
+        if (!force && v <= pubShown + 0.009) return;
+        pubShown = v;
+        pubLastMs = System.currentTimeMillis();
+        SubsStore.setProgress(this, pubB, pubP, (int) Math.round(v * 100), 10000);
+        notifyProgress(pubHead + " · " + fmtPct(v), v, 100, pubB, pubP);
+    }
+
     private boolean runOne(String bvid, int page, String title) throws PausedRun {
         /* 媒体缓存：优先 .m4a（DASH 纯音频），兼容旧 .mp4（整段视频）；变量名沿用 mp4 */
         File mp4 = null;
@@ -414,7 +554,8 @@ public class SubsJobService extends Service {
                 return true;
             }
             String name = title == null || title.isEmpty() ? ("P" + page) : title;
-            notifyProgress("字幕君正在生成 " + name + " · " + fmtPct(0.0), 0, 100, bvid, page);
+            pubBegin(bvid, page, name);
+            pubFlush(true);
 
             String ck = cookie();
             if (ck.isEmpty()) return false;
@@ -466,6 +607,9 @@ public class SubsJobService extends Service {
 
             boolean mp4Ready = cacheComplete(mp4);
             if (!mp4Ready) {
+                /* 阶段先标成下载：识别页运行卡的文案（"下载音频"）和通知里那句走同一份队列数据，
+                    否则卡上还写着"模型识别中"、通知里写着"正在下载"，看着就是两件事 */
+                try { SubsStore.setStage(this, fb, fp, "download"); } catch (Throwable ignored) { }
                 /* 有完成标记但长度对不上：旧文件不可信，清掉重下；
                    只有半截文件、没有标记时走 Range 续传。 */
                 if (doneMark.isFile() && (!mp4.isFile() || markerLen(doneMark) != mp4.length())) {
@@ -486,13 +630,9 @@ public class SubsJobService extends Service {
                                    上游不给长度时不要报固定 3%（会看起来卡死），交不确定态。 */
                                 if (total > 0) {
                                     double pct = Math.min(30.0, 1.0 + 29.0 * done / total);
-                                    SubsStore.setProgress(SubsJobService.this, fb, fp,
-                                            (int) Math.round(pct * 100), 10000);
-                                    notifyProgress("字幕君正在下载 " + fname + " · " + fmtPct(pct),
-                                            pct, 100, fb, fp);
+                                    pubPct("字幕君正在下载 " + fname, pct);
                                 } else {
-                                    SubsStore.setProgress(SubsJobService.this, fb, fp, 0, 0);
-                                    notifyProgress("字幕君正在下载 " + fname, 0, 0, fb, fp);
+                                    pubUnknown("字幕君正在下载 " + fname);
                                 }
                             }
                         });
@@ -503,20 +643,23 @@ public class SubsJobService extends Service {
                         throw pe;          /* 暂停不是失败：交给 loop 退回排队 */
                     } catch (Exception de) {
                         if (attempt >= 4) throw de;
-                        SubsStore.setProgress(SubsJobService.this, fb, fp, 100, 10000);
-                        notifyProgress("网络波动，重试下载（" + (attempt + 2) + "/5）", 1.0, 100, fb, fp);
+                        /* 重试只换文案：不能拿 1% 去顶真值，否则显示值会被判成回退直接跳水 */
+                        pubStage("网络波动，正在重试下载（" + (attempt + 2) + "/5）");
                     }
                 }
                 if (mp4.isFile()) writeMarker(doneMark, mp4.length());
             } else {
-                SubsStore.setProgress(this, bvid, page, 3000, 10000);
-                notifyProgress("字幕君继续生成 " + name + " · 已缓存音频", 30.0, 100, bvid, page);
+                /* 整段缓存已经在本地：这一轮没有下载进度可接，显示值直接落到 30% 再往上走。
+                   接着 pubPct 顺着坡爬的话，条子会从 0 扫到 30（实测那一扫 25.52→31.73 一跳六点） */
+                pubHead = "字幕君继续生成 " + name + " · 已缓存音频";
+                pubDet = true;
+                sm.reset(30.0);
+                pubFlush(true);
             }
             if (canceled) return false;
             if (paused || yielding) throw new PausedRun();
 
-            notifyProgress("字幕君正在生成 " + name + " · 解码音频", 31.0, 100, bvid, page);
-            SubsStore.setProgress(this, bvid, page, 3100, 10000);
+            pubPct("字幕君正在生成 " + name + " · 解码中", 31.0);
             /* 长视频整条 PCM 会 OOM（92 分钟≈356MB float），按 10 分钟一段解一段识别，
                每段的时间戳加上段起点，最后拼成整条轨。断点也按段落盘。 */
             JSONObject part = SubsStore.readPart(this, bvid, page);
@@ -555,14 +698,26 @@ public class SubsJobService extends Service {
             final double resumeSec = resumeSec0;
             final long cidF = cid;
             final long[] lastNotify = {0};
+            /* 段内进度的两个锚点：segBase = 本段在整轨的起点秒（解码心跳按它算段内比例），
+               lastPct = 已报出去的最大百分比（解码与识别两路都往里写，只许涨不许跌）。
+               高端机上识别一段 2 分钟音频常常不到 1 秒就跑完，原来「解码期间报 0、
+               识别期间又只落一两次心跳」，进度条就成了 20% 冻住、然后跳到 60%。 */
+            final double[] segBase = { resumeSec };
+            final double[] lastPct = { 0 };
+            /* 解码只占本段进度的前 30%，识别占后 70%：两段拼起来是一条连续坡，
+               且始终不超过本段终点，不会「先冲过头再等识别追上来」。 */
+            final double DEC_W = 0.3;
 
             if (resumeSec > 0.05 && durMs > 0) {
                 double rp = Math.min(95.0, 32.0 + 63.0 * resumeSec * 1000.0 / durMs);
-                SubsStore.setProgress(this, bvid, page, (int) Math.round(rp * 100), 10000);
-                notifyProgress("字幕君继续生成 " + name + " · " + fmtPct(rp), rp, 100, bvid, page);
+                /* 续跑：这是真断点，显示值直接落到那里再往上走，别让条子从 0 重新爬一遍 */
+                pubHead = "字幕君继续生成 " + name + " · 已缓存音频";
+                pubDet = true;
+                sm.reset(rp);
+                pubFlush(true);
             } else {
-                notifyProgress("字幕君正在生成 " + name + " · 解码音频", 31.0, 100, bvid, page);
-                SubsStore.setProgress(this, bvid, page, 3100, 10000);
+                /* 首段：只换阶段，数值仍然顺着坡爬——直接把 0 顶到 31 是个大台阶 */
+                pubPct("字幕君正在生成 " + name + " · 解码中", 31.0);
             }
 
             if (durMs > 0 && resumeSec >= durMs / 1000.0 - 0.05 && segs.length() > 0) {
@@ -570,7 +725,7 @@ public class SubsJobService extends Service {
                 SubsStore.saveTrack(this, bvid, page, segs);
                 SubsStore.deletePart(this, bvid, page);
                 keepFiles = false;
-                notifyProgress("字幕君生成好啦： " + name, 100, 100, bvid, page);
+                pubPct("字幕君生成好啦： " + name, 100);
                 autoNext(ck, bvid, pages, page);
                 return true;
             }
@@ -578,6 +733,7 @@ public class SubsJobService extends Service {
             AudioPcm.decodeSegments(mp4, SEG_SEC, resumeSec, new AudioPcm.SegCb() {
                 @Override public void onSegment(float[] pcm, double startSec) throws Exception {
                     if (canceled) throw new CanceledRun();
+                    segBase[0] = startSec + pcm.length / (double) AudioPcm.OUT_RATE;
                     SubsStore.setStage(SubsJobService.this, fb, fp, "asr");
                     final long segMs = Math.round(pcm.length * 1000.0 / AudioPcm.OUT_RATE);
                     JSONArray part = TrackBuilder.build(SubsJobService.this, pcm, new TrackBuilder.Ctl() {
@@ -588,21 +744,20 @@ public class SubsJobService extends Service {
                             if (total <= 0) return;
                             long now = System.currentTimeMillis();
                             boolean finalTick = done >= total;
-                            /* 回调约 0.4 秒一次：写盘/通知节流到 ~1 秒，但每段结束一定写一次 */
-                            if (!finalTick && now - lastNotify[0] < 900) return;
+                            /* 回调约 0.4 秒一次：写盘/通知节流到 ~0.35 秒，但每段结束一定写一次 */
+                            if (!finalTick && now - lastNotify[0] < 350) return;
                             lastNotify[0] = now;
                             if (durMs > 0) {
-                                long ms = (long) (startSec * 1000) + segMs * done / total;
+                                double frac = DEC_W + (1 - DEC_W) * (done / (double) total);
+                                long ms = Math.round(startSec * 1000.0 + segMs * frac);
                                 double pct = Math.min(95.0, 32.0 + 63.0 * ms / durMs);
-                                /* 队列里统一存「百分点 ×100」，UI 才能显示两位小数 */
-                                SubsStore.setProgress(SubsJobService.this, fb, fp,
-                                        (int) Math.round(pct * 100), 10000);
-                                notifyProgress("字幕君正在生成 " + fname + " · " + fmtPct(pct),
-                                        pct, 100, fb, fp);
+                                if (pct <= lastPct[0]) return;      /* 真值单调：解码心跳报过的值不回退 */
+                                lastPct[0] = pct;
+                                /* 队列与通知都只写平滑后的显示值，识别页读的是同一个数 */
+                                pubPct("字幕君正在生成 " + fname, pct);
                             } else {
                                 /* 总时长完全拿不到：不报假百分比，交「处理中」 */
-                                SubsStore.setProgress(SubsJobService.this, fb, fp, 0, 0);
-                                notifyProgress("字幕君正在生成 " + fname + " · 处理中", 0, 0, fb, fp);
+                                pubUnknown("字幕君正在生成 " + fname + " · 识别中");
                             }
                         }
                     });
@@ -637,8 +792,8 @@ public class SubsJobService extends Service {
                         SubsStore.savePart(SubsJobService.this, bvid, page, cp);
                         if (durMs > 0) {
                             double pct = Math.min(95.0, 32.0 + 63.0 * endSec * 1000.0 / durMs);
-                            SubsStore.setProgress(SubsJobService.this, bvid, page,
-                                    (int) Math.round(pct * 100), 10000);
+                            if (pct > lastPct[0]) lastPct[0] = pct;
+                            pubPct("字幕君正在生成 " + fname, pct);
                         }
                     } catch (Throwable ignored) { }
                     /* 断点落好了再停：半段结果和进度都保住，续跑不回退 */
@@ -646,11 +801,28 @@ public class SubsJobService extends Service {
                 }
             }, new AudioPcm.DecodeCb() {
                 @Override public void onDecode(double sec) {
-                    /* 解码阶段心跳：只切状态和通知（不确定态进度条会自己动），
-                       不写应用内进度值——解码位置领先识别位置，报上去会让
-                       进度条先跳前再原地等识别追上来，更怪。 */
+                    /* 解码心跳：按「已解到第几秒」在段内推前 30%（解码位置本来就领先识别位置，
+                       直接拿它报会让条子先冲过头，所以只给这一段的 3/10，识别再从 7/10 爬到段尾）。
+                       一段时间只报涨不报跌，段边界因此不再冻住。 */
                     SubsStore.setStage(SubsJobService.this, fb, fp, "decode");
-                    notifyProgress("字幕君正在生成 " + fname + " · 解码音频", 0, 0, fb, fp);
+                    if (durMs <= 0 || paused || canceled) {
+                        pubStage("解码中");
+                        return;
+                    }
+                    double base = segBase[0];
+                    double f = (sec - base) / (double) SEG_SEC;
+                    if (f < 0) f = 0;
+                    if (f > 1) f = 1;
+                    long ms = Math.round((base + f * SEG_SEC * DEC_W) * 1000.0);
+                    double pct = Math.min(95.0, 32.0 + 63.0 * ms / durMs);
+                    /* 真值没涨的这一下只换阶段文案：原来这里会往队列写 0/0，
+                       三处就会有人显示「解码音频」有人显示 58%，看着就是不同步 */
+                    if (pct <= lastPct[0]) {
+                        pubStage("解码中");
+                        return;
+                    }
+                    lastPct[0] = pct;
+                    pubPct("字幕君正在生成 " + fname, pct);
                 }
             });
             if (canceled) return false;
@@ -663,7 +835,7 @@ public class SubsJobService extends Service {
             }
             SubsStore.deletePart(this, bvid, page);
             keepFiles = false;
-            notifyProgress("字幕君生成好啦： " + name, 100, 100, bvid, page);
+            pubPct("字幕君生成好啦： " + name, 100);
             autoNext(ck, bvid, pages, page);
             return true;
         } catch (CanceledRun ce) {
@@ -674,6 +846,7 @@ public class SubsJobService extends Service {
             android.util.Log.w("GIME_SUBS", "job " + bvid + ":" + page + " -> " + t);
             return false;
         } finally {
+            pubEnd();                       /* 这一集跑完了：进度台停表，别让蹭进一直往前跑 */
             if (!keepFiles && mp4 != null) {
                 mp4.delete();
                 if (doneMark != null) doneMark.delete();

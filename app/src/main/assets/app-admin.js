@@ -602,6 +602,12 @@ function closeLayer(el) {
     setTimeout(function () { el.style.transition = ""; }, 240);
   }
   el.classList.remove("on");
+  /* 大肥鱼收下去也是 220ms 的 transform：这期间同样关掉顶上那条大投影，
+     否则整块模糊每帧都要重刷（滑入那侧见 app-chat.js 的 chatEnterSlide） */
+  if (el.classList && el.classList.contains("sheet") && el.classList.contains("chat")) {
+    el.classList.add("sliding");
+    setTimeout(function () { el.classList.remove("sliding"); }, 320);
+  }
   var i = openLayers.indexOf(el);
   if (i >= 0) openLayers.splice(i, 1);
   if (el.id === "planPage" && typeof planPageClosed === "function") planPageClosed();

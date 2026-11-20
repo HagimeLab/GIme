@@ -19,6 +19,8 @@ $skipExt = @('.jks', '.keystore', '.apk', '.aab', '.iml', '.DS_Store', '.zip')
 
 $files = New-Object System.Collections.Generic.List[string]
 Get-ChildItem -LiteralPath $root -Recurse -File -Force | ForEach-Object {
+    # Gitee 模型分卷（*.zip.p1…p9）扩展名不是 .zip，只按 $skipExt 判断会整包带进来
+    if ($_.Name -match '\.zip\.p\d+$') { return }
     $rel = $_.FullName.Substring($root.Length + 1)
     $parts = $rel -split '[\\/]'
     foreach ($p in $parts[0..($parts.Length - 2)]) {

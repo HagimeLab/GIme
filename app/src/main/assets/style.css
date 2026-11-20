@@ -504,7 +504,13 @@ button.rec:active { opacity: .62; }
 .conv-new:active { transform: scale(.985); opacity: .92; }
 /* 历史入口挪到头部最左：和头像之间留一口气，右半边按钮保持靠右 */
 .chat-head .chat-cfg.hist { margin: 0 2px 0 0; }
-.chat-list { flex: 1; overflow-y: auto; -webkit-overflow-scrolling: touch; padding: 4px 0 8px; }
+.chat-list { flex: 1; overflow-y: auto; padding: 4px 0 8px;
+             /* 刻意不要 -webkit-overflow-scrolling: touch：这台 WebView 上 touch 模式会把
+                列表变成独立合成层，滚动时逐帧栅格化，长对话里就是明显的掉帧（同 .sheet 那条注释）。
+                走主线程滚动，配合下方的 contain 把重排关在列表里面。 */
+             -webkit-overflow-scrolling: auto;
+             overscroll-behavior: contain;
+             contain: layout paint; }
 /* 空态只留一句说明：大号虚线框在整屏聊天里像没写完的占位卡 */
 .chat-empty { margin: 18px auto 0; max-width: 310px; padding: 0 8px; text-align: center;
               color: var(--ink-2); font-size: .8125rem; line-height: 1.7; }
@@ -757,6 +763,10 @@ button.rec:active { opacity: .62; }
          box-shadow: var(--sh); transform: translate(-50%,-50%) scale(.9); opacity: 0; visibility: hidden;
          transition: transform .25s var(--ease), opacity .25s var(--ease), visibility .25s; }
 .glass.on { transform: translate(-50%,-50%) scale(1); opacity: 1; visibility: visible; }
+/* 识别页 1130、选集抽屉 1215、全屏播放器 1200 都压在所有普通弹层之上：
+   从这些页面里弹确认框时，不加这一档就会画在页面背后——用户看到的是「点了没反应」。
+   1240 只比 toast(1500) 低，够压住这几层，也不影响其它普通弹窗。 */
+.glass.over { z-index: 1240; }
 .glass .big { font-size: 4rem; font-weight: 800; line-height: 1; letter-spacing: -1px; }
 .glass .icon { font-size: 1.5rem; font-weight: 800; }
 .glass h2 { font-size: 1.125rem; font-weight: 700; margin: 10px 0 4px; }
@@ -953,43 +963,37 @@ button.rec:active { opacity: .62; }
 .bili-jobs { display: none; margin: 2px 0 10px; }
 .bili-jobs.on { display: block; }
 /* 「字幕识别」只有一个总入口：一行说明现在的状态（在识别谁 / 还有几集排队），
-   整块可点，点开就是识别队列。不再铺 4 张重复信息的小卡。 */
+   整块可点，点开就是识别队列。不再铺 4 张重复信息的小卡。
+   画法跟识别页运行卡同一套：单色、留白、细线；扫描光 / 圆点脉冲 / 条上流光
+   全部撤掉，唯一动效是左上角那组小声波（复用 spLive），暂停 / 排队时压低静止。 */
 .bili-jobs .jobs-entry { position: relative; display: flex; flex-direction: column;
-  padding: 12px 14px 13px; border: 1px solid var(--line); border-radius: 14px;
-  background: var(--raise); cursor: pointer; overflow: hidden; }
-/* 入口卡也带一道顶部扫描，和识别页里那张卡是同一个「正在算」的语言 */
-.bili-jobs .jobs-entry::after { content: ""; position: absolute; top: 0; left: 0;
-  height: 1px; width: 38%; pointer-events: none;
-  background: linear-gradient(90deg, rgba(255,255,255,0), rgba(255,255,255,.4), rgba(255,255,255,0));
-  animation: scanLine 4.8s cubic-bezier(0.4, 0, 0.2, 1) infinite; }
+  padding: 13px 15px 14px; border: 1px solid var(--line); border-radius: 16px;
+  background: var(--raise); box-shadow: var(--sh-soft); cursor: pointer; overflow: hidden; }
 .bili-jobs .jobs-e-top { display: flex; align-items: center; }
-.bili-jobs .jobs-e-dot { flex: 0 0 auto; width: 7px; height: 7px; border-radius: 50%;
-  background: var(--ink-3); margin-right: 9px; }
-.bili-jobs .jobs-e-dot.run { background: var(--ink); animation: jobsRing 1.9s ease-out infinite; }
-/* 识别中：中心点不动，外面一圈往外扩，像在「取一口气」，比单纯闪烁稳 */
-@keyframes jobsRing {
-  0% { box-shadow: 0 0 0 0 rgba(127,127,127,.5); }
-  70% { box-shadow: 0 0 0 7px rgba(127,127,127,0); }
-  100% { box-shadow: 0 0 0 7px rgba(127,127,127,0); }
-}
+.bili-jobs .jobs-e-live { flex: 0 0 auto; display: flex; align-items: flex-end; height: 10px;
+  margin-right: 8px; }
+.bili-jobs .jobs-e-live i { display: block; width: 2px; height: 100%; margin-right: 2px;
+  border-radius: 1px; background: var(--ink-3); transform: scaleY(.3);
+  transform-origin: 50% 100%; opacity: .6; }
+.bili-jobs .jobs-e-live.run i { background: var(--ink-2); opacity: 1;
+  animation: spLive 1.3s ease-in-out infinite; }
+.bili-jobs .jobs-e-live.run i:nth-child(1) { animation-delay: 0s; }
+.bili-jobs .jobs-e-live.run i:nth-child(2) { animation-delay: .25s; }
+.bili-jobs .jobs-e-live.run i:nth-child(3) { animation-delay: .5s; }
+.bili-jobs .jobs-e-live.run i:nth-child(4) { animation-delay: .15s; }
 .bili-jobs .jobs-e-t { flex: 1 1 auto; min-width: 0; font-size: .8125rem; font-weight: 600;
   color: var(--ink); }
-.bili-jobs .jobs-e-p { flex: 0 0 auto; margin-right: 8px; font-size: .75rem; color: var(--ink);
-  font-variant-numeric: tabular-nums; }
+.bili-jobs .jobs-e-p { flex: 0 0 auto; margin-right: 8px; font-size: .8125rem; font-weight: 600;
+  color: var(--ink); font-variant-numeric: tabular-nums; }
 .bili-jobs .jobs-e-arw { flex: 0 0 auto; font-style: normal; font-size: 15px;
   color: var(--ink-3); line-height: 1; }
-.bili-jobs .jobs-e-sub { margin: 5px 0 0 14px; font-size: .6875rem; color: var(--ink-3);
+.bili-jobs .jobs-e-sub { margin-top: 6px; font-size: .6875rem; color: var(--ink-3);
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.bili-jobs .jobs-e-bar { display: block; margin: 10px 0 0 14px; height: 3px;
-  border-radius: 3px; background: var(--line); overflow: hidden; }
-.bili-jobs .jobs-e-bar b { position: relative; display: block; height: 100%; border-radius: 3px;
-  background: var(--ink); overflow: hidden; transition: width .6s cubic-bezier(0.16, 1, 0.3, 1); }
-/* 进度条上一道很窄的流光循环扫过：只是让「还在跑」这件事有惯性 */
-.bili-jobs .jobs-e-bar b::after { content: ""; position: absolute; top: 0; left: -45%;
-  width: 45%; height: 100%; background: linear-gradient(90deg,
-    rgba(255,255,255,0), rgba(255,255,255,.6), rgba(255,255,255,0));
-  animation: barSheen 2.1s linear infinite; }
-@keyframes barSheen { 0% { left: -45%; } 100% { left: 100%; } }
+/* 轨道跟运行卡同一个画法：4px 单色实条，只有宽度平滑过渡，不加光效 */
+.bili-jobs .jobs-e-bar { display: block; margin-top: 10px; height: 4px;
+  border-radius: 999px; background: var(--line); overflow: hidden; }
+.bili-jobs .jobs-e-bar b { display: block; height: 100%; border-radius: 999px;
+  background: var(--ink); transition: width .5s cubic-bezier(0.16, 1, 0.3, 1); }
 /* ---------------- 字幕识别页 ----------------
    点顶部那几张缓存卡进这一页：上面「识别中」（带进度），下面「排队中」（带序号）。
    整页固定全屏、自己带滚动，头部不跟着滚。
@@ -1016,77 +1020,88 @@ button.rec:active { opacity: .62; }
   font-variant-numeric: tabular-nums; }
 .sp-empty { padding: 18px 14px; border: 1px dashed var(--line); border-radius: 14px;
   text-align: center; font-size: .75rem; color: var(--ink-3); line-height: 1.7; }
-/* 识别中卡：左边一条细光、边框轻微呼吸，顶部一列声波在动。
-   这些循环动画只在结构不变时一直播（渲染侧做了增量，不会每 2 秒重启）。 */
-.sp-run { position: relative; border: 1px solid var(--line); border-radius: 14px;
-  background: var(--raise); padding: 13px 14px 14px; margin-bottom: 10px;
-  animation: runBreath 3.4s ease-in-out infinite; overflow: hidden; }
+/* ==================== 识别中运行卡 ====================
+   排版保留「大数字 + 右侧标题」的分栏——这个层级是对的；但把上一版那套
+   霓虹绿、扫描光、点阵、刻度、发光点全部撤掉：装饰堆得越多越像模板生成器
+   吐出来的仪表盘。这一版跟 App 其他卡片说同一种话：单色、留白、细线，
+   唯一的动效是左上角那组小小的声波（和录音类 App 的「正在收音」一个语义），
+   以及进度条宽度本身的平滑过渡。 */
+.sp-run { position: relative; margin-bottom: 10px; padding: 14px 15px 14px;
+  border-radius: 16px; border: 1px solid var(--line); overflow: hidden;
+  background: var(--raise); box-shadow: var(--sh-soft); }
 .sp-run:last-child { margin-bottom: 0; }
-@keyframes runBreath {
-  0%, 100% { border-color: var(--line); box-shadow: 0 0 0 0 rgba(127,127,127,0); }
-  50% { border-color: rgba(127,127,127,.42); box-shadow: 0 0 0 1px rgba(127,127,127,.06); }
+/* 头行：小声波 + 阶段词 + 右侧集号（普通小字，不做胶囊） */
+.sp-run-hd { position: relative; display: flex; align-items: center; }
+.sp-run-live { flex: 0 0 auto; display: flex; align-items: flex-end; height: 10px;
+  margin-right: 7px; }
+.sp-run-live i { display: block; width: 2px; height: 100%; margin-right: 2px;
+  border-radius: 1px; background: var(--ink-2); transform-origin: 50% 100%;
+  animation: spLive 1.3s ease-in-out infinite; }
+.sp-run-live i:nth-child(1) { animation-delay: 0s; }
+.sp-run-live i:nth-child(2) { animation-delay: .25s; }
+.sp-run-live i:nth-child(3) { animation-delay: .5s; }
+.sp-run-live i:nth-child(4) { animation-delay: .15s; }
+@keyframes spLive {
+  0%, 100% { transform: scaleY(.35); }
+  50% { transform: scaleY(1); }
 }
-/* 科技感的底子：一层几乎看不见的点阵（14px 网格、4% 不透明度），暗示「在算」。
-   不做漂移——背景位移每帧重绘，纯静态更省电。 */
-.sp-run::before { content: ""; position: absolute; left: 0; right: 0; top: 0; bottom: 0;
-  pointer-events: none; opacity: .028;
-  background-image: radial-gradient(rgba(127,127,127,.9) 1px, rgba(0,0,0,0) 1px);
-  background-size: 18px 18px; }
-/* 顶部一道 1px 的扫描光，周期地从左扫到右再停一会儿，像采样 */
-.sp-run::after { content: ""; position: absolute; top: 0; left: 0; height: 1px; width: 38%;
-  pointer-events: none;
-  background: linear-gradient(90deg, rgba(255,255,255,0), rgba(255,255,255,.42), rgba(255,255,255,0));
-  animation: scanLine 4.8s cubic-bezier(0.4, 0, 0.2, 1) infinite; }
-@keyframes scanLine {
-  0% { transform: translateX(-100%); opacity: .0; }
-  12% { opacity: .85; }
-  58% { transform: translateX(270%); opacity: .85; }
-  70% { transform: translateX(270%); opacity: 0; }
-  100% { transform: translateX(270%); opacity: 0; }
-}
-/* 声波：5 根细条，相位错开（不是等间隔，等间隔看着像机器） */
-.sp-run-top { display: flex; align-items: center; }
-.sp-wave { flex: 0 0 auto; display: flex; align-items: flex-end; height: 13px;
-  margin-right: 8px; }
-.sp-wave i { display: block; width: 2px; height: 100%; margin-right: 2px;
-  border-radius: 1px; background: var(--ink); transform-origin: 50% 100%;
-  animation: waveUp 1.15s ease-in-out infinite; }
-.sp-wave i:nth-child(1) { animation-delay: 0s; }
-.sp-wave i:nth-child(2) { animation-delay: .18s; }
-.sp-wave i:nth-child(3) { animation-delay: .36s; }
-.sp-wave i:nth-child(4) { animation-delay: .12s; }
-.sp-wave i:nth-child(5) { animation-delay: .27s; }
-@keyframes waveUp { 0%, 100% { transform: scaleY(.28); } 50% { transform: scaleY(1); } }
-.sp-run-lbl { flex: 1 1 auto; min-width: 0; font-size: .6875rem; color: var(--ink-3);
-  letter-spacing: .02em; }
-.sp-run-p { flex: 0 0 auto; margin-left: 8px; font-size: .8125rem; color: var(--ink);
+.sp-run-lbl { flex: 1 1 auto; min-width: 0; font-size: .75rem; color: var(--ink-2); }
+.sp-run-p { display: none; }                 /* 旧层的百分比节点：这版改由大数字承担 */
+.sp-run-pn { flex: 0 0 auto; margin-left: 8px; font-size: .6875rem;
+  color: var(--ink-3); font-variant-numeric: tabular-nums; }
+/* 数据行：左边大数字（24px），右边标题 / 来源两行，中间一根细竖线分栏 */
+.sp-run-grid { position: relative; display: flex; align-items: center; margin-top: 13px; }
+.sp-run-num { flex: 0 0 auto; width: 76px; display: flex; align-items: baseline;
   font-variant-numeric: tabular-nums; }
-/* 进度一变就让数字轻轻亮一下（0.5s 回落），是「数据在刷新」的最小提示 */
-.sp-run-p.flash { animation: numFlash .5s cubic-bezier(0.16, 1, 0.3, 1); }
-@keyframes numFlash {
-  0% { opacity: .3; transform: translateY(-1.5px); }
-  100% { opacity: 1; transform: translateY(0); }
-}
-.sp-run-t { margin-top: 9px; font-size: .875rem; font-weight: 600; color: var(--ink);
-  line-height: 1.4; overflow: hidden; display: -webkit-box;
-  -webkit-box-orient: vertical; -webkit-line-clamp: 2; word-break: break-word; }
-.sp-run-sub { margin-top: 5px; margin-left: 0; font-size: .6875rem; color: var(--ink-3);
+.sp-run-num em { font-style: normal; font-size: 1.5rem; font-weight: 700;
+  letter-spacing: -.02em; line-height: 1; color: var(--ink); }
+.sp-run-num small { font-size: .8125rem; font-weight: 600; letter-spacing: -.01em;
+  color: var(--ink); opacity: .46; }
+.sp-run-num i { margin-left: 1px; font-style: normal; font-size: .625rem; font-weight: 500;
+  color: var(--ink); opacity: .34; }
+.sp-run-wait { font-size: .875rem; font-weight: 600; color: var(--ink-2); }
+.sp-run-info { flex: 1 1 auto; min-width: 0; margin-left: 13px; padding-left: 13px;
+  border-left: 1px solid var(--line); }
+.sp-run-t { font-size: .8125rem; font-weight: 600; line-height: 1.35; color: var(--ink);
+  overflow: hidden; display: -webkit-box; -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2; word-break: break-word; }
+.sp-run-sub { margin-top: 4px; font-size: .625rem; color: var(--ink-3);
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.sp-run-bar { flex: 1 1 auto; min-width: 0; display: block; height: 4px; border-radius: 4px;
+/* 轨道：5px、单色 ink 填充，跟 App 里其他进度条同一个画法，不加任何光效 */
+.sp-run-track { position: relative; height: 5px; margin-top: 15px; border-radius: 999px;
   background: var(--line); overflow: hidden; }
-.sp-run-bar b { position: relative; display: block; height: 100%; border-radius: 4px;
-  background: var(--ink); overflow: hidden; box-shadow: 0 0 7px rgba(255,255,255,.22);
-  transition: width .6s cubic-bezier(0.16, 1, 0.3, 1); }
-.sp-run-bar b::after { content: ""; position: absolute; top: 0; left: -45%;
-  width: 45%; height: 100%; background: linear-gradient(90deg,
-    rgba(255,255,255,0), rgba(255,255,255,.55), rgba(255,255,255,0));
-  animation: barSheen 2.1s linear infinite; }
-.sp-run-foot { display: flex; align-items: center; margin-top: 14px; }
-/* 取消做成胶囊：原来是一行光秃秃的文字，点了也不知道点到了没有 */
-.sp-run-x { flex: 0 0 auto; margin-left: 12px; padding: 5px 11px; border-radius: 999px;
-  background: rgba(127,127,127,.12); font-size: .6875rem; color: var(--ink-2);
-  font-style: normal; cursor: pointer; transition: background .15s ease-out; }
-.sp-run-x:active { background: rgba(127,127,127,.22); }
+.sp-run-track b { display: block; height: 100%; border-radius: 999px;
+  background: var(--ink);
+  transition: width .5s cubic-bezier(0.16, 1, 0.3, 1); }
+/* 按钮行：主按钮实心、取消弱化描边，权重一眼分明 */
+.sp-run-foot { position: relative; display: flex; align-items: center; margin-top: 14px; }
+.sp-run-pz { flex: 1.4 1 0; min-width: 0; display: flex; align-items: center;
+  justify-content: center; height: 38px; border-radius: 11px;
+  background: var(--ink); color: var(--paper); font-size: .8125rem; font-weight: 600;
+  font-style: normal; letter-spacing: .02em;
+  transition: transform .16s var(--ease), opacity .16s var(--ease); }
+.sp-run-pz:active { transform: scale(.985); opacity: .9; }
+/* 暂停图标：两根竖条；继续时换成播放三角 */
+.sp-run-pz-ic { position: relative; width: 12px; height: 12px; margin-right: 7px;
+  flex: 0 0 auto; color: currentColor; }
+.sp-run-pz-ic::before, .sp-run-pz-ic::after { content: ""; position: absolute; top: 0;
+  width: 3px; height: 12px; border-radius: 2px; background: currentColor; }
+.sp-run-pz-ic::before { left: 1px; }
+.sp-run-pz-ic::after { left: 8px; }
+.sp-run-pz-ic.play::before, .sp-run-pz-ic.play::after { display: none; }
+.sp-run-pz-ic.play { width: 0; height: 0; border-left: 9px solid currentColor;
+  border-top: 5.5px solid transparent; border-bottom: 5.5px solid transparent; }
+.sp-run-x { flex: 1 1 0; min-width: 0; margin-left: 10px; display: flex; align-items: center;
+  justify-content: center; height: 38px; border-radius: 11px;
+  border: 1px solid var(--line); background: transparent;
+  color: var(--ink-2); font-size: .8125rem; font-style: normal;
+  transition: background .15s ease-out, transform .16s var(--ease); }
+.sp-run-x:active { background: rgba(127,127,127,.12); transform: scale(.985); }
+/* 暂停 / 收尾：声波按停、数字转灰，只留一条静态进度 */
+.sp-run.hold .sp-run-live i { animation: none; transform: scaleY(.3); opacity: .5; }
+.sp-run.hold .sp-run-num em,
+.sp-run.hold .sp-run-num small { color: var(--ink-2); }
+.sp-run.hold .sp-run-track b { background: var(--ink-3); }
 .sp-q { border: 1px solid var(--line); border-radius: 14px; background: var(--raise);
   overflow: hidden; }
 .sp-q-i { display: flex; align-items: flex-start; padding: 11px 12px;
@@ -3147,7 +3162,11 @@ button.stat-cell:active { background: var(--surface); }
 .glass { background: var(--raise); border-radius: 24px; }
 
 /* ---- 大肥鱼 ---- */
-.sheet.chat { background: var(--raise); border-radius: 30px 30px 0 0; }
+.sheet.chat { background: var(--raise); border-radius: 30px 30px 0 0;
+  /* 顶边那条 60px 模糊投影在大面板上很贵：它是一条通栏半透明带，面板开着的时候
+     底下只要有一点动画（首页的流光、列表里的进度条）合成器每帧都要重新混合这一带，
+     实测把整机压到 34fps。换成「1px 亮边 + 20px 紧投影」，观感几乎一致，代价小一个量级。 */
+  box-shadow: 0 -1px 0 rgba(255,255,255,.35), 0 -10px 24px -18px rgba(20,22,26,.5); }
 .sheet.chat.full { border-radius: 0; }
 .chat-head b { font-size: 1rem; font-weight: 700; min-width: 0;
                white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -3509,6 +3528,19 @@ button.stat-cell:active { background: var(--surface); }
 /* 拖动跟手时不要过渡；松手由这条把面板吸到目标停位（1/2 · 2/3 · 全屏） */
 .sheet.chat { transition: transform .22s var(--ease), height .2s var(--ease), max-height .2s var(--ease); }
 .sheet.chat.dragging { transition: none; }
+/* 入场前把过渡摘掉、把高度就地落好（openChat/openChatTab 里连着用），
+   这样 220ms 的滑入只有 transform 一条在动，不会顺带每帧重排整块面板 */
+.sheet.chat.noanim { transition: none; }
+/* 滑入 / 滑出期间：给出合成提示，并先关掉顶上那条 60px 大投影 */
+.sheet.chat.sliding { will-change: transform; box-shadow: none; }
+/* 拖动时先关掉这两样最贵的东西：
+   1) 面板上方那条 60px 模糊的大投影——面板高度每变一次，它就要整块重画一遍；
+   2) 图片占位图的 blur 滤镜——带滤镜的图块每帧都要栅格化。
+   松手吸附落地后 .dragging 撤掉，两者立刻恢复，肉眼看不出差别。 */
+.sheet.chat.dragging { box-shadow: none; }
+.sheet.chat.dragging .chat-imgs .ci .b { filter: none; }
+/* 输入卡那层浮起投影同理：面板每长高一次，靠下的这圈模糊也要跟着重刷 */
+.sheet.chat.dragging .chat-in { box-shadow: none; }
 /* 三档拖动：整块面板不参与浏览器滚动手势，只有消息列表保留纵向滚动。
    原来只对把手和头部写 touch-action:none，从主体区往上拖时会被 WebView 判成
    「页面滚动」直接 pointercancel，表现就是往下能拉、往上拉不动。 */
@@ -3675,14 +3707,8 @@ button.stat-cell:active { background: var(--surface); }
   border: 1px solid var(--ink); color: var(--ink); font-size: .6875rem; font-style: normal;
   line-height: 1; white-space: nowrap; }
 .jobs-e-play:active { transform: scale(.95); }
-.jobs-entry.paused .jobs-e-dot { background: var(--ink-3); }
 
-/* 暂停交接中的那张「运行卡」：这一段还在收尾，把整套科技感动画全部按停，
-   只留静态进度——用户一眼就能看出「已经停了，只是在收尾」。 */
-.sp-run.hold { animation: none; border-color: var(--line); box-shadow: none; }
-.sp-run.hold::after { animation: none; opacity: 0; }
-.sp-run.hold .sp-wave i { animation: none; transform: scaleY(.32); }
-.sp-run.hold .sp-run-p { color: var(--ink-2); }
+/* 暂停交接中的运行卡按停（.sp-run.hold）已并入上面运行卡那一块，别在这儿再写一遍 */
 
 /* ======================= 暂停面板（重排：提高辨识度） =======================
    原来暂停只是一行灰字 + 一条平卡，看不出「停住了」。现在：左侧 ink 竖条压阵、
@@ -3726,39 +3752,9 @@ button.stat-cell:active { background: var(--surface); }
   font-size: .6875rem; font-weight: 600; font-style: normal; line-height: 1.15;
   white-space: nowrap; }
 
-/* ============ 运行卡里的「暂停识别」：从标题行小胶囊升级成卡内主按钮 ============
-   进度条独占一行（原来被按钮挤掉一半），按钮行左「暂停识别」实心、右「取消」弱化。 */
-.sp-run-bar { flex: 0 0 auto; display: block; width: 100%; height: 4px; margin-top: 12px;
-  border-radius: 4px; background: var(--line); overflow: hidden; }
-.sp-run-foot { display: flex; align-items: center; margin-top: 10px; }
-.sp-run-pz { flex: 1 1 auto; min-width: 0; display: flex; align-items: center;
-  justify-content: center; height: 34px; border-radius: 10px;
-  background: var(--ink); color: var(--paper); font-size: .8125rem; font-weight: 600;
-  font-style: normal; letter-spacing: .02em;
-  transition: transform .16s var(--ease), opacity .16s var(--ease); }
-.sp-run-pz:active { transform: scale(.985); opacity: .92; }
-/* 暂停图标：两根竖条；继续时换成播放三角 */
-.sp-run-pz-ic { position: relative; width: 13px; height: 13px; margin-right: 8px;
-  flex: 0 0 auto; color: currentColor; }
-.sp-run-pz-ic::before, .sp-run-pz-ic::after { content: ""; position: absolute; top: 0;
-  width: 3.5px; height: 13px; border-radius: 2px; background: currentColor; }
-.sp-run-pz-ic::before { left: 1px; }
-.sp-run-pz-ic::after  { left: 8.5px; }
-.sp-run-pz-ic.play::before, .sp-run-pz-ic.play::after { display: none; }
-.sp-run-pz-ic.play { width: 0; height: 0; top: 0; border-left: 10px solid currentColor;
-  border-top: 6.5px solid transparent; border-bottom: 6.5px solid transparent; }
-.sp-run-x { flex: 0 0 auto; margin-left: 10px; height: 34px; padding: 0 14px;
-  display: flex; align-items: center; border-radius: 10px;
-  background: rgba(127,127,127,.12); font-size: .75rem; color: var(--ink-2);
-  font-style: normal; cursor: pointer; transition: background .15s ease-out; }
-.sp-run-x:active { background: rgba(127,127,127,.22); }
+/* 运行卡里的进度条 / 按钮尺寸也已并入上面那一块（v2 仪表盘式），这里不再重复声明 */
 
-/* ============== 第 31 轮：按钮平分 + 排队项左滑 + 总进度 + 全部完成空态 ============== */
-/* 运行卡两个按钮各占一半；「取消」改叫「取消识别」，和「暂停识别」对称 */
-.sp-run-pz { flex: 1 1 0; }
-.sp-run-x { flex: 1 1 0; margin-left: 10px; padding: 0; justify-content: center;
-  height: 34px; font-size: .8125rem; font-weight: 600; border-radius: 10px;
-  background: rgba(127,127,127,.12); color: var(--ink-2); }
+/* ⚠ 上面这条注释下原有一份「按钮平分」规则，v2 已由 .sp-run-pz{flex:1.4} + .sp-run-x{flex:1} 取代 */
 
 /* 整体进度：已完成 / 全部 */
 .sp-prog { margin-bottom: 18px; padding: 12px 14px; border-radius: 14px;

@@ -5711,6 +5711,40 @@ ok("页面不碰 cookie / 上游直链",
    biliSource.indexOf("api.bilibili.com") < 0);
 ok("样式里有 .bili- 系列", cssSource.indexOf(".bili-player video") >= 0 &&
    cssSource.indexOf(".bili-pages") >= 0 && cssSource.indexOf(".bili-empty") >= 0);
+/* 排队卡的第二行（来源合集名 + 已识别进度）每张卡都必须写：
+   曾经按「同源只在第一项写一次」去重，用户滚到列表中途就认不出这一屏是哪个视频的，已回退。 */
+ok("排队卡每项都写来源行（不再按同源去重）",
+   biliSource.indexOf("esc(qvt)") >= 0 &&
+   biliSource.indexOf("showSrc") < 0 && biliSource.indexOf("lastVt") < 0 &&
+   cssSource.indexOf(".sp-q-sub") >= 0);
+
+/* 进度只有一份真源：平滑在原生侧（PctSmooth），落盘和系统通知写的是同一个显示值，
+   识别页与收藏页状态卡都原样上屏；JS 里再套一层自己的缓动就会「一个追一个」。 */
+const subsJavaSource = fs.readFileSync(
+  path.join(ROOT, "app/src/main/java/com/fan/shuatiku/SubsJobService.java"), "utf8");
+ok("进度平滑只在原生侧做一份", subsJavaSource.indexOf("class PctSmooth") >= 0 &&
+   subsJavaSource.indexOf("sm.truth(") >= 0 && subsJavaSource.indexOf("sm.step()") >= 0);
+ok("队列与通知写同一个显示值（不再各写一路）",
+   subsJavaSource.indexOf("notifyProgress(pubHead + \" · \" + fmtPct(v)") >= 0 &&
+   subsJavaSource.indexOf("sm.reset(") >= 0);
+/* 进度台的自杀式 return 是这一轮的元凶：paused/让位时直接 return 会让再次投递的开关停在 false，
+   之后只要真值不涨，条子就彻底冻在原地（真机拍到 54.88 冻 25 秒、47.93 冻 15 秒）。 */
+ok("进度台不会自我停表", subsJavaSource.indexOf("if (!pubAlive) return;") >= 0 &&
+   subsJavaSource.indexOf("if (pubAlive && pubH != null) pubH.postDelayed(this, 250);") >= 0 &&
+   subsJavaSource.indexOf("boolean again = false;") < 0);
+ok("真值不动时显示值也匀速前进（不再死等真值）",
+   /synchronized double step\(\)[\s\S]{0,400}?v = Math\.min\(95\.0, v \+ 0\.0375\)/.test(subsJavaSource));
+ok("JS 不再自己算进度缓动", biliSource.indexOf("BILI_RUN_CREEP") < 0 &&
+   biliSource.indexOf("biliRunTweenT") < 0 &&
+   /function biliRunSetTarget[\s\S]{0,120}?o\.v = t;/.test(biliSource));
+ok("识别页与收藏页状态卡同一拍刷新", /biliJobsPoll[\s\S]{0,2600}?biliSubsPageRender[\s\S]{0,200}?\}, 400\);/.test(biliSource));
+/* 取消识别 / 取消排队 / 全部取消排队都必须过确认弹窗，并且弹窗要压在这几层页面之上，
+   否则画在 z-index 1130-1215 的页面背后，用户看到的是「点了没反应」。 */
+ok("取消类操作都先弹确认", biliSource.indexOf('title: running ? "取消这一集的识别？"') >= 0 &&
+   biliSource.indexOf('title: "取消全部排队？"') >= 0 &&
+   biliSource.indexOf("biliSubsPageCancel(k.bvid, p, m.s)") >= 0 &&
+   (biliSource.match(/cls: "over"/g) || []).length >= 2);
+ok("确认弹窗压在识别页/抽屉上一层", cssSource.indexOf(".glass.over") >= 0);
 
 /* ---------- 结果 ---------- */
 console.log("\n" + "=".repeat(46));

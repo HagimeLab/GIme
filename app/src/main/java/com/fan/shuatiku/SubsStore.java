@@ -319,6 +319,7 @@ public final class SubsStore {
     public static void setProgress(Context c, String bvid, int page, int done, int total) {
         synchronized (LOCK) {
             JSONArray a = queue(c);
+            boolean changed = false;
             for (int i = 0; i < a.length(); i++) {
                 JSONObject o = a.optJSONObject(i);
                 if (o != null && bvid.equals(o.optString("bvid")) && o.optInt("page") == page) {
@@ -329,14 +330,18 @@ public final class SubsStore {
                         if (total > 0) {
                             int hi = o.optInt("hi", 0);
                             if (done < hi) done = hi;
-                            else if (done > hi) o.put("hi", done);
+                            else if (done > hi) { o.put("hi", done); changed = true; }
                         }
-                        o.put("done", done).put("total", total);
+                        if (o.optInt("done", -1) != done || o.optInt("total", -2) != total) {
+                            o.put("done", done).put("total", total);
+                            changed = true;
+                        }
                     } catch (Throwable ignored) { }
                     break;
                 }
             }
-            writeQueue(c, a);
+            /* 数字没动就不重写整份队列：进度台 0.25 秒一拍，空转写入会一直占着这把锁 */
+            if (changed) writeQueue(c, a);
         }
     }
 
@@ -345,14 +350,19 @@ public final class SubsStore {
     public static void setStage(Context c, String bvid, int page, String stage) {
         synchronized (LOCK) {
             JSONArray a = queue(c);
+            boolean changed = false;
             for (int i = 0; i < a.length(); i++) {
                 JSONObject o = a.optJSONObject(i);
                 if (o != null && bvid.equals(o.optString("bvid")) && o.optInt("page") == page) {
-                    try { o.put("stage", stage); } catch (Throwable ignored) { }
+                    /* 阶段没变就别写盘：解码心跳每 0.25 秒来一次，
+                        每次都重写一遍整个队列文件，纯属和进度播报抢同一把锁、同一块磁盘 */
+                    if (!stage.equals(o.optString("stage", ""))) {
+                        try { o.put("stage", stage); changed = true; } catch (Throwable ignored) { }
+                    }
                     break;
                 }
             }
-            writeQueue(c, a);
+            if (changed) writeQueue(c, a);
         }
     }
 

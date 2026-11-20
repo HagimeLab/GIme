@@ -1514,18 +1514,32 @@ function biliNativeFull(on) {
 /* 全屏横屏的方向：Activity 锁竖屏，靠这一层旋转出横屏画面。
    gamma 是设备左右倾角，±90 就是机身横过来；正负对应两个横屏方向。
    平放/竖直（|gamma| 小）时保持上一次的方向，不来回跳。 */
-var biliFsRot = 90;
+var biliFsRot = 90, biliRotAnim = null;
 function biliSetFsRot(r) {
   r = r > 0 ? 90 : -90;
-  if (r === biliFsRot) {
-    var cur = document.getElementById("tab-video");
-    if (cur && (cur.classList.contains("fs-rot-90") || cur.classList.contains("fs-rot--90"))) return;
-  }
-  biliFsRot = r;
   var p = document.getElementById("tab-video");
+  if (r === biliFsRot) {
+    if (p && (p.classList.contains("fs-rot-90") || p.classList.contains("fs-rot--90"))) return;
+  }
+  var prev = biliFsRot;
+  biliFsRot = r;
   if (!p) return;
   p.classList.remove("fs-rot-90", "fs-rot--90");
   p.classList.add(r > 0 ? "fs-rot-90" : "fs-rot--90");
+  /* 横过来 / 反手横过来不再是一帧跳 180°：两种横屏态的盒子尺寸完全一样
+     （宽 100vh、高 100vw），差别只在旋转值，所以只动 transform 就是干净的连续旋转，
+     不牵扯重排；用 WAAPI 显式给关键帧，避免 CSS transition 在 rotate(90)→rotate(-90)
+     之间自己挑方向（会绕远路多转一圈）。进场/退场过渡期间（biliFsBusy）不接这一棒，
+     那一棒由 biliFsMorph 负责。 */
+  var pl = biliFsPlayerEl();
+  if (!pl || prev === r || !biliIsFull() || biliFsBusy || !pl.animate) return;
+  try {
+    if (biliRotAnim) { try { biliRotAnim.cancel(); } catch (e0) {} }
+    biliRotAnim = pl.animate([
+      { transform: "translate(-50%,-50%) rotate(" + prev + "deg)" },
+      { transform: "translate(-50%,-50%) rotate(" + r + "deg)" }
+    ], { duration: 380, easing: "cubic-bezier(.22,1,.36,1)" });
+  } catch (e) { /* 动画 API 不可用就按原样瞬切 */ }
 }
 window.addEventListener("deviceorientation", function (e) {
   try {
@@ -2246,8 +2260,7 @@ function biliQueueToggle(p) {
   for (var i = 0; i < q.length; i++) if (q[i].p === p) { m = q[i]; break; }
   if (m && m.s === "ready") return;
   if (m && (m.s === "running" || m.s === "queued")) {
-    try { Android.subsCancel(k.bvid, String(p)); } catch (e) {}
-    biliSubsHint("已从字幕队列移除");
+    biliSubsPageCancel(k.bvid, p, m.s);      /* 先问一句：选集行「取消」离「缓存」不到一指宽，误触就丢排队 */
   } else {
     var t = (biliCur && biliCur.parts && biliCur.parts[p - 1] && biliCur.parts[p - 1].t) || ("P" + p);
     biliQueueStart(k.bvid, p, t);
@@ -2485,7 +2498,7 @@ function biliJobsRender() {
   box.dataset.sig = sig;
   var h = '<div class="jobs-entry' + (paused ? " paused" : "") + '" onclick="biliSubsPageOpen()">' +
             '<div class="jobs-e-top">' +
-              '<i class="jobs-e-dot' + (!paused && run ? " run" : "") + '"></i>' +
+              '<span class="jobs-e-live' + (!paused && run ? " run" : "") + '"><i></i><i></i><i></i><i></i></span>' +
               '<span class="jobs-e-t">' +
                 (paused ? "字幕已暂停" : (run ? "字幕识别中" : "字幕排队中")) + '</span>' +
               (!paused && run && pct > 0 ? '<span class="jobs-e-p">' + biliPctText(pct) + '</span>' : '') +
@@ -2658,13 +2671,38 @@ function biliSubsPageOpen() {
 function biliSubsPageClose() {
   var p = document.getElementById("biliSubsPage");
   if (p) p.classList.remove("on");
+  biliRunTweenStop();
 }
-/* 取消 / 全部取消：页面和顶部小卡共用，两边都要跟着重画 */
-function biliSubsPageCancel(b, p) {
+/* 取消只从「确认过」这一条路进来：卡片上的取消键挨着手滑区，选集行的「取消」
+   也离「缓存」不到一个指头宽，直接执行等于给误触开了门（用户明确要求加确认）。
+   hint 只是兜底：识别页没开着时队列里查不到状态，调用方可以自己说清是在跑还是在排队。 */
+function biliSubsPageCancel(b, p, hint) {
+  var st = null, d = biliSubsLast;
+  if (d && d.items) {
+    for (var i = 0; i < d.items.length; i++) {
+      if (d.items[i].b === b && (d.items[i].p || 1) === p) { st = d.items[i]; break; }
+    }
+  }
+  var stt = st ? st.s : (hint || "running");
+  var running = stt !== "queued";
+  var nm = (st && st.t) ? st.t : ("第 " + p + " 集");
+  glass({
+    icon: "!",
+    cls: "over",
+    title: running ? "取消这一集的识别？" : "把这一集移出排队？",
+    desc: "P" + p + " · " + nm + "。" + (running
+      ? "已经识别出来的部分和断点都留着，下次点「缓存」从断点接着跑。"
+      : "移出排队后不再识别它；之后想要字幕得重新点「缓存」。"),
+    no: ["保留", null],
+    ok: [running ? "取消识别" : "取消排队", function () { biliSubsCancelNow(b, p); }]
+  });
+}
+function biliSubsCancelNow(b, p) {
   try { Android.subsCancel(b, String(p)); } catch (e) {}
   biliSubsHint("已从字幕队列移除");
   biliSubsOpenKey = "";
   biliSubsPageRender();
+  try { biliSubsMarks(); } catch (e) {}
   try { biliJobsRender(); } catch (e) {}
 }
 /* 插队识别：把这一集提到队首，正在跑的那一集在段边界收尾让位，然后立刻跑它。
@@ -2680,20 +2718,83 @@ function biliSubsPageJump(b, p) {
 function biliSubsPageCancelAll() {
   var d = biliSubsLast, n = 0;
   if (!d) return;
-  for (var i = 0; i < d.items.length; i++) {
-    if (d.items[i].s !== "queued") continue;
-    try { Android.subsCancel(d.items[i].b, String(d.items[i].p)); n++; } catch (e) {}
-  }
-  if (n) biliSubsHint("已取消 " + n + " 集排队");
-  biliSubsPageRender();
-  try { biliJobsRender(); } catch (e) {}
+  for (var i = 0; i < d.items.length; i++) if (d.items[i].s === "queued") n++;
+  if (!n) return;
+  glass({
+    icon: "!",
+    cls: "over",
+    title: "取消全部排队？",
+    desc: "排队里的 " + n + " 集会被一起移出，正在识别的那一集不受影响。之后再想要字幕，得一集一集重新点「缓存」。",
+    no: ["保留", null],
+    ok: ["全部取消 · " + n + " 集", function () {
+      var dd = biliSubsLast, k = 0;
+      if (!dd) return;
+      for (var j = 0; j < dd.items.length; j++) {
+        if (dd.items[j].s !== "queued") continue;
+        try { Android.subsCancel(dd.items[j].b, String(dd.items[j].p)); k++; } catch (e) {}
+      }
+      if (k) biliSubsHint("已取消 " + k + " 集排队");
+      biliSubsPageRender();
+      try { biliJobsRender(); } catch (e) {}
+    }]
+  });
 }
-/* 运行卡状态文案：解码那几秒原来也写「模型识别中」，进度条不动就像卡死；
-   现在按桥给的阶段字段切文案，让用户看见它在干活。暂停是软停：Rust 认完
-   当前这一段（≤2 分钟音频）落好断点才停，所以文案如实说「正在收尾」。 */
+
+/* ---------- 进度显示 ----------
+   平滑只在原生那一侧做（SubsJobService 的 PctSmooth）：真值抹成坡、真值停住时
+   往前蹭，落盘和系统通知写的是同一个显示值。所以这里只负责把桥给的数原样上屏，
+   识别页运行卡、收藏页状态卡、通知栏三处自然一致，不会再「一个追一个」。 */
+var biliRunShow = {}, biliRunPaused = false;
+function biliRunSetTarget(k, t) {
+  t = +t || 0;
+  var o = biliRunShow[k];
+  if (!o) { biliRunShow[k] = { v: t, pv: -1 }; return; }
+  o.v = t;
+}
+/* 大号百分比：整数 24px、小数降一档透明度、百分号再小一档。
+   拆成三个节点是为了让「46」是主角、「.49」是它后面的一串精细读数——
+   整段 13px 的 "46.49%" 在一堆灰字里根本跳不出来。 */
+function biliRunNum(p) {
+  p = +p || 0;
+  if (p <= 0.009) return '<span class="sp-run-wait">处理中</span>';
+  var s = biliPctText(p), num = s.slice(0, -1);
+  var dot = num.indexOf(".");
+  var ip = dot >= 0 ? num.slice(0, dot) : num;
+  var dp = dot >= 0 ? num.slice(dot) : "";
+  return '<em>' + ip + '</em><small>' + dp + '</small><i>%</i>';
+}
+function biliRunPaint(k, cell) {
+  var st = biliRunShow[k];
+  if (!st || !cell) return;
+  var bar = cell.querySelector(".sp-run-track b");
+  if (bar) bar.style.width = Math.max(2, st.v) + "%";
+  var num = cell.querySelector(".sp-run-num");
+  if (num) {
+    var html = biliRunNum(st.v);
+    if (num.innerHTML !== html) num.innerHTML = html;
+  }
+}
+/* 名字保留：调用点很多，就没为了改名到处动 */
+function biliRunTweenKick() {
+  var p = document.getElementById("biliSubsPage");
+  if (!p || !p.classList.contains("on")) return;
+  for (var k in biliRunShow) {
+    if (!Object.prototype.hasOwnProperty.call(biliRunShow, k)) continue;
+    var cell = p.querySelector('.sp-run[data-k="' + k.replace(/"/g, '\\"') + '"]');
+    if (cell) biliRunPaint(k, cell);
+  }
+}
+function biliRunTweenStop() {}
+function biliRunTweenReset() { biliRunShow = {}; }
+
+/* 运行卡状态文案跟着桥给的阶段走：解码那几秒也写「模型识别中」，进度条不动就像卡死。
+   用户口径就三个短词——下载中 / 解码中 / 识别中，别写成长句。 */
 function biliRunLbl(it, paused) {
-  if (paused) return "正在收尾 · 这一段认完就停";
-  return (it && it.g === "decode") ? "解码音频" : "模型识别中";
+  if (paused) return "收尾中";
+  var g = it && it.g;
+  if (g === "download") return "下载中";
+  if (g === "decode") return "解码中";
+  return "识别中";
 }
 function biliSubsPageRender() {
   var p = document.getElementById("biliSubsPage");
@@ -2744,18 +2845,10 @@ function biliSubsPageRender() {
         var lt = biliRunLbl(run[rl], paused);
         if (lb.textContent !== lt) lb.textContent = lt;
       }
-      var lab = cell.querySelector(".sp-run-p");
-      if (lab) {
-        var txt = run[rl].c > 0 ? biliPctText(run[rl].c) : "处理中";
-        if (lab.textContent !== txt) {     /* 变化时才闪一下，静止不闪 */
-          lab.textContent = txt;
-          lab.classList.remove("flash");
-          void lab.offsetWidth;
-          lab.classList.add("flash");
-        }
-      }
-      var bw = cell.querySelector(".sp-run-bar b");
-      if (bw) bw.style.width = Math.max(2, run[rl].c || 0) + "%";
+      /* 只记目标值，真正的上屏交给缓动表：台阶变成斜坡，长时间不涨时慢慢蹭 */
+      biliRunPaused = paused;
+      biliRunSetTarget(key2, run[rl].c || 0);
+      biliRunTweenKick();
     }
     return;
   }
@@ -2821,15 +2914,19 @@ function biliSubsPageRender() {
     var rvt = biliCatTitleOf({ b: ri.b, vt: ri.vt });
     var rkey = ri.b + "-" + (ri.p || 1);
     h += '<div class="sp-run' + (paused ? " hold" : "") + '" data-k="' + esc(rkey) + '">' +
-           '<div class="sp-run-top">' +
-             '<i class="sp-wave"><i></i><i></i><i></i><i></i><i></i></i>' +
+           '<div class="sp-run-hd">' +
+             '<i class="sp-run-live"><i></i><i></i><i></i><i></i></i>' +
              '<span class="sp-run-lbl">' + biliRunLbl(ri, paused) + '</span>' +
-             '<span class="sp-run-p">' + (pct > 0 ? biliPctText(pct) : "处理中") + '</span>' +
+             '<span class="sp-run-pn">P' + (ri.p || 1) + '</span>' +
            '</div>' +
-           '<div class="sp-run-t">P' + (ri.p || 1) + ' · ' +
-             esc(ri.t || ("第 " + ri.p + " 集")) + '</div>' +
-           (rvt ? '<div class="sp-run-sub">' + esc(rvt) + '</div>' : '') +
-           '<i class="sp-run-bar"><b style="width:' + Math.max(2, pct) + '%"></b></i>' +
+           '<div class="sp-run-grid">' +
+             '<div class="sp-run-num">' + biliRunNum(pct) + '</div>' +
+             '<div class="sp-run-info">' +
+               '<div class="sp-run-t">' + esc(ri.t || ("第 " + ri.p + " 集")) + '</div>' +
+               (rvt ? '<div class="sp-run-sub">' + esc(rvt) + '</div>' : '') +
+             '</div>' +
+           '</div>' +
+           '<div class="sp-run-track"><b style="width:' + Math.max(2, pct) + '%"></b></div>' +
            '<div class="sp-run-foot">' +
              '<i class="sp-run-pz" onclick="biliSubsTogglePause()">' +
                '<i class="sp-run-pz-ic' + (paused ? " play" : "") + '"></i>' +
@@ -2849,17 +2946,14 @@ function biliSubsPageRender() {
     h += '<div class="sp-empty">没有排队等待的视频</div>';
   } else {
     h += '<div class="sp-q-list">';
-    /* 第 42 轮：140 条排队里每张卡都复读同一行来源，长列表里那行只剩纹理噪声。
-       同一条来源只在这一段的第一项上写一次，后面共享同一来源的条目直接省掉。 */
-    var lastVt = "";
+    /* 每张卡都写来源：段标题只在段首写一次看着干净，但用户滚到中途就不知道
+       这一屏排队的是哪个视频的（第 42 轮那版「同源只写一次」已被用户否掉，别再省）。 */
     for (var q = 0; q < que.length; q++) {
       var qi = que[q];
       /* 来源：老队列条目没存 vt，就靠 localStorage 标题表 / 当前播放兜底；
          实在拿不到就退回 bvid 本身，别让某一行空着（不然一行有来源一行没有，看着像漏了）。 */
       var qvt = biliCatTitleOf({ b: qi.b, vt: qi.vt });
       if (!qvt) qvt = "视频 " + qi.b;
-      var showSrc = (qvt !== lastVt);
-      lastVt = qvt;
       var qk = qi.b + "-" + (qi.p || 1);
       var qpct = qi.c > 0 ? biliPctText(qi.c) : "";
       /* 每项一张独立卡：左滑露出「插队识别 / 取消排队」两个专用键。
@@ -2878,7 +2972,7 @@ function biliSubsPageRender() {
                    '<span>P' + (qi.p || 1) + ' · ' +
                    esc(qi.t || ("第 " + qi.p + " 集")) + '</span></div>' +
                  '<div class="sp-q-sub">' +
-                   (showSrc ? '<small>' + esc(qvt) + '</small>' : '') +
+                   '<small>' + esc(qvt) + '</small>' +
                    (qpct ? '<i class="sp-q-pct">已识别 ' + qpct + '</i>' : '') +
                  '</div>' +
                '</div>' +
@@ -2903,6 +2997,13 @@ function biliSubsPageRender() {
   p.innerHTML = h;
   var nb = p.querySelector(".sp-body");
   if (nb && keep) nb.scrollTop = keep;
+  /* 重绘后把运行卡的显示值接上：桥给的数就是显示值，直接对齐，不做二次缓动 */
+  for (var rz = 0; rz < run.length; rz++) {
+    var kz = run[rz].b + "-" + (run[rz].p || 1);
+    biliRunSetTarget(kz, run[rz].c || 0);
+  }
+  biliRunPaused = paused;
+  if (run.length) biliRunTweenKick();
   /* 2 秒轮询会重建整页：把左滑展开的那一项还原，不然刚划开就自己弹回去 */
   if (biliSubsOpenKey) {
     var oc = p.querySelector('.sp-q-card[data-k="' + biliSubsOpenKey + '"]');
@@ -2917,12 +3018,14 @@ function biliJobsPoll() {
     var box = document.getElementById("biliJobs");
     if (!box) { clearInterval(biliJobsTimer); biliJobsTimer = 0; return; }
     biliJobsRender();
-    /* 识别页开着就跟着刷：它是用户正盯着看的那份清单 */
+    /* 识别页开着就跟着刷：它是用户正盯着看的那份清单。
+       两处同一拍、同一个数：0.4 秒一次，屏幕上看起来才是连续往上走，
+       而不是一秒一跳（桥那边 0.25 秒一档已经抹成坡了，这里只是把坡画出来）。 */
     try {
       var sp = document.getElementById("biliSubsPage");
       if (sp && sp.classList.contains("on")) biliSubsPageRender();
     } catch (e) {}
-  }, 2000);
+  }, 400);
   biliJobsRender();
 }
 /* 把生成进度挂到对应的选集长条上：生成中显示百分比，排队显示「排队」；完成后清空 */
@@ -2960,7 +3063,9 @@ function biliSubsMarks(q) {
   biliEpAllPaint(q);
 }
 
-/** 每 2 秒刷新一次：分P进度徽标 + 当前集进度条 + 完成后切轨 */
+/** 每 0.9 秒刷新一次：分P进度徽标 + 当前集进度条 + 完成后切轨。
+    原来是 2 秒——高端机一段 2 分钟音频不到 1 秒就认完，2 秒一采等于把整段的
+    心跳全丢掉，用户看到的就是「20% 冻住、然后跳 60%」。 */
 function biliSubsPoll() {
   biliSubsStopPoll();
   var announced = false;
@@ -2981,7 +3086,7 @@ function biliSubsPoll() {
     }
     var busy = biliQueuePending(q) || st.state === "running" || st.state === "queued";
     if (!busy) biliSubsStopPoll();
-  }, 2000);
+  }, 900);
   var q0 = biliQueue();
   biliSubsMarks(q0);
 }

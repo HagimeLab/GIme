@@ -2221,8 +2221,26 @@ function chatPullInit() {
      面板缩小之后手指往往落在主体区，只认把手会让人觉得「拖不动」。
      消息列表：在顶部且方向是往下才接管，往上仍交给列表自己滚。 */
   var drag = false, pid = null, y0 = 0, h0 = 0, H = 0, lastH = 0, prevH = 0, prevT = 0, vNow = 0, startIdx = 1;
+  /* 高度改写合到一帧一次：pointermove 在真机上可以一秒来 120 次，
+     每次都写 height 就等于每帧做好几遍布局——面板里几十上百条消息都要重排，
+     表现就是上拉下拉明显卡顿。合成到 rAF 后，一帧最多重排一次。 */
+  var rafH = 0, pendH = 0, doneH = -1, doneFull = null;
+  function applyH() {
+    rafH = 0;
+    /* 值没变就不写：一次多余的 height/maxHeight 写入同样会让 WebView 标记整块面板脏 */
+    if (pendH === doneH) return;
+    doneH = pendH;
+    ch.style.height = pendH + "px";
+    ch.style.maxHeight = pendH + "px";
+    var fullNow = pendH >= H - 2;
+    if (fullNow !== doneFull) { doneFull = fullNow; ch.classList.toggle("full", fullNow); }
+  }
+  function flushH() {
+    if (rafH) { try { cancelAnimationFrame(rafH); } catch (x) {} rafH = 0; }
+    if (pendH) applyH();
+  }
   var fromList = false, committed = false;
-  var lastCross = -1, tickT = 0, hitTimer = 0, lastTickT = 0, maxMove = 0, tapZone = false;
+  var lastCross = -1, tickT = 0, hitTimer = 0, hitAnim = null, lastTickT = 0, maxMove = 0, tapZone = false;
   /* 到达档位/跨档时的反馈：短震一下 + 把手轻弹。
      Android.haptic 是 App 注入的桥（native 侧夹 8~40ms）；纯网页环境回退到 navigator.vibrate。 */
   function haptic(ms) {
@@ -2234,11 +2252,25 @@ function chatPullInit() {
     if (now - lastTickT < 130) return;               /* 连着跨档时不刷屏地猛震 */
     lastTickT = now;
     haptic(strong ? 18 : 9);
-    ch.classList.remove("tick");
-    void ch.offsetWidth;                             /* 强制回流，让动画能重放 */
-    ch.classList.add("tick");
-    clearTimeout(hitTimer);
-    hitTimer = setTimeout(function () { ch.classList.remove("tick"); }, 380);
+    /* 原来这里是「摘 class → void ch.offsetWidth 强制回流 → 挂 class」来重放关键帧。
+       那一次强制回流会把整块面板（含几十上百条消息）当场重排一遍，正落在拖动手势中间，
+       跨档瞬间就是一次可感的顿。改成 Web Animations：不需要读布局，也不占同步回流。 */
+    var hd = ch.querySelector(".handle");
+    if (hd && hd.animate) {
+      try {
+        if (hitAnim && hitAnim.cancel) hitAnim.cancel();
+        hitAnim = hd.animate([
+          { transform: "scaleX(1)" },
+          { transform: "scaleX(1.45)", offset: .38 },
+          { transform: "scaleX(1)" }
+        ], { duration: 340, easing: "cubic-bezier(.22,.68,.36,1)" });
+      } catch (x) { }
+    } else {
+      ch.classList.remove("tick");
+      ch.classList.add("tick");
+      clearTimeout(hitTimer);
+      hitTimer = setTimeout(function () { ch.classList.remove("tick"); }, 380);
+    }
   }
   function nearestIdx(h) {
     var idx = 0, best = 1e9;
@@ -2250,6 +2282,8 @@ function chatPullInit() {
   }
   function cancel() {
     drag = false; committed = false; fromList = false;
+    if (rafH) { try { cancelAnimationFrame(rafH); } catch (x) {} rafH = 0; }
+    pendH = 0;
     ch.classList.remove("dragging");
     try { if (pid !== null && ch.hasPointerCapture && ch.hasPointerCapture(pid)) ch.releasePointerCapture(pid); } catch (x) { }
     pid = null;
@@ -2293,7 +2327,9 @@ function chatPullInit() {
     lastCross = startIdx;                             /* 跨档反馈的基准 */
     committed = true;                                 /* 头部空白不需要延迟判定，立即接管 */
     ch.classList.add("dragging");
+    doneH = -1;                                       /* 起手先解掉上屏缓存，手指一动就落地 */
     try { ch.setPointerCapture(e.pointerId); } catch (x) {}
+
     if (e.cancelable) e.preventDefault();
   }
   function onMove(e) {
@@ -2313,9 +2349,8 @@ function chatPullInit() {
     var now = performance.now();
     vNow = (h - prevH) / Math.max(1, now - prevT);   /* 变大（上拖）为正 */
     prevH = h; prevT = now;
-    ch.style.height = h + "px";
-    ch.style.maxHeight = h + "px";
-    ch.classList.toggle("full", h >= H - 2);
+    pendH = h;
+    if (!rafH) rafH = requestAnimationFrame(applyH);
     /* 拖到另一个档位区间的瞬间给一次轻反馈，手感上「摸到了节点」 */
     var near = nearestIdx(h);
     if (near !== lastCross) { lastCross = near; tick(false); }
@@ -2328,6 +2363,8 @@ function chatPullInit() {
     try { if (pid !== null && ch.hasPointerCapture && ch.hasPointerCapture(pid)) ch.releasePointerCapture(pid); } catch (x) { }
     pid = null;
     fromList = false;
+    /* 松手前把最后一帧高度落地，否则吸弹动画会从上一帧的高度起步、看着「先跳一下」 */
+    flushH();
     ch.classList.remove("dragging");
     var h = lastH;
     var idle = performance.now() - prevT;
@@ -2373,6 +2410,21 @@ function chatPullInit() {
     if (drag && committed && e.cancelable) e.preventDefault();
   }, { passive: false });
 }
+/* 入场只有一条动画：transform 滑上来。
+   原来 chatSetDetent 写高度那一刻，面板正带着 `height .2s` 的过渡，
+   于是滑入的 220ms 里高度也在一起动——每帧都要把整块面板（大图、提示、
+   输入卡）重排重刷一遍，抬手点开大肥鱼就是那一下顿。
+   现在先用 noanim 把过渡摘掉、把高度就地落好，再挂 .on 让 transform 单独上场；
+   滑入期间再关掉顶上那条 60px 大投影（.sliding），收尾一帧才画回来。 */
+var chatSlideT = 0;
+function chatEnterSlide(ch) {
+  ch.classList.add("noanim");
+  ch.classList.add("sliding");
+  void ch.offsetHeight;                    /* 高度就地落地：这一帧之后摘掉 noanim 也不会补动画 */
+  ch.classList.remove("noanim");
+  if (chatSlideT) clearTimeout(chatSlideT);
+  chatSlideT = setTimeout(function () { ch.classList.remove("sliding"); }, 320);
+}
 function openChat() {
   if (!S) { toast("先进一道题再问"); return; }
   chatUnread = false;
@@ -2380,6 +2432,7 @@ function openChat() {
   chatSetDetent(1);                       /* 答题页：默认 2/3 */
   chatBigClose();
   chatRender();
+  chatEnterSlide(ch);
   openLayer(ch);
   chatScrollBottomSoon();
 }
@@ -2391,6 +2444,7 @@ function openChatTab() {
   chatSetDetent(1);                       /* 首页入口：默认 2/3，可上拉到全屏 */
   chatBigClose();
   chatRender();
+  chatEnterSlide(ch);
   openLayer(ch);
   chatScrollBottomSoon();
 }

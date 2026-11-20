@@ -73,7 +73,10 @@ for (const raw of files) {
   }
   if (!fs.existsSync(abs)) { console.error(`跳过（不存在）: ${rel}`); continue; }
   const content = fs.readFileSync(abs);
-  const isBinary = /\.(apk|png|jpg|zip|jar)$/i.test(rel);
+  /* 只按 apk/png/jpg/zip/jar 认二进制，.aar / .so 会被当成 utf8 发出去，GitHub 收到的是
+     替换过的乱码（上一版就这么把 JNI 库传坏了）。扩展名不够时再看内容里有没有 NUL。 */
+  const isBinary = /\.(apk|aab|aar|so|png|jpg|jpeg|gif|webp|zip|jar|keystore|jks|woff2|ttf|otf|pdf)$/i
+      .test(rel) || content.includes(0);
   const blob = await api("POST", `/repos/${repo}/git/blobs`, isBinary
     ? { content: content.toString("base64"), encoding: "base64" }
     : { content: content.toString("utf8"), encoding: "utf-8" });
