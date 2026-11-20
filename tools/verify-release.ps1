@@ -75,7 +75,7 @@ foreach ($name in $expect.Keys) {
     }
 }
 foreach ($a in $rel.assets) {
-    # 模型包也挂在同一个 Release 上，不在本地 -Apk/-Source 比对范围内，按名字放行即可
+    # the model zip lives on the same release but is not compared here (no local -Apk/-Source pair)
     if ($a.name -match '^gime-asr-.*\.zip$') {
         Write-Host "    model asset: $($a.name) ($($a.size) bytes)"
         continue
