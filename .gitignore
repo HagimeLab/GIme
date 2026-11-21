@@ -17,6 +17,10 @@ signing/
 *.keystore
 keystore.properties
 
+# 本机发布令牌（Gitee 私人令牌等）：只临时落盘供发布脚本读取，用完即删，永不入库
+/.gitee-token
+/.github-token
+
 # 交付产物：源码包与安装包都现做现发，不留在仓库里
 dist/
 *.apk

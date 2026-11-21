@@ -86,21 +86,19 @@ public final class DownloadSources {
             }
         }
 
-        /* Gitee 国内中转仓库（用户自建镜像）。
-           Gitee 的 raw 只对文本文件直出，二进制会 403，
-           所以文本清单走 raw、安装包走发行版附件。 */
-        out.add("https://gitee.com/hagemilab/gi/raw/main/" + path);
+        /* 清单只在 GitHub API 失败时才走这里（见 Updater.fetchManifest），所以顺序只按
+           「这台网络下几秒内能不能回来」排：fastly 的 jsDelivr 实测 1.2s，GitHub 网页 raw 0.5s
+           （302 一跳），raw.githubusercontent 在部分网络被直接 reset，放后面。
 
-        /* jsDelivr 的四个入口：清单类小文件走它们最快，且能命中缓存。 */
-        out.add("https://cdn.jsdelivr.net/gh/" + repo + "@" + ref + "/" + path);
+           注意 Gitee raw 不再排第一：Gitee 仓库只放发布资产、不含源码，这条路径本体就是 404；
+           而且 gitee.com/…/raw 会 302 到附件域名，实测要 11.5s 才回第一跳。
+           老顺序把 Gitee raw 放最前，检查更新每次都要先白等十几秒，最后还被判超时。 */
         out.add("https://fastly.jsdelivr.net/gh/" + repo + "@" + ref + "/" + path);
-        out.add("https://testingcf.jsdelivr.net/gh/" + repo + "@" + ref + "/" + path);
-        out.add("https://gcore.jsdelivr.net/gh/" + repo + "@" + ref + "/" + path);
-
-        /* 兜底：GitHub 原始地址。部分网络下它反而是通的，
-           放在最后试，失败也不影响前面的成功路径。 */
         out.add("https://github.com/" + repo + "/raw/" + ref + "/" + path);
         out.add("https://raw.githubusercontent.com/" + repo + "/" + ref + "/" + path);
+        out.add("https://cdn.jsdelivr.net/gh/" + repo + "@" + ref + "/" + path);
+        out.add("https://testingcf.jsdelivr.net/gh/" + repo + "@" + ref + "/" + path);
+        out.add("https://gcore.jsdelivr.net/gh/" + repo + "@" + ref + "/" + path);
         return out;
     }
 

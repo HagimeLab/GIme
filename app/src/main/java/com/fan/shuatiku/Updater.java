@@ -84,18 +84,17 @@ public class Updater {
         new Thread(new Runnable() {
             @Override public void run() {
                 try {
-                    /* 先读仓库里的清单：它是「版本号 + 安装包文件名」的唯一真源，
-                       和 CDN 上的实际文件天然一致。
-                       读不到再回落到 GitHub 的 releases/latest（老路径）。 */
+                    /* 只问一次：releases/latest 这一个接口同时给出「版本号、正文、真实资产名」，
+                       正文与资产名都不需要再读一遍仓库清单。清单只在它失败时兜底，
+                       因为清单入口（CDN / raw）在国内多数网络下要么被 reset、要么命中 7 天旧缓存。 */
                     ReleaseManifest.Info m = fetchManifest();
-                    if (m.valid) {
-                        emitFromManifest(m, current);
-                        return;
-                    }
-                    emitFromGithubApi(current);
+                    emitFromManifest(m, current);
                 } catch (Exception e) {
                     Log.w(TAG, "check failed", e);
-                    String msg = e instanceof NotFound ? "仓库还没有发布版本" : "连不上更新服务器，检查网络后重试";
+                    String msg;
+                    if (e instanceof NotFound) msg = "仓库还没有发布版本";
+                    else if (isTimeout(e)) msg = "更新服务器响应超时，请稍后重试，或点「打开发布页」手动下载";
+                    else msg = "连不上更新服务器，检查网络后重试";
                     // catch 里不再碰 JSONObject.put（它抛受检异常），手拼一份就够
                     sink.toJs("window.onUpdateInfo&&window.onUpdateInfo(" + quote(
                             "{\"ok\":false,\"error\":" + quote(msg) + "}") + ")");
@@ -105,38 +104,66 @@ public class Updater {
     }
 
     /**
-     * 取 release/latest.json。
+     * 查一次最新版本。
      *
-     * **不走 CDN**：jsDelivr 对同一路径强缓存 7 天，清单路径又是固定的，
-     * 从 CDN 读会一直拿到旧版本号。改从 GitHub 的 contents API 读——
-     * 实测 `api.github.com` 在国内可达（能查版本就说明它通），且 API 不缓存。
-     * API 失败才退到 CDN 与 raw 地址，尽量不让检查更新整个失败。
+     * **第一站只发一个请求**：`releases/latest` 一次就把版本号、正文、真实资产名一起拿回来。
+     * 老实现先读仓库里的 latest.json（GitHub contents API）——它本身是对的，但国内首次握手
+     * 实测要 11.7s，而 readTimeout 只有 10s，冷启动第一次检查更新几乎必超时；超时之后还要
+     * 逐个试 CDN / Gitee raw / raw 共 8 个兜底源，每个又是 8~10s，串起来就是几十秒的
+     * “一直转圈”，最后弹一句“连不上更新服务器”。
+     *
+     * 现在的口径：先 releases/latest（实测 0.2~0.6s，冷启动握手 12s 上限也放得下），
+     * 失败才回落到仓库清单（contents raw → 少数几个快的 CDN 入口）。
      */
-    private ReleaseManifest.Info fetchManifest() {
-        // 1) GitHub API：不缓存，最可靠
+    private ReleaseManifest.Info fetchManifest() throws Exception {
+        Exception last = null;
+        // 1) GitHub API：单请求拿全，且不缓存
         try {
-            String api = "https://api.github.com/repos/" + REPO + "/contents/" +
-                    ReleaseManifest.PATH + "?ref=" + DownloadSources.REF;
-            String body = fetch(api);
-            /* contents API 把文件内容放在 content 字段里，且是 base64 + 换行 */
-            String b64 = new org.json.JSONObject(body).optString("content", "");
-            if (!b64.isEmpty()) {
-                String json = new String(android.util.Base64.decode(
-                        b64.replaceAll("\\s", ""), android.util.Base64.DEFAULT), "UTF-8");
-                ReleaseManifest.Info info = ReleaseManifest.parse(json);
-                if (info.valid) return info;
-            }
-        } catch (Exception ignored) {
-            // 落到下面的 CDN 兜底
+            org.json.JSONObject rel = new org.json.JSONObject(fetch(API, 12000, 18000));
+            ReleaseManifest.Info info = infoFromRelease(rel);
+            if (info.valid) return info;
+        } catch (Exception e) {
+            last = e;
         }
-        // 2) CDN / raw 兜底（可能拿到旧缓存，但总比没有强）
+        // 2) 仓库清单兜底：可能拿到旧缓存，但总比整个检查失败强
         for (String u : DownloadSources.forFile(REPO, DownloadSources.REF, ReleaseManifest.PATH)) {
             try {
-                return ReleaseManifest.parse(fetch(u));
-            } catch (Exception ignored) {
+                ReleaseManifest.Info info = ReleaseManifest.parse(fetch(u, 8000, 10000));
+                if (info.valid) return info;
+            } catch (Exception e) {
+                last = e;
             }
         }
+        if (last != null) throw last;
         return ReleaseManifest.parse(null);
+    }
+
+    /** releases/latest 的 JSON → 清单同构的结果（版本 / 资产名 / 日期 / 逐条说明）。 */
+    private static ReleaseManifest.Info infoFromRelease(org.json.JSONObject rel) {
+        ReleaseManifest.Info info = new ReleaseManifest.Info();
+        String tag = rel.optString("tag_name", "");
+        String v = tag.startsWith("v") || tag.startsWith("V") ? tag.substring(1) : tag;
+        v = v.trim();
+        if (v.isEmpty()) return info;
+        info.version = v;
+        /* 资产里的 apk 名带着内容指纹，必须原样用：自己按版本号拼一个名字，
+           目录里没有那个文件，下载一定 404。 */
+        org.json.JSONArray assets = rel.optJSONArray("assets");
+        if (assets != null) {
+            for (int i = 0; i < assets.length(); i++) {
+                org.json.JSONObject a = assets.optJSONObject(i);
+                String n = a == null ? "" : a.optString("name", "");
+                if (n.toLowerCase().endsWith(".apk")) { info.apk = n; break; }
+            }
+        }
+        String pub = rel.optString("published_at", "");
+        info.date = pub.length() >= 10 ? pub.substring(0, 10) : "";
+        org.json.JSONArray log = splitNotes(rel.optString("body", ""));
+        String[] notes = new String[log.length()];
+        for (int i = 0; i < log.length(); i++) notes[i] = log.optString(i, "");
+        info.notes = notes;
+        info.valid = true;
+        return info;
     }
 
     /** 用仓库清单出结果：版本、下载源、日志都来自同一份数据。 */
@@ -161,43 +188,6 @@ public class Updater {
                 .put("log", log)
                 .put("prerelease", false)
                 .put("source", "manifest")
-                .toString();
-        sink.toJs("window.onUpdateInfo&&window.onUpdateInfo(" + quote(info) + ")");
-    }
-
-    /** 老路径：从 GitHub API 读版本。清单读不到时才走这里。 */
-    private void emitFromGithubApi(String current) throws Exception {
-        String body = fetch(API);
-        org.json.JSONObject rel = new org.json.JSONObject(body);
-        String tag = rel.optString("tag_name", "");
-        String latest = tag.startsWith("v") ? tag.substring(1) : tag;
-        String notes = rel.optString("body", "");
-        String published = rel.optString("published_at", "");
-        // 2026-10-17T12:34:56Z → 2026-10-17；取不到就留空，界面自己隐藏这一行
-        String date = published.length() >= 10 ? published.substring(0, 10) : "";
-        org.json.JSONArray log = splitNotes(notes);
-        org.json.JSONArray urls = new org.json.JSONArray();
-        /* 下载地址不再只认 GitHub 的 Release 资产：
-           那个地址会 302 到 release-assets.githubusercontent.com，国内常不通。
-           改为按实测可用的 CDN 顺序给出多个地址，原生层逐个试。 */
-        for (String u : DownloadSources.forVersion(REPO, latest)) {
-            urls.put(u);
-        }
-        final String info = new org.json.JSONObject()
-                .put("ok", true)
-                .put("current", current)
-                .put("latest", latest)
-                .put("hasUpdate", Ver.isNewer(latest, current))
-                .put("urls", urls)
-                /* 兼容老字段：取第一个源，老版本页面读这个也能用 */
-                .put("url", urls.length() > 0 ? urls.optString(0, "") : "")
-                .put("page", DownloadSources.releasePage(REPO, latest))
-                .put("gitee", DownloadSources.giteeReleasePage(latest))
-                .put("date", date)
-                .put("notes", notes.trim())
-                .put("log", log)
-                .put("prerelease", rel.optBoolean("prerelease", false))
-                .put("source", "github")
                 .toString();
         sink.toJs("window.onUpdateInfo&&window.onUpdateInfo(" + quote(info) + ")");
     }
@@ -558,10 +548,24 @@ public class Updater {
         return out;
     }
 
+    /** 超时是不是这条异常链里的真正原因（界面要按它给不同的提示）。 */
+    static boolean isTimeout(Throwable e) {
+        for (int i = 0; e != null && i < 4; i++) {
+            if (e instanceof java.net.SocketTimeoutException) return true;
+            e = e.getCause();
+        }
+        return false;
+    }
+
     private static String fetch(String spec) throws Exception {
+        // 默认预算按国内实测定：首次 TLS 握手常见 8~12s，10s 的读超时会直接掐断正常请求
+        return fetch(spec, 12000, 18000);
+    }
+
+    private static String fetch(String spec, int connMs, int readMs) throws Exception {
         HttpURLConnection c = (HttpURLConnection) new URL(spec).openConnection();
-        c.setConnectTimeout(8000);
-        c.setReadTimeout(10000);
+        c.setConnectTimeout(connMs);
+        c.setReadTimeout(readMs);
         c.setInstanceFollowRedirects(true);
         c.setRequestProperty("User-Agent", "GIme-Android");     // GitHub 没有 UA 会直接拒
         c.setRequestProperty("Accept", "application/vnd.github+json");
